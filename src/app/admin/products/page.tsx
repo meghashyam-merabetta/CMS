@@ -18,13 +18,34 @@ import {
   AlertTriangle,
   X,
   CheckCircle2,
+  RefreshCw,
+  Loader2,
 } from 'lucide-react';
 import { mockProducts } from '@/data/mockData';
 import { ProductRecord } from '@/types/dashboard';
+import { getAdminProducts } from '@/lib/api';
+import { BackendProduct } from '@/types/api';
+
+function mapBackendProductToRecord(bp: BackendProduct, idx: number): ProductRecord {
+  return {
+    id: String(bp.id),
+    productCode: `PRD-${(1001 + idx).toString()}`,
+    name: bp.name,
+    brand: 'Merabetta',
+    category: 'Electronics',
+    price: bp.price,
+    originalPrice: Math.round(bp.price * 1.2),
+    stock: bp.stock,
+    statusCode: bp.stock > 0 ? 'PUBLISHED' : 'DRAFT',
+    createdAt: new Date().toISOString(),
+  };
+}
 
 export default function ProductManagementPage() {
   const router = useRouter();
   const [products, setProducts] = useState<ProductRecord[]>(mockProducts);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isLive, setIsLive] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('');
   const [selectedBrand, setSelectedBrand] = useState<string>('');
@@ -35,6 +56,29 @@ export default function ProductManagementPage() {
   const [showBulkBanner, setShowBulkBanner] = useState<boolean>(true);
   const [productToDelete, setProductToDelete] = useState<ProductRecord | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+
+  const loadProducts = React.useCallback(async () => {
+    setIsLoading(true);
+    try {
+      const data = await getAdminProducts();
+      if (Array.isArray(data) && data.length > 0) {
+        setProducts(data.map(mapBackendProductToRecord));
+        setIsLive(true);
+      } else {
+        setProducts(mockProducts);
+      }
+    } catch (err) {
+      console.warn('Backend products not reachable, using mock fallback:', err);
+      setProducts(mockProducts);
+      setIsLive(false);
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  React.useEffect(() => {
+    loadProducts();
+  }, [loadProducts]);
 
   // Filtered products
   const filteredProducts = useMemo(() => {
@@ -99,13 +143,32 @@ export default function ProductManagementPage() {
       {/* Top Header */}
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
-          <h2 className="text-[16px] font-semibold text-black">Product Management</h2>
+          <div className="flex items-center gap-2">
+            <h2 className="text-[16px] font-semibold text-black">Product Management</h2>
+            {isLive && (
+              <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-700 border border-emerald-200">
+                <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                Live API
+              </span>
+            )}
+          </div>
           <p className="mt-1 text-[12px] font-normal text-[#626262]">
             Manage your catalog, stock and product listings.
           </p>
         </div>
 
         <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={loadProducts}
+            disabled={isLoading}
+            title="Reload from API"
+            className="inline-flex h-11 items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 text-[13px] font-semibold text-slate-700 hover:bg-slate-50 transition cursor-pointer disabled:opacity-50"
+          >
+            <RefreshCw size={14} className={isLoading ? 'animate-spin' : ''} />
+            <span>Refresh</span>
+          </button>
+
           <button
             type="button"
             onClick={() => alert('Download template or open bulk import modal')}

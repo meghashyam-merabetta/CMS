@@ -9,18 +9,61 @@ import {
   ChevronsLeft,
   ChevronsRight,
   AlertCircle,
+  RefreshCw,
+  Loader2,
 } from 'lucide-react';
 import { mockUsers } from '@/data/mockData';
 import { CustomerUserRecord } from '@/types/dashboard';
+import { getAdminUsers } from '@/lib/api';
+import { BackendUser } from '@/types/api';
+
+function mapBackendUserToRecord(bu: BackendUser, idx: number): CustomerUserRecord {
+  return {
+    id: bu.id,
+    customerCode: `CUST-${(8901 + idx).toString()}`,
+    displayName: bu.name,
+    email: bu.email,
+    mobile: '+91 98765 43210',
+    city: 'Mumbai',
+    createdAt: new Date().toISOString(),
+    statusCode: bu.active ? 'ACTIVE' : 'BLOCKED',
+    totalOrders: 0,
+  };
+}
 
 export default function UserManagementPage() {
   const [users, setUsers] = useState<CustomerUserRecord[]>(mockUsers);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isLive, setIsLive] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedStatus, setSelectedStatus] = useState<string>('');
   const [selectedCity, setSelectedCity] = useState<string>('');
   const [pageSize, setPageSize] = useState<number>(13);
   const [currentPage, setCurrentPage] = useState<number>(0);
   const [pendingApprovalCount, setPendingApprovalCount] = useState<number>(1);
+
+  const loadUsers = React.useCallback(async () => {
+    setIsLoading(true);
+    try {
+      const data = await getAdminUsers();
+      if (Array.isArray(data) && data.length > 0) {
+        setUsers(data.map(mapBackendUserToRecord));
+        setIsLive(true);
+      } else {
+        setUsers(mockUsers);
+      }
+    } catch (err) {
+      console.warn('Backend users not reachable, using mock fallback:', err);
+      setUsers(mockUsers);
+      setIsLive(false);
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  React.useEffect(() => {
+    loadUsers();
+  }, [loadUsers]);
 
   // Filtered users
   const filteredUsers = useMemo(() => {
@@ -53,9 +96,30 @@ export default function UserManagementPage() {
   return (
     <div className="rounded-2xl border border-[#DDE3EA] bg-white p-6 shadow-[0_2px_5px_rgba(15,23,42,0.05)]">
       {/* Title */}
-      <div>
-        <h2 className="text-lg font-semibold text-black">Users List</h2>
-        <p className="mt-1 text-sm text-[#626262]">Control users accounts here</p>
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <div>
+          <div className="flex items-center gap-2">
+            <h2 className="text-lg font-semibold text-black">Users List</h2>
+            {isLive && (
+              <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-700 border border-emerald-200">
+                <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                Live API
+              </span>
+            )}
+          </div>
+          <p className="mt-1 text-sm text-[#626262]">Control users accounts here</p>
+        </div>
+
+        <button
+          type="button"
+          onClick={loadUsers}
+          disabled={isLoading}
+          title="Reload from API"
+          className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition cursor-pointer disabled:opacity-50"
+        >
+          <RefreshCw size={13} className={isLoading ? 'animate-spin' : ''} />
+          <span>Refresh</span>
+        </button>
       </div>
 
       {/* Pending Approval Banner */}

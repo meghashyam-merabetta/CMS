@@ -49,8 +49,8 @@ export default function LoginPage() {
   };
 
   return (
-    <main className="h-dvh w-screen overflow-hidden bg-white">
-      <div className="grid h-full w-full lg:grid-cols-2">
+    <main className="min-h-dvh w-full overflow-y-auto bg-white">
+      <div className="grid min-h-dvh w-full lg:grid-cols-2">
         {/* Left Column: Visual Banner */}
         <div className="relative hidden lg:block">
           <Image
@@ -225,10 +225,10 @@ export default function LoginPage() {
                     <span>Admin</span>
                   </div>
                   <p className="mt-1 text-[11px] text-slate-500 font-mono">
-                    admin@merabetta.com
+                    admin@example.com
                   </p>
                   <p className="text-[11px] text-slate-400 font-mono">
-                    Admin@123
+                    {PRESET_USERS.admin.passwords[0] ? '••••••••••••' : '(set in .env.local)'}
                   </p>
                 </button>
 

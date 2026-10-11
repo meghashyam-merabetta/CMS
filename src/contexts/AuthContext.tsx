@@ -1,10 +1,12 @@
 'use client';
 
 import React, { createContext, useContext, useState, useEffect } from 'react';
+import { loginAdmin, getMe, logoutAdmin } from '@/lib/api';
 
 export type UserRole = 'ADMIN' | 'SUPER_ADMIN';
 
 export interface User {
+  id?: string;
   email: string;
   name: string;
   role: UserRole;
@@ -19,11 +21,11 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-// Preset Credentials
+// Preset Credentials for quick 1-click testing
 export const PRESET_USERS = {
   admin: {
-    email: 'admin@merabetta.com',
-    passwords: ['Admin@123', 'admin123'],
+    email: 'admin@example.com',
+    passwords: [process.env.NEXT_PUBLIC_DEMO_ADMIN_PASSWORD || ''],
     name: 'Admin User',
     role: 'ADMIN' as UserRole,
   },
@@ -41,78 +43,97 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
-  // Restore session from localStorage on mount
+  // Check active session on mount
   useEffect(() => {
-    try {
-      const savedUser = localStorage.getItem(STORAGE_KEY);
-      if (savedUser) {
-        setUser(JSON.parse(savedUser));
+    async function restoreSession() {
+      try {
+        // First try to verify with real backend session cookie
+        const me = await getMe().catch(() => null);
+        if (me && me.user) {
+          const loggedUser: User = {
+            id: me.user.id,
+            email: me.user.email,
+            name: me.user.name || 'Admin',
+            role: 'ADMIN',
+          };
+          setUser(loggedUser);
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(loggedUser));
+          return;
+        }
+
+        // Session invalid/expired on the server: drop any stale local copy
+        localStorage.removeItem(STORAGE_KEY);
+        sessionStorage.removeItem(STORAGE_KEY);
+        setUser(null);
+      } catch (e) {
+        console.error('Error loading session:', e);
+      } finally {
+        setIsLoading(false);
       }
-    } catch (e) {
-      console.error('Error loading session from localStorage:', e);
-    } finally {
-      setIsLoading(false);
     }
+
+    restoreSession();
   }, []);
 
   const login = async (email: string, password: string, keepMeSignedIn: boolean) => {
-    // Artificial small delay for realistic authentication experience
-    await new Promise((resolve) => setTimeout(resolve, 600));
-
-    const cleanEmail = email.trim().toLowerCase();
+    const cleanEmail = email.trim();
     const cleanPassword = password.trim();
 
-    // Check Admin
-    if (
-      cleanEmail === PRESET_USERS.admin.email.toLowerCase() &&
-      PRESET_USERS.admin.passwords.includes(cleanPassword)
-    ) {
+    try {
+      // 1. Try Live Backend Login API
+      await loginAdmin(cleanEmail, cleanPassword);
+
+      // Fetch user profile from /api/admin/auth/me
+      const meData = await getMe().catch(() => null);
       const loggedUser: User = {
-        email: PRESET_USERS.admin.email,
-        name: PRESET_USERS.admin.name,
-        role: PRESET_USERS.admin.role,
+        id: meData?.user?.id,
+        email: meData?.user?.email || cleanEmail,
+        name: meData?.user?.name || 'Admin User',
+        role: 'ADMIN',
       };
+
       setUser(loggedUser);
       if (keepMeSignedIn) {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(loggedUser));
       } else {
         sessionStorage.setItem(STORAGE_KEY, JSON.stringify(loggedUser));
       }
-      return { success: true };
-    }
 
-    // Check Super Admin
-    if (
-      cleanEmail === PRESET_USERS.superadmin.email.toLowerCase() &&
-      PRESET_USERS.superadmin.passwords.includes(cleanPassword)
-    ) {
-      const loggedUser: User = {
-        email: PRESET_USERS.superadmin.email,
-        name: PRESET_USERS.superadmin.name,
-        role: PRESET_USERS.superadmin.role,
-      };
-      setUser(loggedUser);
-      if (keepMeSignedIn) {
+      return { success: true };
+    } catch (err: any) {
+      console.warn('Backend login failed:', err.message);
+
+      // 2. Fallback to Preset Credentials for offline development
+      if (
+        cleanEmail.toLowerCase() === PRESET_USERS.superadmin.email.toLowerCase() &&
+        PRESET_USERS.superadmin.passwords.includes(cleanPassword)
+      ) {
+        const loggedUser: User = {
+          email: PRESET_USERS.superadmin.email,
+          name: PRESET_USERS.superadmin.name,
+          role: 'SUPER_ADMIN',
+        };
+        setUser(loggedUser);
         localStorage.setItem(STORAGE_KEY, JSON.stringify(loggedUser));
-      } else {
-        sessionStorage.setItem(STORAGE_KEY, JSON.stringify(loggedUser));
+        return { success: true };
       }
-      return { success: true };
-    }
 
-    return {
-      success: false,
-      error: 'Invalid email or password. Please check your credentials.',
-    };
+      return {
+        success: false,
+        error: err.message || 'Invalid email or password. Please check your credentials.',
+      };
+    }
   };
 
-  const logout = () => {
-    setUser(null);
+  const logout = async () => {
     try {
+      await logoutAdmin();
+    } catch (e) {
+      console.warn('Logout API failed:', e);
+    } finally {
+      setUser(null);
       localStorage.removeItem(STORAGE_KEY);
       sessionStorage.removeItem(STORAGE_KEY);
-    } catch (e) {
-      console.error('Error clearing storage:', e);
     }
   };
 

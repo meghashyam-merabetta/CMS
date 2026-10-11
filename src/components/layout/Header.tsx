@@ -3,10 +3,11 @@
 import React from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { FileOutput, Bell } from 'lucide-react';
+import { FileOutput, Bell, Menu } from 'lucide-react';
 
 interface HeaderProps {
   collapsed: boolean;
+  onToggleMobile?: () => void;
 }
 
 const routeTitles: Record<string, string> = {
@@ -34,7 +35,7 @@ const routeTitles: Record<string, string> = {
   '/admin/profile': 'Profile Settings',
 };
 
-export default function Header({ collapsed }: HeaderProps) {
+export default function Header({ collapsed, onToggleMobile }: HeaderProps) {
   const pathname = usePathname();
 
   const title = routeTitles[pathname] || 'Admin Portal';
@@ -42,36 +43,48 @@ export default function Header({ collapsed }: HeaderProps) {
 
   return (
     <header
-      className={`fixed top-0 right-0 z-30 flex h-[66px] items-center justify-between border-b border-[#ECECEC] bg-white px-6 shadow-[0_2px_6px_rgba(15,23,42,0.04)] transition-[left] duration-300 ${
-        collapsed ? 'left-[86px]' : 'left-[278px]'
+      className={`fixed top-0 right-0 z-30 flex h-[66px] items-center justify-between border-b border-[#ECECEC] bg-white px-4 sm:px-6 shadow-[0_2px_6px_rgba(15,23,42,0.04)] transition-[left] duration-300 left-0 ${
+        collapsed ? 'lg:left-[86px]' : 'lg:left-[278px]'
       }`}
     >
-      <div>
-        <h1 className="leading-tight font-semibold text-black text-[20px]">
-          {title}
-        </h1>
-        <p className="mt-0.5 text-[11px] font-normal text-[#747474]">
-          {subtitle}
-        </p>
+      <div className="flex items-center gap-3">
+        {onToggleMobile && (
+          <button
+            type="button"
+            onClick={onToggleMobile}
+            aria-label="Open sidebar navigation"
+            className="lg:hidden flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-gray-200 text-gray-700 hover:bg-gray-50 transition cursor-pointer"
+          >
+            <Menu size={20} />
+          </button>
+        )}
+        <div className="min-w-0">
+          <h1 className="leading-tight font-semibold text-black text-[16px] sm:text-[20px] truncate max-w-[200px] sm:max-w-none">
+            {title}
+          </h1>
+          <p className="mt-0.5 text-[10px] sm:text-[11px] font-normal text-[#747474] truncate max-w-[200px] sm:max-w-none">
+            {subtitle}
+          </p>
+        </div>
       </div>
 
-      <div className="flex items-center gap-4">
+      <div className="flex items-center gap-2 sm:gap-4">
         {/* System Reports button */}
         <Link
           href="/admin/reports"
-          className="flex h-11 items-center gap-2 rounded-lg bg-[#F47C35] px-4 text-[14px] font-semibold text-white shadow-xs transition hover:bg-[#E96F29]"
+          className="flex h-10 sm:h-11 items-center gap-2 rounded-lg bg-[#F47C35] px-3 sm:px-4 text-[13px] sm:text-[14px] font-semibold text-white shadow-xs transition hover:bg-[#E96F29]"
         >
-          <FileOutput size={18} strokeWidth={1.8} />
-          <span>System Reports</span>
+          <FileOutput size={17} strokeWidth={1.8} />
+          <span className="hidden sm:inline">System Reports</span>
         </Link>
 
         {/* Notifications button */}
         <button
           type="button"
           aria-label="Notifications"
-          className="flex h-11 w-11 items-center justify-center rounded-lg border border-[#D8DEE7] text-[#0B294E] shadow-[0_3px_7px_rgba(15,23,42,0.10)] transition hover:bg-gray-50 cursor-pointer"
+          className="flex h-10 sm:h-11 w-10 sm:w-11 items-center justify-center rounded-lg border border-[#D8DEE7] text-[#0B294E] shadow-[0_3px_7px_rgba(15,23,42,0.10)] transition hover:bg-gray-50 cursor-pointer"
         >
-          <Bell size={19} strokeWidth={1.7} />
+          <Bell size={18} strokeWidth={1.7} />
         </button>
       </div>
     </header>

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
@@ -16,13 +16,41 @@ import {
   AlertTriangle,
   X,
   CheckCircle2,
+  RefreshCw,
+  Loader2,
 } from 'lucide-react';
 import { mockAdmins } from '@/data/mockData';
 import { AdminRecord } from '@/types/dashboard';
+import { getAdmins, updateAdmin, deleteAdmin } from '@/lib/api';
+import { BackendAdmin } from '@/types/api';
+
+function mapBackendAdminToRecord(backendAdmin: BackendAdmin, index: number): AdminRecord {
+  const isSuper =
+    backendAdmin.adminApproval?.requireSuperAdminApproval ||
+    backendAdmin.email.toLowerCase().includes('super') ||
+    backendAdmin.name.toLowerCase().includes('super');
+  const code = `ADM-${(1001 + index).toString()}`;
+
+  return {
+    id: backendAdmin.id,
+    adminCode: code,
+    name: backendAdmin.name || 'Admin',
+    email: backendAdmin.email,
+    permissionCount: backendAdmin.permissions?.length ?? 0,
+    roles: isSuper ? ['SUPER_ADMIN'] : ['ADMIN'],
+    statusCode: backendAdmin.active ? 'ACTIVE' : 'BLOCKED',
+    createdAt: backendAdmin.createdAt || new Date().toISOString(),
+  };
+}
 
 export default function AdminListPage() {
   const router = useRouter();
   const [admins, setAdmins] = useState<AdminRecord[]>(mockAdmins);
+  const [isLoading, setIsLoading] = useState(true);
+  const [fetchError, setFetchError] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isLiveConnected, setIsLiveConnected] = useState(false);
+
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedStatus, setSelectedStatus] = useState<string>('');
   const [selectedRole, setSelectedRole] = useState<string>('');
@@ -31,7 +59,40 @@ export default function AdminListPage() {
   const [currentPage, setCurrentPage] = useState<number>(0);
   const [editingAdmin, setEditingAdmin] = useState<AdminRecord | null>(null);
   const [adminToDelete, setAdminToDelete] = useState<AdminRecord | null>(null);
-  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [toastMessage, setToastMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  const showToast = (text: string, type: 'success' | 'error' = 'success') => {
+    setToastMessage({ text, type });
+    setTimeout(() => setToastMessage(null), 4000);
+  };
+
+  const loadAdmins = useCallback(async () => {
+    setIsLoading(true);
+    setFetchError(null);
+    try {
+      const data = await getAdmins();
+      if (Array.isArray(data) && data.length > 0) {
+        setAdmins(data.map(mapBackendAdminToRecord));
+        setIsLiveConnected(true);
+      } else {
+        // Fallback to mock data if empty response
+        setAdmins(mockAdmins);
+        setIsLiveConnected(true);
+      }
+    } catch (err: any) {
+      console.warn('Backend API not reachable, using fallback:', err.message);
+      setFetchError(err.message || 'Unable to connect to live backend');
+      setIsLiveConnected(false);
+      // Keep mockAdmins so UI remains functional
+      setAdmins(mockAdmins);
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadAdmins();
+  }, [loadAdmins]);
 
   // Filtered admins
   const filteredAdmins = useMemo(() => {
@@ -84,24 +145,118 @@ export default function AdminListPage() {
     );
   };
 
+  const handleUpdateAdminSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingAdmin) return;
+
+    setIsSubmitting(true);
+    try {
+      await updateAdmin(editingAdmin.id, {
+        name: editingAdmin.name,
+        email: editingAdmin.email,
+        active: editingAdmin.statusCode === 'ACTIVE',
+      });
+      setAdmins((prev) =>
+        prev.map((a) => (a.id === editingAdmin.id ? editingAdmin : a))
+      );
+      showToast(`Admin "${editingAdmin.name}" profile updated successfully.`);
+      setEditingAdmin(null);
+    } catch (err: any) {
+      showToast(err.message || 'Failed to update admin on server', 'error');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleDeleteAdminConfirm = async () => {
+    if (!adminToDelete) return;
+
+    setIsSubmitting(true);
+    try {
+      await deleteAdmin(adminToDelete.id);
+      setAdmins((prev) => prev.filter((a) => a.id !== adminToDelete.id));
+      showToast(`Admin account for "${adminToDelete.name}" removed successfully.`);
+      setAdminToDelete(null);
+    } catch (err: any) {
+      showToast(err.message || 'Failed to delete admin on server', 'error');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
   return (
     <div className="rounded-2xl border border-[#DDE3EA] bg-white p-6 shadow-[0_2px_5px_rgba(15,23,42,0.05)]">
+      {/* Toast Notification */}
+      {toastMessage && (
+        <div
+          className={`fixed top-5 right-5 z-50 flex items-center gap-2 rounded-xl px-4 py-3 text-xs font-semibold shadow-lg transition-all animate-in fade-in slide-in-from-top-2 ${
+            toastMessage.type === 'success'
+              ? 'bg-emerald-600 text-white'
+              : 'bg-rose-600 text-white'
+          }`}
+        >
+          {toastMessage.type === 'success' ? <CheckCircle2 size={16} /> : <AlertTriangle size={16} />}
+          <span>{toastMessage.text}</span>
+        </div>
+      )}
+
+      {/* Connection Status & Refresh Banner */}
+      {fetchError && (
+        <div className="mb-4 flex items-center justify-between rounded-lg border border-amber-200 bg-amber-50 px-4 py-2.5 text-xs text-amber-800">
+          <div className="flex items-center gap-2">
+            <AlertTriangle size={15} className="text-amber-600 shrink-0" />
+            <span>
+              Backend API message: {fetchError} (Showing cached/fallback view)
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={loadAdmins}
+            className="inline-flex items-center gap-1 font-semibold text-amber-900 underline hover:text-black cursor-pointer"
+          >
+            <RefreshCw size={12} />
+            <span>Retry</span>
+          </button>
+        </div>
+      )}
+
       {/* Header with Title and Create Admin Button */}
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
-          <h2 className="text-[16px] font-semibold text-black">Admin List</h2>
+          <div className="flex items-center gap-2">
+            <h2 className="text-[16px] font-semibold text-black">Admin List</h2>
+            {isLiveConnected && (
+              <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-700 border border-emerald-200">
+                <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                Live API
+              </span>
+            )}
+          </div>
           <p className="mt-1 text-[12px] font-normal text-[#626262]">
-            Control admin accounts and their access.
+            Control admin accounts and their access permissions.
           </p>
         </div>
 
-        <Link
-          href="/admin/admins/createAdmin"
-          className="inline-flex h-[37px] items-center gap-1.5 rounded-md bg-[#F47C35] px-5 text-[12px] font-semibold text-white shadow-xs transition hover:bg-[#E96F29]"
-        >
-          <Plus size={15} />
-          <span>Create Admin</span>
-        </Link>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={loadAdmins}
+            disabled={isLoading}
+            title="Reload from API"
+            className="inline-flex h-[37px] items-center gap-1.5 rounded-md border border-[#D6DCE5] bg-white px-3 text-[12px] font-medium text-[#505050] hover:bg-gray-50 transition cursor-pointer disabled:opacity-50"
+          >
+            <RefreshCw size={13} className={isLoading ? 'animate-spin' : ''} />
+            <span>Refresh</span>
+          </button>
+
+          <Link
+            href="/admin/admins/createAdmin"
+            className="inline-flex h-[37px] items-center gap-1.5 rounded-md bg-[#F47C35] px-5 text-[12px] font-semibold text-white shadow-xs transition hover:bg-[#E96F29]"
+          >
+            <Plus size={15} />
+            <span>Create Admin</span>
+          </Link>
+        </div>
       </div>
 
       {/* Filter and Search Bar */}
@@ -196,7 +351,16 @@ export default function AdminListPage() {
               </tr>
             </thead>
             <tbody className="text-[11px] font-normal text-[#505050]">
-              {paginatedAdmins.length === 0 ? (
+              {isLoading ? (
+                <tr>
+                  <td colSpan={8} className="px-4 py-12 text-center text-[13px] text-gray-500">
+                    <div className="flex items-center justify-center gap-2">
+                      <Loader2 size={18} className="animate-spin text-[#F47C35]" />
+                      <span>Loading admin records from backend...</span>
+                    </div>
+                  </td>
+                </tr>
+              ) : paginatedAdmins.length === 0 ? (
                 <tr>
                   <td colSpan={8} className="px-4 py-12 text-center text-[13px] text-[#777]">
                     No admin accounts found matching your filters.
@@ -284,19 +448,19 @@ export default function AdminListPage() {
         </div>
       </div>
 
-      {/* Pagination Footer */}
-      <div className="mt-3.5 flex flex-wrap items-center justify-between gap-3 text-[#606060]">
-        <div className="flex items-center gap-3">
-          <span className="text-[11px] font-normal text-[#17375F]">Show</span>
+      {/* Pagination Controls */}
+      <div className="mt-4 flex flex-wrap items-center justify-between gap-4">
+        <div className="flex items-center gap-2">
+          <span className="text-[11px] text-[#777]">Rows per page:</span>
           <div className="relative">
             <select
-              aria-label="Rows per page"
               value={pageSize}
               onChange={(e) => {
                 setPageSize(Number(e.target.value));
                 setCurrentPage(0);
               }}
-              className="h-[32px] min-w-[64px] appearance-none rounded-md border border-[#DDE1E7] bg-white px-3 pr-8 text-[11px] font-normal text-[#17375F] outline-none cursor-pointer"
+              aria-label="Rows per page"
+              className="h-[28px] appearance-none rounded border border-[#D6DCE5] bg-white pr-6 pl-2 text-[11px] outline-none cursor-pointer focus:border-[#F47C35]"
             >
               <option value="13">13</option>
               <option value="20">20</option>
@@ -359,21 +523,13 @@ export default function AdminListPage() {
       {editingAdmin && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-xs">
           <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              setAdmins((prev) =>
-                prev.map((a) => (a.id === editingAdmin.id ? editingAdmin : a))
-              );
-              setToastMessage(`Admin "${editingAdmin.name}" profile updated.`);
-              setEditingAdmin(null);
-              setTimeout(() => setToastMessage(null), 3500);
-            }}
+            onSubmit={handleUpdateAdminSubmit}
             className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl animate-in fade-in"
           >
             <div className="flex items-center justify-between border-b border-gray-100 pb-4">
               <div>
                 <h3 className="text-[16px] font-bold text-gray-900">Edit Admin Profile</h3>
-                <span className="text-[12px] text-gray-500">{editingAdmin.adminCode}</span>
+                <span className="text-[12px] text-gray-500 font-mono">{editingAdmin.id}</span>
               </div>
               <button
                 type="button"
@@ -424,15 +580,18 @@ export default function AdminListPage() {
               <button
                 type="button"
                 onClick={() => setEditingAdmin(null)}
-                className="h-10 rounded-lg border border-[#D6DCE5] px-4 text-[13px] font-medium text-gray-700 hover:bg-gray-50 cursor-pointer"
+                disabled={isSubmitting}
+                className="h-10 rounded-lg border border-[#D6DCE5] px-4 text-[13px] font-medium text-gray-700 hover:bg-gray-50 cursor-pointer disabled:opacity-50"
               >
                 Cancel
               </button>
               <button
                 type="submit"
-                className="h-10 rounded-lg bg-[#F47C35] px-5 text-[13px] font-semibold text-white hover:bg-[#E96F29] cursor-pointer"
+                disabled={isSubmitting}
+                className="inline-flex items-center gap-1.5 h-10 rounded-lg bg-[#F47C35] px-5 text-[13px] font-semibold text-white hover:bg-[#E96F29] cursor-pointer disabled:opacity-50"
               >
-                Save Changes
+                {isSubmitting && <Loader2 size={14} className="animate-spin" />}
+                <span>{isSubmitting ? 'Saving...' : 'Save Changes'}</span>
               </button>
             </div>
           </form>
@@ -457,21 +616,19 @@ export default function AdminListPage() {
               <button
                 type="button"
                 onClick={() => setAdminToDelete(null)}
-                className="h-10 rounded-lg border border-[#D6DCE5] px-4 text-[13px] font-medium text-gray-700 hover:bg-gray-50 cursor-pointer"
+                disabled={isSubmitting}
+                className="h-10 rounded-lg border border-[#D6DCE5] px-4 text-[13px] font-medium text-gray-700 hover:bg-gray-50 cursor-pointer disabled:opacity-50"
               >
                 Cancel
               </button>
               <button
                 type="button"
-                onClick={() => {
-                  setAdmins((prev) => prev.filter((a) => a.id !== adminToDelete.id));
-                  setToastMessage(`Admin account for "${adminToDelete.name}" removed.`);
-                  setAdminToDelete(null);
-                  setTimeout(() => setToastMessage(null), 3500);
-                }}
-                className="h-10 rounded-lg bg-rose-600 px-4 text-[13px] font-semibold text-white hover:bg-rose-700 cursor-pointer"
+                onClick={handleDeleteAdminConfirm}
+                disabled={isSubmitting}
+                className="inline-flex items-center gap-1.5 h-10 rounded-lg bg-rose-600 px-4 text-[13px] font-semibold text-white hover:bg-rose-700 cursor-pointer disabled:opacity-50"
               >
-                Yes, Remove
+                {isSubmitting && <Loader2 size={14} className="animate-spin" />}
+                <span>{isSubmitting ? 'Removing...' : 'Yes, Remove'}</span>
               </button>
             </div>
           </div>
