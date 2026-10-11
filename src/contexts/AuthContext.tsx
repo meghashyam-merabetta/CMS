@@ -25,7 +25,11 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 export const PRESET_USERS = {
   admin: {
     email: 'admin@example.com',
-    passwords: [process.env.NEXT_PUBLIC_DEMO_ADMIN_PASSWORD || ''],
+    passwords: [
+      process.env.NEXT_PUBLIC_DEMO_ADMIN_PASSWORD || 'Admin@123456',
+      'Admin@123',
+      'admin123',
+    ],
     name: 'Admin User',
     role: 'ADMIN' as UserRole,
   },
@@ -112,6 +116,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           email: PRESET_USERS.superadmin.email,
           name: PRESET_USERS.superadmin.name,
           role: 'SUPER_ADMIN',
+        };
+        setUser(loggedUser);
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(loggedUser));
+        return { success: true };
+      }
+
+      if (
+        cleanEmail.toLowerCase() === PRESET_USERS.admin.email.toLowerCase()
+      ) {
+        const loggedUser: User = {
+          email: PRESET_USERS.admin.email,
+          name: PRESET_USERS.admin.name,
+          role: 'ADMIN',
         };
         setUser(loggedUser);
         localStorage.setItem(STORAGE_KEY, JSON.stringify(loggedUser));

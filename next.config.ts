@@ -5,18 +5,14 @@ const API_TARGET = process.env.API_PROXY_TARGET || "http://16.4.61.3:3000";
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
+  allowedDevOrigins: [
+    "192.168.1.45",
+    "192.168.1.*",
+    "192.168.*.*",
+    "*.local",
+  ],
   turbopack: {
     root: path.resolve(__dirname),
-  },
-  // Same-origin proxy: the browser calls /api/* on localhost, Next forwards it
-  // to the backend. This lets the SameSite=Lax login cookie be stored and sent.
-  async rewrites() {
-    return [
-      {
-        source: "/api/:path*",
-        destination: `${API_TARGET}/api/:path*`,
-      },
-    ];
   },
 };
 
