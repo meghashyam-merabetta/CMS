@@ -4,7 +4,7 @@ import React, { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { ArrowLeft, ShieldCheck, Check, AlertTriangle, Loader2 } from 'lucide-react';
-import { createAdmin } from '@/lib/api';
+import { createAdmin } from '@/services/api/adminManagementApi';
 
 export default function CreateAdminPage() {
   const router = useRouter();
@@ -30,15 +30,25 @@ export default function CreateAdminPage() {
       return;
     }
 
+    const pinRegex = /^[1-9]\d{5}$/;
+    if (!pinRegex.test(pincode.trim())) {
+      setErrorMessage('Pincode must be a valid 6-digit Indian PIN code starting with digits 1-9 (e.g. 400001).');
+      return;
+    }
+
     setIsSubmitting(true);
     try {
       await createAdmin({
-        name,
-        email,
+        name: name.trim(),
+        email: email.trim(),
         password,
         city: city.trim() || 'Mumbai',
-        pincode: pincode.trim() || '400001',
+        pincode: pincode.trim(),
         state: state.trim() || 'Maharashtra',
+        adminApproval: {
+          requireSuperAdminApproval: role === 'SUPER_ADMIN',
+        },
+        permissions: role === 'SUPER_ADMIN' ? ['admin.manage'] : [],
       });
       setIsSuccess(true);
       setTimeout(() => {
@@ -171,6 +181,9 @@ export default function CreateAdminPage() {
             <input
               type="text"
               required
+              maxLength={6}
+              pattern="^[1-9][0-9]{5}$"
+              title="6-digit Indian PIN code starting with digits 1-9"
               value={pincode}
               onChange={(e) => setPincode(e.target.value)}
               placeholder="e.g. 400001"

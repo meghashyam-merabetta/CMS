@@ -1,8 +1,13 @@
 'use client';
 
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import React, { Suspense, useEffect, useMemo, useRef, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { ChevronDown, CheckCircle2, FileUp, Loader2, Trash2, X } from 'lucide-react';
+import {
+  createAdminProduct,
+  updateAdminProduct,
+  getAdminProductById,
+} from '@/services/api/adminProductsApi';
 
 /* ------------------------------------------------------------------ */
 /* Static option data – replace with API calls (brands, categories,    */
@@ -376,8 +381,10 @@ interface Term {
 }
 
 /* ------------------------------- page ------------------------------- */
-export default function AddProductPage() {
+function AddProductContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const editId = searchParams?.get('id') ?? null;
 
   const [name, setName] = useState('');
   const [prescription, setPrescription] = useState('');
@@ -410,6 +417,37 @@ export default function AddProductPage() {
   const [successMessage, setSuccessMessage] = useState('');
   const [error, setError] = useState('');
   const [termError, setTermError] = useState('');
+
+  // Load existing product if editId is provided
+  useEffect(() => {
+    if (!editId) return;
+    const currentId = editId;
+    async function loadProduct(id: string) {
+      try {
+        const prod = await getAdminProductById(id);
+        if (prod) {
+          setName(prod.product_name || prod.name || '');
+          setDescription(prod.description || '');
+          setPrescription(prod.prescription_required ? 'Yes' : 'No');
+          setAgeGroup(prod.age_group || 'adults');
+          if (prod.category_id != null) {
+            setCategoryId(String(prod.category_id));
+          }
+          setSku(`PRD-${editId}`);
+          setMinQty('1');
+          setMaxQty('10');
+          setStock(String(prod.stock ?? 10));
+          setRegular(String(prod.price ?? 999));
+          const descBullets = prod.description ? parseDetails(prod.description) : ['Standard medical specifications'];
+          setDetails(descBullets.length ? descBullets : ['Standard medical specifications']);
+          setDetailsText(prod.description || 'Standard medical specifications');
+        }
+      } catch (err: any) {
+        console.warn('Could not load product for editing:', err.message);
+      }
+    }
+    void loadProduct(currentId);
+  }, [editId]);
 
   const fileRef = useRef<HTMLInputElement>(null);
   const imagesRef = useRef<GalleryImage[]>([]);
@@ -603,9 +641,25 @@ export default function AddProductPage() {
     try {
       const msg = validateBasics();
       if (msg) throw new Error(msg);
-      // TODO: POST buildPayload('DRAFT') to the product draft endpoint.
-      console.info('Draft payload', buildPayload('DRAFT'));
-      router.replace('/admin/products');
+
+      const catIdNum = Number(categoryId);
+      const payload = {
+        product_name: name.trim(),
+        prescription_required: prescription === 'Yes',
+        age_group: ageGroup || null,
+        description: description.trim() || null,
+        category_id: !isNaN(catIdNum) && catIdNum > 0 ? catIdNum : null,
+      };
+
+      if (editId) {
+        await updateAdminProduct(editId, payload);
+      } else {
+        await createAdminProduct(payload);
+      }
+      setSuccessMessage('Draft saved successfully.');
+      setTimeout(() => {
+        router.replace('/admin/products');
+      }, 1200);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to save the product draft.');
     } finally {
@@ -617,9 +671,25 @@ export default function AddProductPage() {
     setSubmitting(true);
     setError('');
     try {
-      // TODO: POST buildPayload('PUBLISHED') to the product create + publish endpoints.
-      console.info('Publish payload', buildPayload('PUBLISHED'));
-      setSuccessMessage('The product has been published.');
+      const catIdNum = Number(categoryId);
+      const payload = {
+        product_name: name.trim(),
+        prescription_required: prescription === 'Yes',
+        age_group: ageGroup || null,
+        description: description.trim() || null,
+        category_id: !isNaN(catIdNum) && catIdNum > 0 ? catIdNum : null,
+      };
+
+      if (editId) {
+        await updateAdminProduct(editId, payload);
+        setSuccessMessage('The product has been updated successfully!');
+      } else {
+        await createAdminProduct(payload);
+        setSuccessMessage('The product has been published successfully!');
+      }
+      setTimeout(() => {
+        router.push('/admin/products');
+      }, 1500);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to publish the product.');
     } finally {
@@ -1473,5 +1543,19 @@ export default function AddProductPage() {
         </div>
       )}
     </>
+  );
+}
+
+export default function AddProductPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex min-h-[400px] items-center justify-center">
+          <Loader2 className="h-8 w-8 animate-spin text-[#F47C35]" />
+        </div>
+      }
+    >
+      <AddProductContent />
+    </Suspense>
   );
 }

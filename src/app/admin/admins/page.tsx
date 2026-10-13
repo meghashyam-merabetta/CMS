@@ -18,11 +18,19 @@ import {
   CheckCircle2,
   RefreshCw,
   Loader2,
+  Key,
 } from 'lucide-react';
 import { mockAdmins } from '@/data/mockData';
 import { AdminRecord } from '@/types/dashboard';
-import { getAdmins, updateAdmin, deleteAdmin } from '@/lib/api';
+import {
+  getAdmins,
+  getAdminById,
+  updateAdmin,
+  deleteAdmin,
+  changeAdminPassword,
+} from '@/services/api/adminManagementApi';
 import { BackendAdmin } from '@/types/api';
+import { useAuth } from '@/contexts/AuthContext';
 
 function mapBackendAdminToRecord(backendAdmin: BackendAdmin, index: number): AdminRecord {
   const isSuper =
@@ -45,10 +53,12 @@ function mapBackendAdminToRecord(backendAdmin: BackendAdmin, index: number): Adm
 
 export default function AdminListPage() {
   const router = useRouter();
-  const [admins, setAdmins] = useState<AdminRecord[]>(mockAdmins);
+  const { user: currentUser } = useAuth();
+  const [admins, setAdmins] = useState<AdminRecord[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isLoadingAdminDetails, setIsLoadingAdminDetails] = useState(false);
   const [isLiveConnected, setIsLiveConnected] = useState(false);
 
   const [searchQuery, setSearchQuery] = useState('');
@@ -59,6 +69,15 @@ export default function AdminListPage() {
   const [currentPage, setCurrentPage] = useState<number>(0);
   const [editingAdmin, setEditingAdmin] = useState<AdminRecord | null>(null);
   const [adminToDelete, setAdminToDelete] = useState<AdminRecord | null>(null);
+
+  // Password reset modal state
+  const [adminForPasswordReset, setAdminForPasswordReset] = useState<AdminRecord | null>(null);
+  const [resetCurrentPassword, setResetCurrentPassword] = useState('');
+  const [resetNewPassword, setResetNewPassword] = useState('');
+  const [resetConfirmPassword, setResetConfirmPassword] = useState('');
+  const [isResettingPassword, setIsResettingPassword] = useState(false);
+  const [resetPasswordError, setResetPasswordError] = useState<string | null>(null);
+
   const [toastMessage, setToastMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   const showToast = (text: string, type: 'success' | 'error' = 'success') => {
@@ -71,20 +90,14 @@ export default function AdminListPage() {
     setFetchError(null);
     try {
       const data = await getAdmins();
-      if (Array.isArray(data) && data.length > 0) {
+      if (Array.isArray(data)) {
         setAdmins(data.map(mapBackendAdminToRecord));
-        setIsLiveConnected(true);
-      } else {
-        // Fallback to mock data if empty response
-        setAdmins(mockAdmins);
         setIsLiveConnected(true);
       }
     } catch (err: any) {
-      console.warn('Backend API not reachable, using fallback:', err.message);
+      console.warn('Backend API error:', err.message);
       setFetchError(err.message || 'Unable to connect to live backend');
       setIsLiveConnected(false);
-      // Keep mockAdmins so UI remains functional
-      setAdmins(mockAdmins);
     } finally {
       setIsLoading(false);
     }
@@ -145,6 +158,31 @@ export default function AdminListPage() {
     );
   };
 
+  const handleEditClick = async (admin: AdminRecord) => {
+    setEditingAdmin({ ...admin });
+    setIsLoadingAdminDetails(true);
+    try {
+      const details = await getAdminById(admin.id);
+      if (details) {
+        setEditingAdmin((prev) =>
+          prev
+            ? {
+                ...prev,
+                name: details.name || prev.name,
+                email: details.email || prev.email,
+                statusCode: details.active ? 'ACTIVE' : 'BLOCKED',
+                permissionCount: details.permissions?.length ?? prev.permissionCount,
+              }
+            : null
+        );
+      }
+    } catch (err: any) {
+      console.warn('Backend single admin fetch note:', err.message);
+    } finally {
+      setIsLoadingAdminDetails(false);
+    }
+  };
+
   const handleUpdateAdminSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingAdmin) return;
@@ -154,11 +192,13 @@ export default function AdminListPage() {
       await updateAdmin(editingAdmin.id, {
         name: editingAdmin.name,
         email: editingAdmin.email,
-        active: editingAdmin.statusCode === 'ACTIVE',
       });
-      setAdmins((prev) =>
-        prev.map((a) => (a.id === editingAdmin.id ? editingAdmin : a))
-      );
+      if (editingAdmin.statusCode === 'BLOCKED') {
+        await deleteAdmin(editingAdmin.id).catch((err) =>
+          console.warn('Deactivation notice:', err.message)
+        );
+      }
+      await loadAdmins();
       showToast(`Admin "${editingAdmin.name}" profile updated successfully.`);
       setEditingAdmin(null);
     } catch (err: any) {
@@ -174,13 +214,51 @@ export default function AdminListPage() {
     setIsSubmitting(true);
     try {
       await deleteAdmin(adminToDelete.id);
-      setAdmins((prev) => prev.filter((a) => a.id !== adminToDelete.id));
+      await loadAdmins();
       showToast(`Admin account for "${adminToDelete.name}" removed successfully.`);
       setAdminToDelete(null);
     } catch (err: any) {
       showToast(err.message || 'Failed to delete admin on server', 'error');
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  const handlePasswordResetSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!adminForPasswordReset) return;
+    setResetPasswordError(null);
+
+    if (resetNewPassword !== resetConfirmPassword) {
+      setResetPasswordError('New password and confirmation do not match.');
+      return;
+    }
+    if (resetNewPassword.length < 12) {
+      setResetPasswordError('Password must be at least 12 characters.');
+      return;
+    }
+
+    const isSelf = currentUser?.id === adminForPasswordReset.id;
+    if (isSelf && !resetCurrentPassword) {
+      setResetPasswordError('Current password is required to change your own password.');
+      return;
+    }
+
+    setIsResettingPassword(true);
+    try {
+      await changeAdminPassword(adminForPasswordReset.id, {
+        ...(isSelf ? { currentPassword: resetCurrentPassword } : {}),
+        newPassword: resetNewPassword,
+      });
+      showToast(`Password for "${adminForPasswordReset.name}" updated successfully.`);
+      setAdminForPasswordReset(null);
+      setResetCurrentPassword('');
+      setResetNewPassword('');
+      setResetConfirmPassword('');
+    } catch (err: any) {
+      setResetPasswordError(err.message || 'Failed to update password.');
+    } finally {
+      setIsResettingPassword(false);
     }
   };
 
@@ -347,7 +425,7 @@ export default function AdminListPage() {
                 <th className="border-r border-white px-4 py-2.5 font-medium">Permission</th>
                 <th className="border-r border-white px-4 py-2.5 font-medium">Role</th>
                 <th className="border-r border-white px-4 py-2.5 font-medium">Status</th>
-                <th className="w-[105px] border-l border-white px-4 py-2.5 font-medium text-center">Action</th>
+                <th className="w-[125px] border-l border-white px-4 py-2.5 font-medium text-center">Action</th>
               </tr>
             </thead>
             <tbody className="text-[11px] font-normal text-[#505050]">
@@ -421,12 +499,27 @@ export default function AdminListPage() {
                         <div className="inline-flex items-center justify-center gap-1.5">
                           <button
                             type="button"
-                            onClick={() => setEditingAdmin({ ...admin })}
+                            onClick={() => handleEditClick(admin)}
                             title="Edit admin"
                             aria-label={`Edit ${admin.name}`}
                             className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-gray-200 bg-white text-blue-600 hover:bg-blue-50 hover:border-blue-300 transition cursor-pointer"
                           >
                             <Edit2 size={13} />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setAdminForPasswordReset(admin);
+                              setResetPasswordError(null);
+                              setResetCurrentPassword('');
+                              setResetNewPassword('');
+                              setResetConfirmPassword('');
+                            }}
+                            title="Reset password"
+                            aria-label={`Reset password for ${admin.name}`}
+                            className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-gray-200 bg-white text-amber-600 hover:bg-amber-50 hover:border-amber-300 transition cursor-pointer"
+                          >
+                            <Key size={13} />
                           </button>
                           <button
                             type="button"
@@ -541,6 +634,13 @@ export default function AdminListPage() {
             </div>
 
             <div className="mt-4 space-y-4 text-[13px]">
+              {isLoadingAdminDetails && (
+                <div className="flex items-center gap-1.5 text-xs text-amber-700 bg-amber-50 px-3 py-1.5 rounded-lg border border-amber-200">
+                  <Loader2 size={13} className="animate-spin text-amber-600" />
+                  <span>Loading fresh admin profile from backend...</span>
+                </div>
+              )}
+
               <div>
                 <label className="block font-medium text-gray-700">Full Name</label>
                 <input
@@ -573,6 +673,25 @@ export default function AdminListPage() {
                   <option value="ACTIVE">ACTIVE</option>
                   <option value="BLOCKED">BLOCKED</option>
                 </select>
+              </div>
+
+              <div className="pt-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const target = editingAdmin;
+                    setEditingAdmin(null);
+                    setAdminForPasswordReset(target);
+                    setResetPasswordError(null);
+                    setResetCurrentPassword('');
+                    setResetNewPassword('');
+                    setResetConfirmPassword('');
+                  }}
+                  className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-[#F47C35] hover:text-[#E96F29] cursor-pointer"
+                >
+                  <Key size={13} />
+                  <span>Reset password for this admin</span>
+                </button>
               </div>
             </div>
 
@@ -632,6 +751,114 @@ export default function AdminListPage() {
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Reset Admin Password Modal */}
+      {adminForPasswordReset && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-xs">
+          <form
+            onSubmit={handlePasswordResetSubmit}
+            className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl animate-in fade-in"
+          >
+            <div className="flex items-center justify-between border-b border-gray-100 pb-4">
+              <div>
+                <h3 className="text-[16px] font-bold text-gray-900">Reset Admin Password</h3>
+                <span className="text-[12px] text-gray-500 font-mono">
+                  {adminForPasswordReset.name} ({adminForPasswordReset.email})
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setAdminForPasswordReset(null);
+                  setResetCurrentPassword('');
+                  setResetNewPassword('');
+                  setResetConfirmPassword('');
+                  setResetPasswordError(null);
+                }}
+                className="rounded-lg p-1.5 text-gray-400 hover:bg-gray-100 cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {resetPasswordError && (
+              <div className="mt-4 rounded-lg bg-rose-50 border border-rose-200 p-3 flex items-center gap-2 text-rose-800 text-xs font-medium">
+                <AlertTriangle size={15} className="shrink-0 text-rose-600" />
+                <span>{resetPasswordError}</span>
+              </div>
+            )}
+
+            <div className="mt-4 space-y-4 text-[13px]">
+              {currentUser?.id === adminForPasswordReset.id && (
+                <div>
+                  <label className="block font-medium text-gray-700">Current Password *</label>
+                  <input
+                    type="password"
+                    required
+                    value={resetCurrentPassword}
+                    onChange={(e) => setResetCurrentPassword(e.target.value)}
+                    placeholder="Enter current password"
+                    className="mt-1 h-10 w-full rounded-lg border border-[#D6DCE5] px-3 text-[13px] outline-none focus:border-[#F47C35]"
+                  />
+                </div>
+              )}
+
+              <div>
+                <label className="block font-medium text-gray-700">New Password * (Min 12 chars)</label>
+                <input
+                  type="password"
+                  required
+                  minLength={12}
+                  maxLength={72}
+                  value={resetNewPassword}
+                  onChange={(e) => setResetNewPassword(e.target.value)}
+                  placeholder="At least 12 characters"
+                  className="mt-1 h-10 w-full rounded-lg border border-[#D6DCE5] px-3 text-[13px] outline-none focus:border-[#F47C35]"
+                />
+              </div>
+
+              <div>
+                <label className="block font-medium text-gray-700">Confirm New Password *</label>
+                <input
+                  type="password"
+                  required
+                  minLength={12}
+                  maxLength={72}
+                  value={resetConfirmPassword}
+                  onChange={(e) => setResetConfirmPassword(e.target.value)}
+                  placeholder="Confirm new password"
+                  className="mt-1 h-10 w-full rounded-lg border border-[#D6DCE5] px-3 text-[13px] outline-none focus:border-[#F47C35]"
+                />
+              </div>
+            </div>
+
+            <div className="mt-6 flex justify-end gap-2 border-t border-gray-100 pt-4">
+              <button
+                type="button"
+                onClick={() => {
+                  setAdminForPasswordReset(null);
+                  setResetCurrentPassword('');
+                  setResetNewPassword('');
+                  setResetConfirmPassword('');
+                  setResetPasswordError(null);
+                }}
+                disabled={isResettingPassword}
+                className="h-10 rounded-lg border border-[#D6DCE5] px-4 text-[13px] font-medium text-gray-700 hover:bg-gray-50 cursor-pointer disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={isResettingPassword}
+                className="inline-flex items-center gap-1.5 h-10 rounded-lg bg-[#F47C35] px-5 text-[13px] font-semibold text-white hover:bg-[#E96F29] cursor-pointer disabled:opacity-50"
+              >
+                {isResettingPassword && <Loader2 size={14} className="animate-spin" />}
+                <span>{isResettingPassword ? 'Updating...' : 'Update Password'}</span>
+              </button>
+            </div>
+          </form>
         </div>
       )}
     </div>

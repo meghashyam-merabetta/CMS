@@ -1,7 +1,7 @@
 'use client';
 
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import { loginAdmin, getMe, logoutAdmin } from '@/lib/api';
+import { loginAdmin, getMe, logoutAdmin } from '@/services/api/adminAuthApi';
 
 export type UserRole = 'ADMIN' | 'SUPER_ADMIN';
 
@@ -84,16 +84,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const cleanPassword = password.trim();
 
     try {
-      // 1. Try Live Backend Login API
-      await loginAdmin(cleanEmail, cleanPassword);
+      // 1. Call Backend Login API
+      const loginRes = await loginAdmin(cleanEmail, cleanPassword);
 
-      // Fetch user profile from /api/admin/auth/me
+      // Verify active session via /api/admin/auth/me
       const meData = await getMe().catch(() => null);
+      const userSource = meData?.user || loginRes?.user;
+
       const loggedUser: User = {
-        id: meData?.user?.id,
-        email: meData?.user?.email || cleanEmail,
-        name: meData?.user?.name || 'Admin User',
-        role: 'ADMIN',
+        id: userSource?.id,
+        email: userSource?.email || cleanEmail,
+        name: userSource?.name || 'Admin User',
+        role: (userSource?.email || cleanEmail).toLowerCase().includes('super')
+          ? 'SUPER_ADMIN'
+          : 'ADMIN',
       };
 
       setUser(loggedUser);
@@ -105,39 +109,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       return { success: true };
     } catch (err: any) {
-      console.warn('Backend login failed:', err.message);
-
-      // 2. Fallback to Preset Credentials for offline development
-      if (
-        cleanEmail.toLowerCase() === PRESET_USERS.superadmin.email.toLowerCase() &&
-        PRESET_USERS.superadmin.passwords.includes(cleanPassword)
-      ) {
-        const loggedUser: User = {
-          email: PRESET_USERS.superadmin.email,
-          name: PRESET_USERS.superadmin.name,
-          role: 'SUPER_ADMIN',
-        };
-        setUser(loggedUser);
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(loggedUser));
-        return { success: true };
-      }
-
-      if (
-        cleanEmail.toLowerCase() === PRESET_USERS.admin.email.toLowerCase()
-      ) {
-        const loggedUser: User = {
-          email: PRESET_USERS.admin.email,
-          name: PRESET_USERS.admin.name,
-          role: 'ADMIN',
-        };
-        setUser(loggedUser);
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(loggedUser));
-        return { success: true };
-      }
-
+      console.warn('Backend login failed:', err?.message);
       return {
         success: false,
-        error: err.message || 'Invalid email or password. Please check your credentials.',
+        error: err?.message || 'Invalid email or password. Please check your credentials.',
       };
     }
   };

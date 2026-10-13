@@ -1,0 +1,74 @@
+[
+  {
+    "category_id": 1,
+    "category_name": "Mobility Aids",
+    "parent_category_id": null,
+    "category_image": "https://images.unsplash.com/photo-1576091160399-112ba8d25d1d?w=300&q=80",
+    "description": "Wheelchairs, walking sticks, rollators and motorized mobility aids for seniors and patients.",
+    "created_at": "2026-03-15T08:30:00.000Z",
+    "updated_at": "2026-03-15T08:30:00.000Z"
+  },
+  {
+    "category_id": 2,
+    "category_name": "Health Monitoring Devices",
+    "parent_category_id": null,
+    "category_image": "https://images.unsplash.com/photo-1584308666744-24d5c474f2ae?w=300&q=80",
+    "description": "Digital BP monitors, pulse oximeters, glucometers, ECG monitors and digital thermometers.",
+    "created_at": "2026-03-18T10:15:00.000Z",
+    "updated_at": "2026-03-18T10:15:00.000Z"
+  },
+  {
+    "category_id": 3,
+    "category_name": "Wheelchairs & Power Chairs",
+    "parent_category_id": 1,
+    "category_image": "https://images.unsplash.com/photo-1516549655169-df83a0774514?w=300&q=80",
+    "description": "Manual folding wheelchairs, reclining commode wheelchairs, and electric power chairs.",
+    "created_at": "2026-03-20T11:45:00.000Z",
+    "updated_at": "2026-03-20T11:45:00.000Z"
+  },
+  {
+    "category_id": 4,
+    "category_name": "Blood Pressure Monitors",
+    "parent_category_id": 2,
+    "category_image": "https://images.unsplash.com/photo-1584515979956-d9f6e5d09982?w=300&q=80",
+    "description": "Automatic upper-arm and wrist blood pressure monitoring devices.",
+    "created_at": "2026-03-22T09:20:00.000Z",
+    "updated_at": "2026-03-22T09:20:00.000Z"
+  },
+  {
+    "category_id": 5,
+    "category_name": "Orthopedic Supports & Braces",
+    "parent_category_id": null,
+    "category_image": "https://images.unsplash.com/photo-1559839734-2b71ea197ec2?w=300&q=80",
+    "description": "Knee braces, lumbar belts, cervical collars, wrist splints and ankle binders.",
+    "created_at": "2026-03-25T14:10:00.000Z",
+    "updated_at": "2026-03-25T14:10:00.000Z"
+  },
+  {
+    "category_id": 6,
+    "category_name": "Patient Care & Bedding",
+    "parent_category_id": null,
+    "category_image": "https://images.unsplash.com/photo-1519494026892-80bbd2d6fd0d?w=300&q=80",
+    "description": "Hospital beds, anti-bedsore air mattresses, overbed tables and patient lifting hoists.",
+    "created_at": "2026-04-01T16:00:00.000Z",
+    "updated_at": "2026-04-01T16:00:00.000Z"
+  },
+  {
+    "category_id": 7,
+    "category_name": "Updated Rollators & Walkers",
+    "parent_category_id": 1,
+    "category_image": null,
+    "description": "Lightweight aluminium 4-wheel walkers with handbrakes",
+    "created_at": "2026-10-13T10:04:08.212Z",
+    "updated_at": "2026-10-13T10:04:08.228Z"
+  },
+  {
+    "category_id": 8,
+    "category_name": "Testing",
+    "parent_category_id": 1,
+    "category_image": null,
+    "description": null,
+    "created_at": "2026-10-13T12:00:43.566Z",
+    "updated_at": "2026-10-13T12:00:43.566Z"
+  }
+]

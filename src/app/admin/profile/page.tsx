@@ -2,31 +2,57 @@
 
 import React, { useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
-import { User, Shield, Key, Check, LogOut } from 'lucide-react';
+import { User, Shield, Key, Check, LogOut, Loader2, AlertTriangle } from 'lucide-react';
+
+import { changeAdminPassword } from '@/services/api/adminManagementApi';
 
 export default function ProfilePage() {
   const { user, logout } = useAuth();
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const displayName = user?.name || 'Super Admin';
   const displayEmail = user?.email || 'superadmin@merabetta.com';
   const displayRole = user?.role === 'SUPER_ADMIN' ? 'Super Administrator' : 'Administrator';
   const isSuper = user?.role === 'SUPER_ADMIN';
 
-  const handlePasswordUpdate = (e: React.FormEvent) => {
+  const handlePasswordUpdate = async (e: React.FormEvent) => {
     e.preventDefault();
+    setErrorMessage(null);
+
     if (newPassword !== confirmPassword) {
-      alert('New password and confirm password do not match!');
+      setErrorMessage('New password and confirm password do not match!');
       return;
     }
-    setIsSuccess(true);
-    setTimeout(() => setIsSuccess(false), 3000);
-    setCurrentPassword('');
-    setNewPassword('');
-    setConfirmPassword('');
+    if (newPassword.length < 12) {
+      setErrorMessage('New password must be at least 12 characters.');
+      return;
+    }
+    if (!user?.id) {
+      setErrorMessage('Active session not found. Please log in again.');
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      await changeAdminPassword(user.id, {
+        currentPassword,
+        newPassword,
+      });
+      setIsSuccess(true);
+      setCurrentPassword('');
+      setNewPassword('');
+      setConfirmPassword('');
+      setTimeout(() => setIsSuccess(false), 3500);
+    } catch (err: any) {
+      setErrorMessage(err.message || 'Failed to update password.');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -73,8 +99,15 @@ export default function ProfilePage() {
 
         {isSuccess && (
           <div className="mb-4 rounded-lg bg-emerald-50 border border-emerald-200 p-3 flex items-center gap-2 text-emerald-800 text-xs font-medium">
-            <Check size={16} className="text-emerald-600" />
+            <Check size={16} className="text-emerald-600 shrink-0" />
             <span>Password updated successfully!</span>
+          </div>
+        )}
+
+        {errorMessage && (
+          <div className="mb-4 rounded-lg bg-rose-50 border border-rose-200 p-3 flex items-center gap-2 text-rose-800 text-xs font-medium">
+            <AlertTriangle size={16} className="text-rose-600 shrink-0" />
+            <span>{errorMessage}</span>
           </div>
         )}
 
@@ -95,14 +128,16 @@ export default function ProfilePage() {
 
           <div>
             <label className="block text-xs font-semibold text-gray-700 mb-1">
-              New Password
+              New Password (Min 12 characters)
             </label>
             <input
               type="password"
               required
+              minLength={12}
+              maxLength={72}
               value={newPassword}
               onChange={(e) => setNewPassword(e.target.value)}
-              placeholder="Minimum 8 characters"
+              placeholder="Minimum 12 characters"
               className="w-full h-10 px-3.5 rounded-lg border border-[#D6DCE5] text-xs outline-none focus:border-[#F47C35] bg-white transition"
             />
           </div>
@@ -114,6 +149,8 @@ export default function ProfilePage() {
             <input
               type="password"
               required
+              minLength={12}
+              maxLength={72}
               value={confirmPassword}
               onChange={(e) => setConfirmPassword(e.target.value)}
               placeholder="Re-enter new password"
@@ -123,9 +160,11 @@ export default function ProfilePage() {
 
           <button
             type="submit"
-            className="h-10 px-5 rounded-lg bg-[#F47C35] text-xs font-semibold text-white shadow-xs hover:bg-[#E96F29] transition cursor-pointer"
+            disabled={isSubmitting}
+            className="inline-flex items-center gap-1.5 h-10 px-5 rounded-lg bg-[#F47C35] text-xs font-semibold text-white shadow-xs hover:bg-[#E96F29] transition cursor-pointer disabled:opacity-50"
           >
-            Update Password
+            {isSubmitting && <Loader2 size={14} className="animate-spin" />}
+            <span>{isSubmitting ? 'Updating...' : 'Update Password'}</span>
           </button>
         </form>
       </div>

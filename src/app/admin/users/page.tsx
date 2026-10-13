@@ -14,7 +14,7 @@ import {
 } from 'lucide-react';
 import { mockUsers } from '@/data/mockData';
 import { CustomerUserRecord } from '@/types/dashboard';
-import { getAdminUsers } from '@/lib/api';
+import { getAdminUsers } from '@/services/api/adminUsersApi';
 import { BackendUser } from '@/types/api';
 
 function mapBackendUserToRecord(bu: BackendUser, idx: number): CustomerUserRecord {

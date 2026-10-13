@@ -1,0 +1,17 @@
+[
+  {
+    "id": "15326b96-892d-4e88-968d-ef6ea8928957",
+    "name": "Testing",
+    "email": "testing@gmail.com",
+    "active": true,
+    "city": "Kharghar, Navi Mumbai",
+    "pincode": "410210",
+    "state": "Maharashtra",
+    "adminApproval": {
+      "requireSuperAdminApproval": false
+    },
+    "permissions": [],
+    "createdAt": "2026-10-13T11:58:25.437Z",
+    "updatedAt": "2026-10-13T11:58:25.437Z"
+  }
+]
