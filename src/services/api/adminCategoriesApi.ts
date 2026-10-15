@@ -13,7 +13,7 @@ export interface CategoryListParams {
   parent_category_id?: number;
 }
 
-export const ADMIN_CATEGORIES_ENDPOINT = '/api/admin/categories/';
+export const ADMIN_CATEGORIES_ENDPOINT = '/api/admin/categories';
 
 export async function getAdminCategories(
   params?: CategoryListParams
