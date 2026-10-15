@@ -20,7 +20,7 @@ export interface AdminProductsResponse {
   demo?: boolean;
 }
 
-export const ADMIN_PRODUCTS_ENDPOINT = '/api/admin/products/';
+export const ADMIN_PRODUCTS_ENDPOINT = '/api/admin/products';
 
 export async function getAdminProducts(
   params?: ProductListParams
