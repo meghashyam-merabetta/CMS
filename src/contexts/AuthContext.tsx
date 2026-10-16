@@ -1,7 +1,7 @@
 'use client';
 
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import { loginAdmin, getMe, logoutAdmin } from '@/services/api/adminAuthApi';
+import { loginAdmin, logoutAdmin } from '@/services/api/adminAuthApi';
 
 export type UserRole = 'ADMIN' | 'SUPER_ADMIN';
 
@@ -49,34 +49,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   // Check active session on mount
   useEffect(() => {
-    async function restoreSession() {
-      try {
-        // First try to verify with real backend session cookie
-        const me = await getMe().catch(() => null);
-        if (me && me.user) {
-          const loggedUser: User = {
-            id: me.user.id,
-            email: me.user.email,
-            name: me.user.name || 'Admin',
-            role: 'ADMIN',
-          };
-          setUser(loggedUser);
-          localStorage.setItem(STORAGE_KEY, JSON.stringify(loggedUser));
-          return;
-        }
-
-        // Session invalid/expired on the server: drop any stale local copy
-        localStorage.removeItem(STORAGE_KEY);
-        sessionStorage.removeItem(STORAGE_KEY);
-        setUser(null);
-      } catch (e) {
-        console.error('Error loading session:', e);
-      } finally {
-        setIsLoading(false);
+    try {
+      const savedUser =
+        localStorage.getItem(STORAGE_KEY) ||
+        sessionStorage.getItem(STORAGE_KEY);
+      if (savedUser) {
+        setUser(JSON.parse(savedUser));
       }
+    } catch (e) {
+      console.warn('Error loading session from storage:', e);
+    } finally {
+      setIsLoading(false);
     }
-
-    restoreSession();
   }, []);
 
   const login = async (email: string, password: string, keepMeSignedIn: boolean) => {
@@ -87,9 +71,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       // 1. Call Backend Login API
       const loginRes = await loginAdmin(cleanEmail, cleanPassword);
 
-      // Verify active session via /api/admin/auth/me
-      const meData = await getMe().catch(() => null);
-      const userSource = meData?.user || loginRes?.user;
+      const userSource = loginRes?.user;
 
       const loggedUser: User = {
         id: userSource?.id,

@@ -1,5 +1,19 @@
 [
   {
+    "id": 103,
+    "product_id": 103,
+    "name": "Testing",
+    "product_name": "Testing",
+    "prescription_required": true,
+    "age_group": "children",
+    "description": "hg",
+    "category_id": null,
+    "price": 999,
+    "stock": 25,
+    "created_at": "2026-10-15T16:24:11.050Z",
+    "updated_at": "2026-10-15T16:24:11.050Z"
+  },
+  {
     "id": 102,
     "product_id": 102,
     "name": "Testing",

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 const API_TARGET = (process.env.API_PROXY_TARGET || "http://16.4.61.3:3000").replace(/\/+$/, "");
-const PROXY_ORIGIN = process.env.API_PROXY_ORIGIN || "http://localhost:5173";
+const PROXY_ORIGIN = process.env.API_PROXY_ORIGIN || API_TARGET;
 
 async function handleProxy(
   request: NextRequest,
@@ -132,7 +132,9 @@ async function handleProxy(
     }
 
     if (
-      (backendResponse.status === 404 || backendResponse.status === 415) &&
+      (backendResponse.status === 404 ||
+        backendResponse.status === 415 ||
+        backendResponse.status >= 500) &&
       path.length >= 2 &&
       path[0] === "admin" &&
       path[1] === "categories"
@@ -145,6 +147,7 @@ async function handleProxy(
         backendResponse.status === 404 ||
         backendResponse.status === 405 ||
         backendResponse.status === 415 ||
+        backendResponse.status >= 500 ||
         (backendResponse.status === 422 && request.method === "GET")
       ) {
         return await handleProductFallback(request, path, bodyBuffer);
@@ -213,7 +216,8 @@ async function handleProxy(
         backendResponse.status === 403 ||
         backendResponse.status === 404 ||
         backendResponse.status === 405 ||
-        backendResponse.status === 415
+        backendResponse.status === 415 ||
+        backendResponse.status >= 500
       ) {
         return await handleAdminFallback(request, path, bodyBuffer);
       }

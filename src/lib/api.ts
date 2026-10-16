@@ -48,7 +48,10 @@ export async function apiFetch<T>(
 ): Promise<T> {
   const { params, headers, ...rest } = options;
 
-  let url = `${BASE_URL}${endpoint}`;
+  let url =
+    endpoint.startsWith('http://') || endpoint.startsWith('https://')
+      ? endpoint
+      : `${BASE_URL}${endpoint}`;
   if (params) {
     const searchParams = new URLSearchParams();
     Object.entries(params).forEach(([key, value]) => {
@@ -58,18 +61,28 @@ export async function apiFetch<T>(
     });
     const query = searchParams.toString();
     if (query) {
-      url += `?${query}`;
+      url += (url.includes('?') ? '&' : '?') + query;
     }
   }
 
-  const res = await fetch(url, {
-    ...rest,
-    credentials: 'include',
-    headers: {
-      'Content-Type': 'application/json',
-      ...headers,
-    },
-  });
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      ...rest,
+      credentials: 'include',
+      headers: {
+        'Content-Type': 'application/json',
+        ...headers,
+      },
+    });
+  } catch (err: any) {
+    if (err instanceof TypeError || err?.name === 'TypeError' || err?.message?.includes('fetch')) {
+      throw new Error(
+        'Network error: Failed to connect to backend server. Please verify network connectivity and CORS configuration.'
+      );
+    }
+    throw err;
+  }
 
   if (!res.ok) {
     let errorMessage = `Request failed with status ${res.status}`;
