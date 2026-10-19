@@ -8,11 +8,8 @@ import {
   ChevronLeft,
   ChevronsLeft,
   ChevronsRight,
-  AlertCircle,
   RefreshCw,
-  Loader2,
 } from 'lucide-react';
-import { mockUsers } from '@/data/mockData';
 import { CustomerUserRecord } from '@/types/dashboard';
 import { getAdminUsers } from '@/services/api/adminUsersApi';
 import { BackendUser } from '@/types/api';
@@ -32,29 +29,28 @@ function mapBackendUserToRecord(bu: BackendUser, idx: number): CustomerUserRecor
 }
 
 export default function UserManagementPage() {
-  const [users, setUsers] = useState<CustomerUserRecord[]>(mockUsers);
+  const [users, setUsers] = useState<CustomerUserRecord[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isLive, setIsLive] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedStatus, setSelectedStatus] = useState<string>('');
   const [selectedCity, setSelectedCity] = useState<string>('');
-  const [pageSize, setPageSize] = useState<number>(13);
+  const [pageSize, setPageSize] = useState<number>(10);
   const [currentPage, setCurrentPage] = useState<number>(0);
-  const [pendingApprovalCount, setPendingApprovalCount] = useState<number>(1);
 
   const loadUsers = React.useCallback(async () => {
     setIsLoading(true);
     try {
       const data = await getAdminUsers();
-      if (Array.isArray(data) && data.length > 0) {
+      if (Array.isArray(data)) {
         setUsers(data.map(mapBackendUserToRecord));
         setIsLive(true);
       } else {
-        setUsers(mockUsers);
+        setUsers([]);
       }
     } catch (err) {
-      console.warn('Backend users not reachable, using mock fallback:', err);
-      setUsers(mockUsers);
+      console.warn('Backend users error:', err);
+      setUsers([]);
       setIsLive(false);
     } finally {
       setIsLoading(false);
@@ -121,35 +117,6 @@ export default function UserManagementPage() {
           <span>Refresh</span>
         </button>
       </div>
-
-      {/* Pending Approval Banner */}
-      {pendingApprovalCount > 0 && (
-        <div className="mt-5 flex flex-wrap items-center justify-between gap-5 rounded-xl border border-[#F0C47E] bg-[#FFF8EC] px-5 py-4">
-          <div className="flex items-center gap-3">
-            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#FFE9C7] text-[#B46A08]">
-              <AlertCircle size={20} />
-            </span>
-            <div>
-              <p className="text-[14px] font-semibold text-[#6E430B]">
-                {pendingApprovalCount} user request needs your approval
-              </p>
-              <p className="mt-0.5 text-[11px] text-[#8A692F]">
-                Review pending block and unblock requests before customer status changes.
-              </p>
-            </div>
-          </div>
-          <button
-            type="button"
-            onClick={() => {
-              alert('Reviewing pending approval for Baldev Singh Gill (CUST-8905)');
-              setPendingApprovalCount(0);
-            }}
-            className="h-10 shrink-0 rounded-lg bg-[#F47C35] px-5 text-[12px] font-semibold text-white transition hover:bg-[#E96F29] cursor-pointer"
-          >
-            Review next
-          </button>
-        </div>
-      )}
 
       {/* Filters & Search Row */}
       <div className="mt-5 flex flex-wrap items-center justify-end gap-3">
@@ -314,9 +281,9 @@ export default function UserManagementPage() {
               }}
               className="h-[32px] min-w-[64px] appearance-none rounded-md border border-[#DDE1E7] bg-white px-3 pr-8 text-[11px] font-normal text-[#17375F] outline-none cursor-pointer"
             >
-              <option value="13">13</option>
-              <option value="20">20</option>
+              <option value="10">10</option>
               <option value="50">50</option>
+              <option value="100">100</option>
             </select>
             <ChevronDown
               size={14}

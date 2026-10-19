@@ -65,7 +65,7 @@ export default function AdminListPage() {
   const [selectedStatus, setSelectedStatus] = useState<string>('');
   const [selectedRole, setSelectedRole] = useState<string>('');
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
-  const [pageSize, setPageSize] = useState<number>(13);
+  const [pageSize, setPageSize] = useState<number>(10);
   const [currentPage, setCurrentPage] = useState<number>(0);
   const [editingAdmin, setEditingAdmin] = useState<AdminRecord | null>(null);
   const [adminToDelete, setAdminToDelete] = useState<AdminRecord | null>(null);
@@ -555,9 +555,9 @@ export default function AdminListPage() {
               aria-label="Rows per page"
               className="h-[28px] appearance-none rounded border border-[#D6DCE5] bg-white pr-6 pl-2 text-[11px] outline-none cursor-pointer focus:border-[#F47C35]"
             >
-              <option value="13">13</option>
-              <option value="20">20</option>
+              <option value="10">10</option>
               <option value="50">50</option>
+              <option value="100">100</option>
             </select>
             <ChevronDown
               size={14}

@@ -69,7 +69,7 @@ export default function TestCategoriesPage() {
   const [categories, setCategories] = useState<TestCategoryRecord[]>(mockTestCategories);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedStatus, setSelectedStatus] = useState('');
-  const [pageSize, setPageSize] = useState(13);
+  const [pageSize, setPageSize] = useState(10);
   const [currentPage, setCurrentPage] = useState(0);
 
   const [isAddOpen, setIsAddOpen] = useState(false);
@@ -330,9 +330,9 @@ export default function TestCategoriesPage() {
               onChange={(e) => { setPageSize(Number(e.target.value)); setCurrentPage(0); }}
               className="h-[32px] min-w-[64px] appearance-none rounded-md border border-[#DDE1E7] bg-white px-3 pr-8 text-[11px] text-[#17375F] outline-none cursor-pointer"
             >
-              <option value="13">13</option>
-              <option value="20">20</option>
+              <option value="10">10</option>
               <option value="50">50</option>
+              <option value="100">100</option>
             </select>
             <ChevronDown size={14} className="pointer-events-none absolute top-1/2 right-2.5 -translate-y-1/2 text-[#9AA0A6]" />
           </div>

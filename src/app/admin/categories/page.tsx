@@ -69,7 +69,7 @@ export default function CategoryManagementPage() {
   // Filter & Pagination state
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [parentFilter, setParentFilter] = useState<string>(''); // '' = all, 'root' = root only, or categoryId
-  const [pageSize, setPageSize] = useState<number>(20);
+  const [pageSize, setPageSize] = useState<number>(10);
   const [currentPage, setCurrentPage] = useState<number>(0);
 
   // Notification state
@@ -672,8 +672,8 @@ export default function CategoryManagementPage() {
               className="h-8 rounded-md border border-gray-300 bg-white px-2 text-[12px] font-medium outline-none cursor-pointer"
             >
               <option value="10">10</option>
-              <option value="20">20</option>
               <option value="50">50</option>
+              <option value="100">100</option>
             </select>
             <span className="ml-2 text-gray-500">
               Showing {categories.length > 0 ? currentPage * pageSize + 1 : 0} to{' '}
