@@ -11,7 +11,6 @@ import {
   ChevronsLeft,
   ChevronsRight,
   Plus,
-  FileSpreadsheet,
   Package,
   Edit2,
   Trash2,
@@ -82,7 +81,6 @@ export default function ProductManagementPage() {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [pageSize, setPageSize] = useState<number>(13);
   const [currentPage, setCurrentPage] = useState<number>(0);
-  const [showBulkBanner, setShowBulkBanner] = useState<boolean>(true);
 
   // Modals state
   const [editingProduct, setEditingProduct] = useState<{
@@ -317,7 +315,7 @@ export default function ProductManagementPage() {
           </p>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           <button
             type="button"
             onClick={loadProducts}
@@ -329,15 +327,6 @@ export default function ProductManagementPage() {
             <span>Refresh</span>
           </button>
 
-          <button
-            type="button"
-            onClick={() => alert('Download template or open bulk import modal')}
-            className="inline-flex h-11 items-center gap-2 rounded-lg border border-slate-300 bg-white px-4 text-[13px] font-semibold text-slate-700 hover:bg-slate-50 transition cursor-pointer"
-          >
-            <FileSpreadsheet size={16} className="text-[#265D9B]" />
-            <span>Bulk Upload</span>
-          </button>
-
           <Link
             href="/admin/products/add"
             className="inline-flex h-11 items-center gap-2 rounded-lg bg-[#F47C35] px-5 text-[13px] font-semibold text-white shadow-xs transition hover:bg-[#E96F29]"
@@ -347,41 +336,6 @@ export default function ProductManagementPage() {
           </Link>
         </div>
       </div>
-
-      {/* Bulk Import Notification Banner */}
-      {showBulkBanner && (
-        <div className="mt-5 flex flex-wrap items-center justify-between gap-5 rounded-xl border border-[#B9D2F3] bg-[#F4F8FF] px-5 py-4">
-          <div className="flex items-center gap-3">
-            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#DFEBFC] text-[#265D9B]">
-              <FileSpreadsheet size={20} />
-            </span>
-            <div>
-              <p className="text-[14px] font-semibold text-[#173F70]">
-                1 bulk import batch needs your review
-              </p>
-              <p className="mt-0.5 text-[11px] text-[#52749C]">
-                24 linked products. Approve the complete batch at once or review individual items.
-              </p>
-            </div>
-          </div>
-          <div className="flex flex-wrap gap-2.5">
-            <button
-              type="button"
-              onClick={() => setShowBulkBanner(false)}
-              className="h-9 rounded-lg border border-[#8FB4E2] bg-white px-3.5 text-[12px] font-semibold text-[#265D9B] hover:bg-blue-50/50 transition cursor-pointer"
-            >
-              Dismiss
-            </button>
-            <button
-              type="button"
-              onClick={() => alert('Reviewing batch: MeraBetta_Sep_Catalog_Import_V2.xlsx')}
-              className="h-9 rounded-lg bg-[#265D9B] px-4 text-[12px] font-semibold text-white shadow-xs hover:bg-[#1f4e85] transition cursor-pointer"
-            >
-              Review next batch
-            </button>
-          </div>
-        </div>
-      )}
 
       {/* Search & Filters */}
       <div className="mt-5 flex flex-wrap items-center justify-end gap-3">
