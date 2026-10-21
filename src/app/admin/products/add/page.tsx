@@ -801,23 +801,6 @@ function AddProductContent() {
 
               <div className="mt-5 grid gap-5 md:grid-cols-2">
                 <div>
-                  <Label htmlFor="product-slug" required>
-                    Slug
-                  </Label>
-                  <input
-                    id="product-slug"
-                    value={slug}
-                    onChange={(e) => {
-                      setSlugTouched(true);
-                      setSlug(e.target.value);
-                      setError('');
-                    }}
-                    maxLength={280}
-                    placeholder="Auto-generated from product name"
-                    className={`${INPUT_CLASS} font-mono`}
-                  />
-                </div>
-                <div>
                   <Label htmlFor="product-status" required>
                     Product Status
                   </Label>
@@ -834,20 +817,19 @@ function AddProductContent() {
                     onChange={(v) => setProductStatus((v || 'active') as ProductStatus)}
                   />
                 </div>
-              </div>
-
-              <div className="mt-5">
-                <Label htmlFor="short-description">
-                  Short Description
-                </Label>
-                <input
-                  id="short-description"
-                  value={shortDescription}
-                  onChange={(e) => setShortDescription(e.target.value)}
-                  maxLength={500}
-                  placeholder="Enter a short summary of the product (optional)"
-                  className={INPUT_CLASS}
-                />
+                <div>
+                  <Label htmlFor="short-description">
+                    Short Description
+                  </Label>
+                  <input
+                    id="short-description"
+                    value={shortDescription}
+                    onChange={(e) => setShortDescription(e.target.value)}
+                    maxLength={500}
+                    placeholder="Enter a short summary of the product (optional)"
+                    className={INPUT_CLASS}
+                  />
+                </div>
               </div>
 
               <div className="mt-5">

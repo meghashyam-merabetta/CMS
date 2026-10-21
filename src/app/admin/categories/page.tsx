@@ -809,39 +809,19 @@ export default function CategoryManagementPage() {
                 )}
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                {/* Slug */}
-                <div>
-                  <label className="block font-medium text-gray-700">
-                    Slug <span className="text-rose-500">*</span>
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    maxLength={180}
-                    placeholder="e.g. health-monitors"
-                    value={addForm.slug}
-                    onChange={(e) =>
-                      setAddForm({ ...addForm, slug: e.target.value, slugTouched: true })
-                    }
-                    className="mt-1 h-10 w-full rounded-lg border border-[#D6DCE5] px-3 font-mono text-[12px] outline-none focus:border-[#F47C35]"
-                  />
-                </div>
-
-                {/* Status */}
-                <div>
-                  <label className="block font-medium text-gray-700">Status</label>
-                  <select
-                    value={addForm.is_active ? 'true' : 'false'}
-                    onChange={(e) =>
-                      setAddForm({ ...addForm, is_active: e.target.value === 'true' })
-                    }
-                    className="mt-1 h-10 w-full rounded-lg border border-[#D6DCE5] bg-white px-3 text-[13px] outline-none focus:border-[#F47C35]"
-                  >
-                    <option value="true">Active</option>
-                    <option value="false">Inactive</option>
-                  </select>
-                </div>
+              {/* Status */}
+              <div>
+                <label className="block font-medium text-gray-700">Status</label>
+                <select
+                  value={addForm.is_active ? 'true' : 'false'}
+                  onChange={(e) =>
+                    setAddForm({ ...addForm, is_active: e.target.value === 'true' })
+                  }
+                  className="mt-1 h-10 w-full rounded-lg border border-[#D6DCE5] bg-white px-3 text-[13px] outline-none focus:border-[#F47C35]"
+                >
+                  <option value="true">Active</option>
+                  <option value="false">Inactive</option>
+                </select>
               </div>
 
               {/* Parent Category */}
@@ -991,36 +971,19 @@ export default function CategoryManagementPage() {
                   )}
                 </div>
 
-                <div className="grid grid-cols-2 gap-3">
-                  {/* Slug */}
-                  <div>
-                    <label className="block font-medium text-gray-700">
-                      Slug <span className="text-rose-500">*</span>
-                    </label>
-                    <input
-                      type="text"
-                      required
-                      maxLength={180}
-                      value={editForm.slug}
-                      onChange={(e) => setEditForm({ ...editForm, slug: e.target.value })}
-                      className="mt-1 h-10 w-full rounded-lg border border-[#D6DCE5] px-3 font-mono text-[12px] outline-none focus:border-[#F47C35]"
-                    />
-                  </div>
-
-                  {/* Status */}
-                  <div>
-                    <label className="block font-medium text-gray-700">Status</label>
-                    <select
-                      value={editForm.is_active ? 'true' : 'false'}
-                      onChange={(e) =>
-                        setEditForm({ ...editForm, is_active: e.target.value === 'true' })
-                      }
-                      className="mt-1 h-10 w-full rounded-lg border border-[#D6DCE5] bg-white px-3 text-[13px] outline-none focus:border-[#F47C35]"
-                    >
-                      <option value="true">Active</option>
-                      <option value="false">Inactive</option>
-                    </select>
-                  </div>
+                {/* Status */}
+                <div>
+                  <label className="block font-medium text-gray-700">Status</label>
+                  <select
+                    value={editForm.is_active ? 'true' : 'false'}
+                    onChange={(e) =>
+                      setEditForm({ ...editForm, is_active: e.target.value === 'true' })
+                    }
+                    className="mt-1 h-10 w-full rounded-lg border border-[#D6DCE5] bg-white px-3 text-[13px] outline-none focus:border-[#F47C35]"
+                  >
+                    <option value="true">Active</option>
+                    <option value="false">Inactive</option>
+                  </select>
                 </div>
 
                 {/* Parent Category */}

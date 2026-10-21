@@ -86,7 +86,7 @@ function mapBackendProductToRecord(
 
   return {
     id: String(prodId),
-    productCode: bp.slug || `PRD-${String(prodId).padStart(4, '0')}`,
+    productCode: `PRD-${String(prodId).padStart(4, '0')}`,
     name,
     brand: brandLabel,
     category: categoryName,
@@ -181,6 +181,16 @@ export default function ProductManagementPage() {
             break;
           }
         }
+
+        // Sort newest products first (by created_at desc, then numeric product_id desc)
+        allBackendProducts.sort((a, b) => {
+          const timeA = a.created_at ? new Date(a.created_at).getTime() : 0;
+          const timeB = b.created_at ? new Date(b.created_at).getTime() : 0;
+          if (timeB !== timeA) return timeB - timeA;
+          const idA = Number(a.product_id ?? a.id ?? 0);
+          const idB = Number(b.product_id ?? b.id ?? 0);
+          return idB - idA;
+        });
 
         setProducts(
           allBackendProducts.map((bp, idx) =>
@@ -775,40 +785,23 @@ export default function ProductManagementPage() {
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block font-medium text-gray-700">Slug *</label>
-                  <input
-                    type="text"
-                    required
-                    maxLength={280}
-                    value={editingProduct.slug}
-                    onChange={(e) =>
-                      setEditingProduct({ ...editingProduct, slug: e.target.value })
-                    }
-                    placeholder="e.g. arrex-cord-wheelchair"
-                    className="mt-1 h-10 w-full rounded-lg border border-[#D6DCE5] px-3 font-mono text-[12px] outline-none focus:border-[#F47C35]"
-                  />
-                </div>
-
-                <div>
-                  <label className="block font-medium text-gray-700">Product Status</label>
-                  <select
-                    value={editingProduct.product_status}
-                    onChange={(e) =>
-                      setEditingProduct({
-                        ...editingProduct,
-                        product_status: e.target.value as ProductStatus,
-                      })
-                    }
-                    className="mt-1 h-10 w-full rounded-lg border border-[#D6DCE5] px-3 text-[13px] outline-none focus:border-[#F47C35]"
-                  >
-                    <option value="active">Active (Published)</option>
-                    <option value="draft">Draft</option>
-                    <option value="inactive">Inactive</option>
-                    <option value="archived">Archived</option>
-                  </select>
-                </div>
+              <div>
+                <label className="block font-medium text-gray-700">Product Status</label>
+                <select
+                  value={editingProduct.product_status}
+                  onChange={(e) =>
+                    setEditingProduct({
+                      ...editingProduct,
+                      product_status: e.target.value as ProductStatus,
+                    })
+                  }
+                  className="mt-1 h-10 w-full rounded-lg border border-[#D6DCE5] px-3 text-[13px] outline-none focus:border-[#F47C35]"
+                >
+                  <option value="active">Active (Published)</option>
+                  <option value="draft">Draft</option>
+                  <option value="inactive">Inactive</option>
+                  <option value="archived">Archived</option>
+                </select>
               </div>
 
               <div className="grid grid-cols-2 gap-3">
