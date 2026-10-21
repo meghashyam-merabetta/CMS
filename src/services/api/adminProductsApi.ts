@@ -24,11 +24,16 @@ export interface AdminProductsResponse {
 
 export const ADMIN_PRODUCTS_ENDPOINT = '/api/admin/products';
 
+/**
+ * Multer field name matching backend `multer({...}).array('uploadimage', 6)`
+ * in `src/admin/products/product_image.js`.
+ */
 export const PRODUCT_IMAGE_FIELD_NAME =
-  process.env.NEXT_PUBLIC_PRODUCT_IMAGE_FIELD || 'images';
+  process.env.NEXT_PUBLIC_PRODUCT_IMAGE_FIELD || 'uploadimage';
 
 export const MAX_PRODUCT_IMAGES = 6;
 export const MAX_TOTAL_IMAGE_BYTES = 10 * 1024 * 1024; // 10 MB overall limit
+export const ALLOWED_PRODUCT_IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/webp'];
 
 /**
  * Generates a backend-compliant URL slug matching /^[a-z0-9]+(?:-[a-z0-9]+)*$/
@@ -181,6 +186,38 @@ export async function createAdminProduct(
     }
   }
 
+  const files = (payload.images ?? []).slice(0, MAX_PRODUCT_IMAGES);
+  if (files.length > 0) {
+    for (const file of files) {
+      if (!ALLOWED_PRODUCT_IMAGE_TYPES.includes(file.type)) {
+        throw new Error('Only JPEG, PNG, and WebP images are allowed');
+      }
+    }
+    const totalBytes = files.reduce((sum, f) => sum + f.size, 0);
+    if (totalBytes > MAX_TOTAL_IMAGE_BYTES) {
+      throw new Error('Total size of all product images cannot exceed 10 MB.');
+    }
+
+    const formData = new FormData();
+    Object.entries(cleanBody).forEach(([key, val]) => {
+      if (val === undefined || val === null) return;
+      if (Array.isArray(val)) {
+        formData.append(key, JSON.stringify(val));
+      } else {
+        formData.append(key, String(val));
+      }
+    });
+    for (const file of files) {
+      formData.append(PRODUCT_IMAGE_FIELD_NAME, file);
+    }
+
+    const res = await apiFetch<any>(ADMIN_PRODUCTS_ENDPOINT, {
+      method: 'POST',
+      body: formData,
+    });
+    return res?.data ?? res;
+  }
+
   const res = await apiFetch<any>(ADMIN_PRODUCTS_ENDPOINT, {
     method: 'POST',
     body: JSON.stringify(cleanBody),
@@ -239,6 +276,38 @@ export async function updateAdminProduct(
     } else {
       cleanBody.primary_category_id = null;
     }
+  }
+
+  const files = (payload.images ?? []).slice(0, MAX_PRODUCT_IMAGES);
+  if (files.length > 0) {
+    for (const file of files) {
+      if (!ALLOWED_PRODUCT_IMAGE_TYPES.includes(file.type)) {
+        throw new Error('Only JPEG, PNG, and WebP images are allowed');
+      }
+    }
+    const totalBytes = files.reduce((sum, f) => sum + f.size, 0);
+    if (totalBytes > MAX_TOTAL_IMAGE_BYTES) {
+      throw new Error('Total size of all product images cannot exceed 10 MB.');
+    }
+
+    const formData = new FormData();
+    Object.entries(cleanBody).forEach(([key, val]) => {
+      if (val === undefined || val === null) return;
+      if (Array.isArray(val)) {
+        formData.append(key, JSON.stringify(val));
+      } else {
+        formData.append(key, String(val));
+      }
+    });
+    for (const file of files) {
+      formData.append(PRODUCT_IMAGE_FIELD_NAME, file);
+    }
+
+    const res = await apiFetch<any>(`/api/admin/products/${productId}`, {
+      method: 'PATCH',
+      body: formData,
+    });
+    return res?.data ?? res;
   }
 
   const res = await apiFetch<any>(`/api/admin/products/${productId}`, {

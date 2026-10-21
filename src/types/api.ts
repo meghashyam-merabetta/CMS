@@ -135,6 +135,7 @@ export interface CreateProductPayload {
   product_status?: ProductStatus;
   category_ids?: number[];
   primary_category_id?: number | null;
+  images?: File[];
 }
 
 export interface UpdateProductPayload {
@@ -146,6 +147,7 @@ export interface UpdateProductPayload {
   product_status?: ProductStatus;
   category_ids?: number[];
   primary_category_id?: number | null;
+  images?: File[];
 }
 
 export interface CreateCategoryPayload {

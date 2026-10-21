@@ -661,6 +661,9 @@ function AddProductContent() {
     const resolvedShortDesc =
       shortDescription.trim() ||
       (details.length > 0 ? details.join(' • ').slice(0, 500) : null);
+    const imageFiles = images
+      .map((i) => i.file)
+      .filter((f): f is File => f instanceof File);
 
     return {
       product_name: name.trim(),
@@ -671,6 +674,7 @@ function AddProductContent() {
       product_status: targetStatus,
       ...(categoryIds.length > 0 ? { category_ids: categoryIds } : {}),
       ...(primaryCategoryId != null ? { primary_category_id: primaryCategoryId } : {}),
+      ...(imageFiles.length > 0 ? { images: imageFiles } : {}),
     };
   }
 
