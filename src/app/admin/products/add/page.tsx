@@ -109,12 +109,8 @@ const IMAGE_RULES = {
   maxFiles: MAX_PRODUCT_IMAGES,
   maxBytes: MAX_TOTAL_IMAGE_BYTES,
   maxTotalBytes: MAX_TOTAL_IMAGE_BYTES,
-  minWidth: 800,
-  minHeight: 800,
-  accept:
-    'image/jpeg,image/png,image/webp,image/gif,image/tiff,image/bmp,image/svg+xml,image/heic,image/heif,image/avif,.psd,.heic,.heif,.avif,.tif,.tiff',
-  requirements:
-    'JPG, PNG, WebP, GIF, TIFF, BMP, PSD, SVG, HEIC/HEIF or AVIF · Max 6 images · Max 10 MB total overall · At least 800×800 px · Images max 10,000 px per side and 25 MP. Formats without a browser preview require server verification.',
+  accept: 'image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp',
+  requirements: 'JPG, PNG or WebP · Max 6 images · Max 10 MB total',
 };
 
 const TERM_IMAGE_REQUIREMENTS = IMAGE_RULES.requirements;
@@ -164,28 +160,22 @@ function parseDetails(text: string): string[] {
   return [...seen.values()];
 }
 
+const ALLOWED_IMAGE_MIME_TYPES = new Set(['image/jpeg', 'image/jpg', 'image/png', 'image/webp']);
+
 async function validateImage(file: File): Promise<void> {
   if (file.size > IMAGE_RULES.maxBytes) {
-    throw new Error(`${file.name} exceeds the 10 MB total limit.`);
+    throw new Error(`${file.name} exceeds the 10 MB limit.`);
   }
-  if (!file.type.startsWith('image/') || /tiff|heic|heif|photoshop/.test(file.type)) return;
-  if (file.type === 'image/svg+xml') return;
+  const extAllowed = /\.(jpe?g|png|webp)$/i.test(file.name);
+  if (!ALLOWED_IMAGE_MIME_TYPES.has(file.type.toLowerCase()) && !extAllowed) {
+    throw new Error(`${file.name} is not supported. Only JPG, PNG, and WebP images are allowed.`);
+  }
   const url = URL.createObjectURL(file);
   try {
     await new Promise<void>((resolve, reject) => {
       const img = new window.Image();
-      img.onload = () => {
-        if (img.naturalWidth < IMAGE_RULES.minWidth || img.naturalHeight < IMAGE_RULES.minHeight) {
-          reject(new Error(`${file.name} must be at least ${IMAGE_RULES.minWidth}×${IMAGE_RULES.minHeight} px.`));
-        } else if (
-          img.naturalWidth > 10000 ||
-          img.naturalHeight > 10000 ||
-          img.naturalWidth * img.naturalHeight > 25_000_000
-        ) {
-          reject(new Error(`${file.name} exceeds the maximum dimensions.`));
-        } else resolve();
-      };
-      img.onerror = () => reject(new Error(`${file.name} could not be read as an image.`));
+      img.onload = () => resolve();
+      img.onerror = () => reject(new Error(`${file.name} could not be read as a valid image.`));
       img.src = url;
     });
   } finally {
