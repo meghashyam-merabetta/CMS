@@ -82,6 +82,7 @@ export interface ProductRecord {
   name: string;
   brand: string;
   category: string;
+  categoryId?: string;
   price: number;
   originalPrice?: number;
   stock: number;

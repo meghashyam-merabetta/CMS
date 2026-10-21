@@ -741,10 +741,6 @@ function AddProductContent() {
             </div>
           </div>
 
-          <div className="mt-5 rounded-lg border border-[#B7DFC0] bg-[#F1FBF3] px-4 py-3 text-[12px] text-[#277A38]">
-            Your account can publish product changes directly. The backend response remains authoritative.
-          </div>
-
           {error && !previewOpen && (
             <p
               role="alert"

@@ -55,6 +55,7 @@ function mapBackendProductToRecord(
     name,
     brand: bp.age_group ? `Age: ${bp.age_group}` : 'Merabetta',
     category: categoryName,
+    categoryId: bp.category_id != null ? String(bp.category_id) : undefined,
     price,
     originalPrice: Math.round(price * 1.2),
     stock,
@@ -119,10 +120,34 @@ export default function ProductManagementPage() {
     setIsLoading(true);
     setFetchError(null);
     try {
-      const res = await getAdminProducts({ limit: 100 });
+      const BATCH_SIZE = 100;
+      const res = await getAdminProducts({ limit: BATCH_SIZE, offset: 0 });
       if (Array.isArray(res.data)) {
-        setProducts(res.data.map((bp, idx) => mapBackendProductToRecord(bp, idx, categories)));
-        setTotalCount(res.pagination?.total ?? res.data.length);
+        let allBackendProducts: BackendProduct[] = [...res.data];
+        const total = res.pagination?.total ?? res.data.length;
+
+        let nextOffset = res.data.length;
+        while (nextOffset < total && res.data.length > 0) {
+          const nextRes = await getAdminProducts({
+            limit: BATCH_SIZE,
+            offset: nextOffset,
+          });
+          if (!Array.isArray(nextRes.data) || nextRes.data.length === 0) {
+            break;
+          }
+          allBackendProducts = [...allBackendProducts, ...nextRes.data];
+          nextOffset += nextRes.data.length;
+          if (nextRes.pagination && !nextRes.pagination.hasMore) {
+            break;
+          }
+        }
+
+        setProducts(
+          allBackendProducts.map((bp, idx) =>
+            mapBackendProductToRecord(bp, idx, categories)
+          )
+        );
+        setTotalCount(Math.max(total, allBackendProducts.length));
         setIsLive(true);
       }
     } catch (err: any) {
@@ -217,7 +242,9 @@ export default function ProductManagementPage() {
         p.brand.toLowerCase().includes(q);
 
       const matchesCat =
-        !selectedCategory || p.category.toLowerCase().includes(selectedCategory.toLowerCase());
+        !selectedCategory ||
+        p.categoryId === selectedCategory ||
+        p.category.toLowerCase().includes(selectedCategory.toLowerCase());
 
       const matchesBrand =
         !selectedBrand || p.brand.toLowerCase() === selectedBrand.toLowerCase();
@@ -231,9 +258,10 @@ export default function ProductManagementPage() {
 
   // Paginated products
   const totalPages = Math.ceil(filteredProducts.length / pageSize) || 1;
+  const safeCurrentPage = Math.min(currentPage, totalPages - 1);
   const paginatedProducts = filteredProducts.slice(
-    currentPage * pageSize,
-    (currentPage + 1) * pageSize
+    safeCurrentPage * pageSize,
+    (safeCurrentPage + 1) * pageSize
   );
 
   const isAllSelected =
@@ -564,12 +592,14 @@ export default function ProductManagementPage() {
 
         <div className="flex items-center gap-4">
           <span className="text-[11px] text-[#777]">
-            {totalCount || filteredProducts.length} total
+            {searchQuery.trim() || selectedCategory || selectedBrand || selectedStatus
+              ? `${filteredProducts.length} of ${totalCount || products.length} total`
+              : `${totalCount || filteredProducts.length} total`}
           </span>
           <button
             type="button"
             aria-label="First page"
-            disabled={currentPage === 0}
+            disabled={safeCurrentPage === 0}
             onClick={() => setCurrentPage(0)}
             className="disabled:opacity-35 cursor-pointer disabled:cursor-not-allowed hover:text-[#F47C35] transition"
           >
@@ -578,20 +608,20 @@ export default function ProductManagementPage() {
           <button
             type="button"
             aria-label="Previous page"
-            disabled={currentPage === 0}
-            onClick={() => setCurrentPage((p) => Math.max(p - 1, 0))}
+            disabled={safeCurrentPage === 0}
+            onClick={() => setCurrentPage(Math.max(safeCurrentPage - 1, 0))}
             className="disabled:opacity-35 cursor-pointer disabled:cursor-not-allowed hover:text-[#F47C35] transition"
           >
             <ChevronLeft size={18} strokeWidth={1.8} />
           </button>
           <span className="text-[11px] font-normal">
-            Page {currentPage + 1} of {totalPages}
+            Page {safeCurrentPage + 1} of {totalPages}
           </span>
           <button
             type="button"
             aria-label="Next page"
-            disabled={currentPage + 1 >= totalPages}
-            onClick={() => setCurrentPage((p) => Math.min(p + 1, totalPages - 1))}
+            disabled={safeCurrentPage + 1 >= totalPages}
+            onClick={() => setCurrentPage(Math.min(safeCurrentPage + 1, totalPages - 1))}
             className="disabled:opacity-35 cursor-pointer disabled:cursor-not-allowed hover:text-[#F47C35] transition"
           >
             <ChevronRight size={18} strokeWidth={1.8} />
@@ -599,7 +629,7 @@ export default function ProductManagementPage() {
           <button
             type="button"
             aria-label="Last page"
-            disabled={currentPage + 1 >= totalPages}
+            disabled={safeCurrentPage + 1 >= totalPages}
             onClick={() => setCurrentPage(totalPages - 1)}
             className="disabled:opacity-35 cursor-pointer disabled:cursor-not-allowed hover:text-[#F47C35] transition"
           >
