@@ -48,6 +48,9 @@ export interface BackendProduct {
   categories?: BackendCategory[];
   category_ids?: number[];
   primary_category_id?: number | null;
+  category_id?: number | null;
+  prescription_required?: boolean;
+  age_group?: string | null;
   price?: number;
   stock?: number;
   image_url?: string | null;
@@ -61,7 +64,7 @@ export interface BackendProduct {
 
 export interface BackendCategory {
   id?: number | string;
-  category_id?: number | string;
+  category_id?: number;
   category_name: string;
   name?: string;
   slug?: string;
@@ -69,7 +72,7 @@ export interface BackendCategory {
   image_url?: string | null;
   imageUrl?: string | null;
   category_image_url?: string | null;
-  parent_category_id?: number | string | null;
+  parent_category_id?: number | null;
   parent_id?: number | string | null;
   description?: string | null;
   sort_order?: number;
@@ -135,6 +138,9 @@ export interface CreateProductPayload {
   product_status?: ProductStatus;
   category_ids?: number[];
   primary_category_id?: number | null;
+  category_id?: number | null;
+  prescription_required?: boolean;
+  age_group?: string | null;
   images?: File[];
 }
 
@@ -147,6 +153,9 @@ export interface UpdateProductPayload {
   product_status?: ProductStatus;
   category_ids?: number[];
   primary_category_id?: number | null;
+  category_id?: number | null;
+  prescription_required?: boolean;
+  age_group?: string | null;
   images?: File[];
 }
 
