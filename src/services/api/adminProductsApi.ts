@@ -325,5 +325,6 @@ export async function deleteAdminProduct(
 ): Promise<void> {
   await apiFetch(`/api/admin/products/${productId}`, {
     method: 'DELETE',
+    body: JSON.stringify({}),
   });
 }

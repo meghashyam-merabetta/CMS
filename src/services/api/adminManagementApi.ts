@@ -73,6 +73,7 @@ export async function updateAdmin(
 export async function deleteAdmin(id: string): Promise<void> {
   await apiFetch(`/api/admin/management/${id}`, {
     method: 'DELETE',
+    body: JSON.stringify({}),
   });
 }
 

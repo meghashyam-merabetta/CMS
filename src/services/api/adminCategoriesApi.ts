@@ -178,5 +178,6 @@ export async function deleteAdminCategory(
 ): Promise<void> {
   await apiFetch(`/api/admin/categories/${categoryId}`, {
     method: 'DELETE',
+    body: JSON.stringify({}),
   });
 }

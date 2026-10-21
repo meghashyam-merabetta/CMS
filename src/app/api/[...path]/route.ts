@@ -80,11 +80,11 @@ async function handleProxy(
     const rawBody = await request.arrayBuffer();
     if (rawBody.byteLength > 0) {
       body = rawBody;
-    } else if (method === "POST" || method === "PUT" || method === "PATCH") {
+    } else if (method === "POST" || method === "PUT" || method === "PATCH" || method === "DELETE") {
       // Backend csrfGuard requires application/json body for mutating operations
       body = Buffer.from("{}");
     }
-    if ((body !== undefined || method === "POST" || method === "PUT" || method === "PATCH") && !headers.has("content-type")) {
+    if ((body !== undefined || method === "POST" || method === "PUT" || method === "PATCH" || method === "DELETE") && !headers.has("content-type")) {
       headers.set("content-type", "application/json");
     }
   }
