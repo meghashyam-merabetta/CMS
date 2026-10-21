@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 const API_TARGET = (process.env.API_PROXY_TARGET || "http://16.4.61.3:3000").replace(/\/+$/, "");
-const PROXY_ORIGIN = process.env.API_PROXY_ORIGIN || API_TARGET;
+const PROXY_ORIGIN = process.env.API_PROXY_ORIGIN || "http://localhost:5173";
 
 async function handleProxy(
   request: NextRequest,

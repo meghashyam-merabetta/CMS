@@ -7,41 +7,38 @@ import {
   createAdminProduct,
   updateAdminProduct,
   getAdminProductById,
+  resolveProductImageUrls,
+  generateProductSlug,
+  MAX_PRODUCT_IMAGES,
+  MAX_TOTAL_IMAGE_BYTES,
 } from '@/services/api/adminProductsApi';
+import { getAllAdminCategories } from '@/services/api/adminCategoriesApi';
+import { ProductStatus } from '@/types/api';
 
 /* ------------------------------------------------------------------ */
-/* Static option data – replace with API calls (brands, categories,    */
-/* age groups, variant types) when the backend endpoints are wired up. */
+/* Option data & types                                                */
 /* ------------------------------------------------------------------ */
 interface Subcategory { id: string; name: string; active?: boolean }
 interface Category { id: string; name: string; active?: boolean; subs: Subcategory[] }
 interface VariantType { id: string; name: string; terms: { id: string; name: string }[] }
 
-const AGE_GROUPS = [
-  { id: 'infants', name: 'Infants', min: 0, max: 2 },
-  { id: 'children', name: 'Children', min: 3, max: 12 },
-  { id: 'teens', name: 'Teens', min: 13, max: 19 },
-  { id: 'adults', name: 'Adults', min: 20, max: 59 },
-  { id: 'seniors', name: 'Seniors', min: 60, max: null as number | null },
-];
-
 const BRANDS = [
-  { id: 'merabetta-care', name: 'Merabetta Care' },
-  { id: 'omron', name: 'Omron' },
-  { id: 'vissco', name: 'Vissco' },
-  { id: 'karma-health', name: 'Karma Health' },
+  { id: '15', name: 'Arrex' },
+  { id: '16', name: 'Dr. Morepen' },
+  { id: '1', name: 'Eldiaper' },
+  { id: '17', name: 'Flamingo' },
+  { id: '2', name: 'Friends' },
+  { id: '18', name: 'Happy Cotton' },
+  { id: '3', name: 'Joylife' },
+  { id: '4', name: 'Lifree' },
+  { id: '19', name: 'Merabetta Care' },
+  { id: '5', name: 'Nuvy' },
 ];
 
-const CATEGORIES: Category[] = [
-  { id: 'comfort', name: 'Comfort & Furniture', subs: [] },
-  { id: 'cushions', name: 'Cushions & Pillows', subs: [] },
-  { id: 'daily-living', name: 'Daily Living', subs: [] },
-  { id: 'mobility', name: 'Mobility Aids', subs: [] },
-  {
-    id: 'monitoring',
-    name: 'Health Monitoring',
-    subs: [{ id: 'health-care-products', name: 'Health Care products' }],
-  },
+const FALLBACK_CATEGORIES: Category[] = [
+  { id: '1', name: 'Child Care', subs: [] },
+  { id: '2', name: 'Daily Living', subs: [] },
+  { id: '30', name: 'Mobility & Assistive', subs: [{ id: '31', name: 'Assistive Device' }] },
 ];
 
 const VARIANT_TYPES: VariantType[] = [
@@ -109,14 +106,15 @@ const VARIANT_TYPES: VariantType[] = [
 ];
 
 const IMAGE_RULES = {
-  maxFiles: 6,
-  maxBytes: 2 * 1024 * 1024,
+  maxFiles: MAX_PRODUCT_IMAGES,
+  maxBytes: MAX_TOTAL_IMAGE_BYTES,
+  maxTotalBytes: MAX_TOTAL_IMAGE_BYTES,
   minWidth: 800,
   minHeight: 800,
   accept:
     'image/jpeg,image/png,image/webp,image/gif,image/tiff,image/bmp,image/svg+xml,image/heic,image/heif,image/avif,.psd,.heic,.heif,.avif,.tif,.tiff',
   requirements:
-    'JPG, PNG, WebP, GIF, TIFF, BMP, PSD, SVG, HEIC/HEIF or AVIF · Max 2 MiB · At least 800×800 px · Images max 10,000 px per side and 25 MP. Formats without a browser preview require server verification.',
+    'JPG, PNG, WebP, GIF, TIFF, BMP, PSD, SVG, HEIC/HEIF or AVIF · Max 6 images · Max 10 MB total overall · At least 800×800 px · Images max 10,000 px per side and 25 MP. Formats without a browser preview require server verification.',
 };
 
 const TERM_IMAGE_REQUIREMENTS = IMAGE_RULES.requirements;
@@ -166,16 +164,9 @@ function parseDetails(text: string): string[] {
   return [...seen.values()];
 }
 
-function ageLabel(g: (typeof AGE_GROUPS)[number]) {
-  if (g.min != null && g.max != null) return `${g.name} (${g.min}–${g.max} years)`;
-  if (g.min != null) return `${g.name} (${g.min}+ years)`;
-  if (g.max != null) return `${g.name} (Up to ${g.max} years)`;
-  return g.name;
-}
-
 async function validateImage(file: File): Promise<void> {
   if (file.size > IMAGE_RULES.maxBytes) {
-    throw new Error(`${file.name} exceeds the 2 MiB limit.`);
+    throw new Error(`${file.name} exceeds the 10 MB total limit.`);
   }
   if (!file.type.startsWith('image/') || /tiff|heic|heif|photoshop/.test(file.type)) return;
   if (file.type === 'image/svg+xml') return;
@@ -367,7 +358,13 @@ function BulletTextarea({
 }
 
 /* ------------------------------- types ------------------------------ */
-interface GalleryImage { key: string; src: string; name: string; file: File }
+interface GalleryImage {
+  key: string;
+  src: string;
+  name: string;
+  size: number;
+  file?: File;
+}
 interface Term {
   key: string;
   termId: string;
@@ -387,23 +384,26 @@ function AddProductContent() {
   const editId = searchParams?.get('id') ?? null;
 
   const [name, setName] = useState('');
-  const [prescription, setPrescription] = useState('');
-  const [ageGroup, setAgeGroup] = useState('');
+  const [slug, setSlug] = useState('');
+  const [slugTouched, setSlugTouched] = useState(false);
+  const [productStatus, setProductStatus] = useState<ProductStatus>('active');
+  const [shortDescription, setShortDescription] = useState('');
   const [description, setDescription] = useState('');
   const [detailsText, setDetailsText] = useState('');
   const [details, setDetails] = useState<string[]>([]);
   const [productType, setProductType] = useState<'SIMPLE' | 'VARIABLE'>('SIMPLE');
   const [tab, setTab] = useState<TabId>('inventory');
   const [sku, setSku] = useState('');
-  const [minQty, setMinQty] = useState('');
-  const [maxQty, setMaxQty] = useState('');
+  const [minQty, setMinQty] = useState('1');
+  const [maxQty, setMaxQty] = useState('10');
   const [offer, setOffer] = useState('');
   const [regular, setRegular] = useState('');
   const [sale, setSale] = useState('');
   const [stock, setStock] = useState('');
   const [returnAvail, setReturnAvail] = useState('Yes');
-  const [returnDays, setReturnDays] = useState('');
+  const [returnDays, setReturnDays] = useState('7');
   const [brand, setBrand] = useState('');
+  const [categoriesList, setCategoriesList] = useState<Category[]>(FALLBACK_CATEGORIES);
   const [categoryId, setCategoryId] = useState('');
   const [subCategoryId, setSubCategoryId] = useState('');
   const [variantTypeId, setVariantTypeId] = useState('');
@@ -418,6 +418,39 @@ function AddProductContent() {
   const [error, setError] = useState('');
   const [termError, setTermError] = useState('');
 
+  // Load live categories from backend
+  useEffect(() => {
+    async function fetchCategories() {
+      try {
+        const all = await getAllAdminCategories();
+        if (Array.isArray(all) && all.length > 0) {
+          const roots = all.filter((c) => c.parent_category_id == null);
+          const children = all.filter((c) => c.parent_category_id != null);
+          const tree: Category[] = (roots.length > 0 ? roots : all).map((r) => {
+            const rId = String(r.category_id ?? r.id);
+            const subs = children
+              .filter((ch) => String(ch.parent_category_id) === rId)
+              .map((ch) => ({
+                id: String(ch.category_id ?? ch.id),
+                name: ch.category_name || ch.name || `Category #${ch.category_id ?? ch.id}`,
+                active: ch.is_active !== false,
+              }));
+            return {
+              id: rId,
+              name: r.category_name || r.name || `Category #${rId}`,
+              active: r.is_active !== false,
+              subs,
+            };
+          });
+          setCategoriesList(tree);
+        }
+      } catch (err) {
+        console.warn('Could not load live categories:', err);
+      }
+    }
+    void fetchCategories();
+  }, []);
+
   // Load existing product if editId is provided
   useEffect(() => {
     if (!editId) return;
@@ -426,14 +459,31 @@ function AddProductContent() {
       try {
         const prod = await getAdminProductById(id);
         if (prod) {
-          setName(prod.product_name || prod.name || '');
+          const prodName = prod.product_name || prod.name || '';
+          setName(prodName);
+          setSlug(prod.slug || generateProductSlug(prodName));
+          setSlugTouched(true);
+          setProductStatus(prod.product_status || 'active');
+          setShortDescription(prod.short_description || '');
           setDescription(prod.description || '');
-          setPrescription(prod.prescription_required ? 'Yes' : 'No');
-          setAgeGroup(prod.age_group || 'adults');
-          if (prod.category_id != null) {
-            setCategoryId(String(prod.category_id));
+          if (prod.brand_id != null) {
+            setBrand(String(prod.brand_id));
           }
-          setSku(`PRD-${editId}`);
+          if (Array.isArray(prod.categories) && prod.categories.length > 0) {
+            const primary =
+              prod.categories.find((c) => c.ProductCategory?.is_primary) || prod.categories[0];
+            const pId = String(primary.category_id ?? primary.id ?? '');
+            const parentId =
+              primary.parent_category_id != null ? String(primary.parent_category_id) : '';
+            if (parentId) {
+              setCategoryId(parentId);
+              setSubCategoryId(pId);
+            } else {
+              setCategoryId(pId);
+              setSubCategoryId('');
+            }
+          }
+          setSku(prod.slug || `PRD-${editId}`);
           setMinQty('1');
           setMaxQty('10');
           setStock(String(prod.stock ?? 10));
@@ -441,6 +491,17 @@ function AddProductContent() {
           const descBullets = prod.description ? parseDetails(prod.description) : ['Standard medical specifications'];
           setDetails(descBullets.length ? descBullets : ['Standard medical specifications']);
           setDetailsText(prod.description || 'Standard medical specifications');
+          const existingUrls = resolveProductImageUrls(prod);
+          if (existingUrls.length > 0) {
+            setImages(
+              existingUrls.slice(0, IMAGE_RULES.maxFiles).map((url, idx) => ({
+                key: `existing-${idx}-${uid()}`,
+                src: url,
+                name: `Image ${idx + 1}`,
+                size: 0,
+              }))
+            );
+          }
         }
       } catch (err: any) {
         console.warn('Could not load product for editing:', err.message);
@@ -466,9 +527,9 @@ function AddProductContent() {
     [],
   );
 
-  const category = CATEGORIES.find((c) => c.id === categoryId);
+  const category = categoriesList.find((c) => c.id === categoryId);
   const variantType = VARIANT_TYPES.find((v) => v.id === variantTypeId);
-  const brandName = BRANDS.find((b) => b.id === brand)?.name ?? 'Unbranded';
+  const brandName = BRANDS.find((b) => b.id === brand)?.name ?? (brand ? `Brand #${brand}` : 'Unbranded');
 
   const priceSummary = useMemo(() => {
     if (productType === 'SIMPLE') return `₹${sale || regular || '—'}`;
@@ -479,49 +540,29 @@ function AddProductContent() {
     return lo === hi ? `₹${lo}` : `₹${lo} – ₹${hi}`;
   }, [productType, regular, sale, terms]);
 
+  const totalImageBytes = useMemo(
+    () => images.reduce((sum, img) => sum + (img.size || img.file?.size || 0), 0),
+    [images]
+  );
+
   function validateBasics(): string {
-    if (!name.trim() || !sku.trim() || !prescription || !ageGroup || !description.trim() || details.length === 0)
-      return 'Complete all required product information.';
-    if (!categoryId) return 'Select one main category.';
-    const min = num(minQty);
-    const max = num(maxQty);
-    if (!min || !max || min < 1 || max < min || !Number.isInteger(min) || !Number.isInteger(max))
-      return 'Enter valid minimum and maximum order quantities.';
-    if (returnAvail === 'Yes') {
-      const d = num(returnDays);
-      if (!d || d < 1 || !Number.isInteger(d)) return 'Enter a valid return window in days.';
+    if (!name.trim()) return 'Product name is required.';
+    const resolvedSlug = generateProductSlug(slug.trim() || name.trim());
+    if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(resolvedSlug)) {
+      return 'Slug must contain only lowercase letters, numbers, and hyphens.';
     }
+    if (!description.trim() && details.length === 0) {
+      return 'Enter a product description or product details.';
+    }
+    if (images.length > IMAGE_RULES.maxFiles)
+      return `A product can have a maximum of ${IMAGE_RULES.maxFiles} gallery images.`;
+    if (totalImageBytes > IMAGE_RULES.maxTotalBytes)
+      return 'Total size of all product images cannot exceed 10 MB overall.';
     return '';
   }
 
   function validateAll(): string {
-    const basics = validateBasics();
-    if (basics) return basics;
-    if (images.length === 0) return 'Upload at least one product image.';
-    if (productType === 'SIMPLE') {
-      const r = num(regular);
-      const o = num(offer);
-      const s = num(sale);
-      const st = num(stock);
-      if (!r || r <= 0 || st == null || st < 0 || !Number.isInteger(st))
-        return 'Enter a valid regular price and numeric stock quantity.';
-      if (o != null && (o < 0 || o > 99.99)) return 'Offer availability must be between 0 and 99.99%.';
-      if (s != null && (s <= 0 || s > r))
-        return 'Sale price must be greater than zero and cannot exceed the regular price.';
-    } else {
-      if (!variantTypeId || terms.length === 0) return 'Select one variant type and keep at least one term.';
-      for (const t of terms) {
-        const r = num(t.regularPrice);
-        const o = num(t.offerPercent);
-        const s = num(t.salePrice);
-        const st = num(t.stockQuantity);
-        if (!r || r <= 0 || st == null || st < 0 || !Number.isInteger(st) || !t.description.trim())
-          return `Complete price, stock quantity, and description for ${t.name}.`;
-        if (o != null && (o < 0 || o > 99.99)) return `Offer availability for ${t.name} must be between 0 and 99.99%.`;
-        if (s != null && (s <= 0 || s > r)) return `Sale price for ${t.name} cannot exceed its regular price.`;
-      }
-    }
-    return '';
+    return validateBasics();
   }
 
   async function onPickImages(e: React.ChangeEvent<HTMLInputElement>) {
@@ -529,10 +570,16 @@ function AddProductContent() {
     const room = IMAGE_RULES.maxFiles - images.length;
     const take = files.slice(0, room);
     const accepted: File[] = [];
+    let runningBytes = images.reduce((sum, img) => sum + (img.size || img.file?.size || 0), 0);
     let msg = files.length > room ? `A product can have a maximum of ${IMAGE_RULES.maxFiles} gallery images.` : '';
     for (const f of take) {
       try {
         await validateImage(f);
+        if (runningBytes + f.size > IMAGE_RULES.maxTotalBytes) {
+          msg = `Cannot add "${f.name}": total size of all images cannot exceed 10 MB overall.`;
+          continue;
+        }
+        runningBytes += f.size;
         accepted.push(f);
       } catch (err) {
         msg = err instanceof Error ? err.message : 'Unable to use one of the selected images.';
@@ -541,7 +588,13 @@ function AddProductContent() {
     setError(msg);
     setImages((prev) => [
       ...prev,
-      ...accepted.map((f) => ({ key: uid(), src: URL.createObjectURL(f), name: f.name, file: f })),
+      ...accepted.map((f) => ({
+        key: uid(),
+        src: URL.createObjectURL(f),
+        name: f.name,
+        size: f.size,
+        file: f,
+      })),
     ]);
     e.target.value = '';
   }
@@ -560,7 +613,7 @@ function AddProductContent() {
       prev.map((t) => {
         if (t.key !== key) return t;
         if (t.image) URL.revokeObjectURL(t.image.src);
-        return { ...t, image: { key: uid(), src: URL.createObjectURL(f), name: f.name, file: f } };
+        return { ...t, image: { key: uid(), src: URL.createObjectURL(f), name: f.name, size: f.size, file: f } };
       }),
     );
     setTermError('');
@@ -595,43 +648,39 @@ function AddProductContent() {
     setOpenTerm(next[0]?.key ?? null);
   }
 
-  /** Builds the payload that would be sent to the backend. */
-  function buildPayload(status: 'DRAFT' | 'PUBLISHED') {
+  /** Builds the payload sent to the backend products API. */
+  function buildApiPayload(targetStatus: ProductStatus) {
+    const catIdNum = Number(categoryId);
+    const subCatIdNum = Number(subCategoryId);
+    const categoryIds: number[] = [];
+    if (!isNaN(catIdNum) && catIdNum > 0) categoryIds.push(catIdNum);
+    if (!isNaN(subCatIdNum) && subCatIdNum > 0 && !categoryIds.includes(subCatIdNum)) {
+      categoryIds.push(subCatIdNum);
+    }
+    const primaryCategoryId =
+      !isNaN(subCatIdNum) && subCatIdNum > 0
+        ? subCatIdNum
+        : !isNaN(catIdNum) && catIdNum > 0
+        ? catIdNum
+        : null;
+
+    const brandNum = brand ? Number(brand) : null;
+    const combinedDescription =
+      description.trim() ||
+      (details.length > 0 ? details.map((d) => `• ${d}`).join('\n') : null);
+    const resolvedShortDesc =
+      shortDescription.trim() ||
+      (details.length > 0 ? details.join(' • ').slice(0, 500) : null);
+
     return {
-      status,
-      productType,
-      sku: sku.trim(),
-      name: name.trim(),
-      shortDescription: description.trim().slice(0, 500),
-      description: description.trim(),
-      details,
-      brandId: brand || null,
-      categoryId,
-      subCategoryId: subCategoryId || null,
-      ageGroupId: ageGroup,
-      prescriptionRequired: prescription === 'Yes',
-      minimumOrderQuantity: Number(minQty),
-      maximumOrderQuantity: Number(maxQty),
-      returnReplacementAvailable: returnAvail === 'Yes',
-      returnWindowDays: returnAvail === 'Yes' ? Number(returnDays) : null,
-      regularPrice: productType === 'SIMPLE' ? num(regular) : null,
-      salePrice: productType === 'SIMPLE' && num(offer) == null ? num(sale) : null,
-      availableOfferPercent: productType === 'SIMPLE' ? num(offer) : null,
-      stockQuantity: productType === 'SIMPLE' ? num(stock) : null,
-      variantTypeId: productType === 'VARIABLE' ? variantTypeId : null,
-      variants:
-        productType === 'VARIABLE'
-          ? terms.map((t, i) => ({
-              termId: t.termId,
-              regularPrice: Number(t.regularPrice),
-              salePrice: num(t.offerPercent) == null ? num(t.salePrice) : null,
-              availableOfferPercent: num(t.offerPercent),
-              stockQuantity: Number(t.stockQuantity),
-              description: t.description.trim(),
-              displayOrder: i,
-            }))
-          : [],
-      images: images.map((img, i) => ({ altText: img.name, displayOrder: i, primary: i === 0 })),
+      product_name: name.trim(),
+      slug: generateProductSlug(slug.trim() || name.trim()),
+      brand_id: brandNum && !isNaN(brandNum) && brandNum > 0 ? brandNum : null,
+      short_description: resolvedShortDesc,
+      description: combinedDescription,
+      product_status: targetStatus,
+      ...(categoryIds.length > 0 ? { category_ids: categoryIds } : {}),
+      ...(primaryCategoryId != null ? { primary_category_id: primaryCategoryId } : {}),
     };
   }
 
@@ -642,14 +691,7 @@ function AddProductContent() {
       const msg = validateBasics();
       if (msg) throw new Error(msg);
 
-      const catIdNum = Number(categoryId);
-      const payload = {
-        product_name: name.trim(),
-        prescription_required: prescription === 'Yes',
-        age_group: ageGroup || null,
-        description: description.trim() || null,
-        category_id: !isNaN(catIdNum) && catIdNum > 0 ? catIdNum : null,
-      };
+      const payload = buildApiPayload('draft');
 
       if (editId) {
         await updateAdminProduct(editId, payload);
@@ -671,14 +713,9 @@ function AddProductContent() {
     setSubmitting(true);
     setError('');
     try {
-      const catIdNum = Number(categoryId);
-      const payload = {
-        product_name: name.trim(),
-        prescription_required: prescription === 'Yes',
-        age_group: ageGroup || null,
-        description: description.trim() || null,
-        category_id: !isNaN(catIdNum) && catIdNum > 0 ? catIdNum : null,
-      };
+      const publishStatus: ProductStatus =
+        productStatus === 'draft' ? 'active' : productStatus;
+      const payload = buildApiPayload(publishStatus);
 
       if (editId) {
         await updateAdminProduct(editId, payload);
@@ -760,7 +797,11 @@ function AddProductContent() {
                 id="product-name"
                 value={name}
                 onChange={(e) => {
-                  setName(e.target.value);
+                  const val = e.target.value;
+                  setName(val);
+                  if (!slugTouched) {
+                    setSlug(generateProductSlug(val));
+                  }
                   setError('');
                 }}
                 maxLength={255}
@@ -770,32 +811,53 @@ function AddProductContent() {
 
               <div className="mt-5 grid gap-5 md:grid-cols-2">
                 <div>
-                  <Label htmlFor="prescription" required>
-                    Prescription Required
+                  <Label htmlFor="product-slug" required>
+                    Slug
                   </Label>
-                  <Select
-                    id="prescription"
-                    value={prescription}
-                    placeholder="Yes / No"
-                    options={[
-                      { value: 'Yes', label: 'Yes' },
-                      { value: 'No', label: 'No' },
-                    ]}
-                    onChange={setPrescription}
+                  <input
+                    id="product-slug"
+                    value={slug}
+                    onChange={(e) => {
+                      setSlugTouched(true);
+                      setSlug(e.target.value);
+                      setError('');
+                    }}
+                    maxLength={280}
+                    placeholder="Auto-generated from product name"
+                    className={`${INPUT_CLASS} font-mono`}
                   />
                 </div>
                 <div>
-                  <Label htmlFor="age-group" required>
-                    Age Group
+                  <Label htmlFor="product-status" required>
+                    Product Status
                   </Label>
                   <Select
-                    id="age-group"
-                    value={ageGroup}
-                    placeholder="Select age group"
-                    options={AGE_GROUPS.map((g) => ({ value: g.id, label: ageLabel(g) }))}
-                    onChange={setAgeGroup}
+                    id="product-status"
+                    value={productStatus}
+                    placeholder="Select status"
+                    options={[
+                      { value: 'active', label: 'Active (Published)' },
+                      { value: 'draft', label: 'Draft' },
+                      { value: 'inactive', label: 'Inactive' },
+                      { value: 'archived', label: 'Archived' },
+                    ]}
+                    onChange={(v) => setProductStatus((v || 'active') as ProductStatus)}
                   />
                 </div>
+              </div>
+
+              <div className="mt-5">
+                <Label htmlFor="short-description">
+                  Short Description
+                </Label>
+                <input
+                  id="short-description"
+                  value={shortDescription}
+                  onChange={(e) => setShortDescription(e.target.value)}
+                  maxLength={500}
+                  placeholder="Enter a short summary of the product (optional)"
+                  className={INPUT_CLASS}
+                />
               </div>
 
               <div className="mt-5">
@@ -1301,13 +1363,18 @@ function AddProductContent() {
                     ))}
                   </div>
                 )}
-                <p className="mt-2 text-right text-[10px] text-[#888]">{images.length}/6 images</p>
+                <div className="mt-2 flex items-center justify-between text-[10px] text-[#888]">
+                  <span>
+                    {(totalImageBytes / (1024 * 1024)).toFixed(2)} / 10.00 MB total
+                  </span>
+                  <span>{images.length}/6 images</span>
+                </div>
               </section>
 
               <section className={sectionCard}>
                 <h3 className="text-[16px] font-semibold text-[#0D2B53]">Product Categories</h3>
                 <div className="mt-4 max-h-[320px] overflow-y-auto pr-1">
-                  {CATEGORIES.map((c) => {
+                  {categoriesList.map((c) => {
                     const active = c.active !== false;
                     return (
                       <div key={c.id} className="border-b border-[#E1E1E1] last:border-b-0">
@@ -1365,7 +1432,7 @@ function AddProductContent() {
                       </div>
                     );
                   })}
-                  {CATEGORIES.length === 0 && (
+                  {categoriesList.length === 0 && (
                     <p className="py-6 text-center text-[11px] text-[#888]">No active categories are available.</p>
                   )}
                 </div>
@@ -1478,17 +1545,25 @@ function AddProductContent() {
                   <dl className="grid grid-cols-[110px_1fr] gap-y-3 text-[13px]">
                     <dt className="text-[#777]">Product</dt>
                     <dd className="font-medium">{name.trim()}</dd>
+                    <dt className="text-[#777]">Slug</dt>
+                    <dd className="font-mono text-[12px]">
+                      {generateProductSlug(slug.trim() || name.trim())}
+                    </dd>
+                    <dt className="text-[#777]">Status</dt>
+                    <dd className="capitalize">{productStatus}</dd>
                     <dt className="text-[#777]">Category</dt>
                     <dd>
-                      {category?.name}
+                      {category?.name || 'Unassigned'}
                       {subCategoryId ? ` / ${category?.subs.find((s) => s.id === subCategoryId)?.name}` : ''}
                     </dd>
                     <dt className="text-[#777]">Brand</dt>
                     <dd>{brandName}</dd>
-                    <dt className="text-[#777]">SKU</dt>
-                    <dd>{sku.trim()}</dd>
-                    <dt className="text-[#777]">Price</dt>
-                    <dd>{priceSummary}</dd>
+                    {shortDescription.trim() && (
+                      <>
+                        <dt className="text-[#777]">Short Desc</dt>
+                        <dd>{shortDescription.trim()}</dd>
+                      </>
+                    )}
                     <dt className="text-[#777]">Description</dt>
                     <dd className="whitespace-pre-line">{description.trim()}</dd>
                     <dt className="text-[#777]">Product details</dt>

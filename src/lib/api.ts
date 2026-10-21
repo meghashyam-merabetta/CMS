@@ -65,15 +65,20 @@ export async function apiFetch<T>(
     }
   }
 
+  const isFormData = typeof FormData !== 'undefined' && rest.body instanceof FormData;
+  const requestHeaders: HeadersInit = isFormData
+    ? { ...(headers as Record<string, string>) }
+    : {
+        'Content-Type': 'application/json',
+        ...(headers as Record<string, string>),
+      };
+
   let res: Response;
   try {
     res = await fetch(url, {
       ...rest,
       credentials: 'include',
-      headers: {
-        'Content-Type': 'application/json',
-        ...headers,
-      },
+      headers: requestHeaders,
     });
   } catch (err: any) {
     if (err instanceof TypeError || err?.name === 'TypeError' || err?.message?.includes('fetch')) {

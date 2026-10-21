@@ -27,9 +27,24 @@ import {
   getAdminProductById,
   updateAdminProduct,
   deleteAdminProduct,
+  resolvePrimaryProductImage,
+  generateProductSlug,
 } from '@/services/api/adminProductsApi';
 import { getAdminCategories } from '@/services/api/adminCategoriesApi';
-import { BackendProduct, BackendCategory } from '@/types/api';
+import { BackendProduct, BackendCategory, ProductStatus } from '@/types/api';
+
+const BRAND_LOOKUP: Record<string, string> = {
+  '1': 'Eldiaper',
+  '2': 'Friends',
+  '3': 'Joylife',
+  '4': 'Lifree',
+  '5': 'Nuvy',
+  '15': 'Arrex',
+  '16': 'Dr. Morepen',
+  '17': 'Flamingo',
+  '18': 'Happy Cotton',
+  '19': 'Merabetta',
+};
 
 function mapBackendProductToRecord(
   bp: BackendProduct,
@@ -40,26 +55,47 @@ function mapBackendProductToRecord(
   const name = bp.product_name || bp.name || 'Product';
   const price = bp.price ?? 999;
   const stock = bp.stock ?? 15;
-  const catObj = bp.category_id != null ? cats.find((c) => (c.category_id ?? c.id) === bp.category_id) : null;
-  const categoryName = catObj
-    ? catObj.category_name
-    : bp.category_id
-    ? `Category #${bp.category_id}`
-    : bp.prescription_required
-    ? 'Rx Required'
-    : 'General Healthcare';
+
+  const prodCats = Array.isArray(bp.categories) ? bp.categories : [];
+  const primaryCat =
+    prodCats.find((c) => c.ProductCategory?.is_primary) || prodCats[0] || null;
+  const primaryCatId = primaryCat ? String(primaryCat.category_id ?? primaryCat.id ?? '') : undefined;
+
+  const matchedCatFromList =
+    primaryCatId != null
+      ? cats.find((c) => String(c.category_id ?? c.id) === primaryCatId)
+      : null;
+
+  const categoryName =
+    prodCats.length > 0
+      ? prodCats.map((c) => c.category_name || c.name).filter(Boolean).join(', ')
+      : matchedCatFromList?.category_name || 'Uncategorized';
+
+  const brandIdStr = bp.brand_id != null ? String(bp.brand_id) : '';
+  const brandLabel = brandIdStr
+    ? BRAND_LOOKUP[brandIdStr] || `Brand #${brandIdStr}`
+    : 'Merabetta';
+
+  const rawStatus = (bp.product_status || 'active').toLowerCase();
+  const statusCode: ProductRecord['statusCode'] =
+    rawStatus === 'active'
+      ? 'PUBLISHED'
+      : rawStatus === 'draft'
+      ? 'DRAFT'
+      : 'ARCHIVED';
 
   return {
     id: String(prodId),
-    productCode: `PRD-${String(prodId).padStart(4, '0')}`,
+    productCode: bp.slug || `PRD-${String(prodId).padStart(4, '0')}`,
     name,
-    brand: bp.age_group ? `Age: ${bp.age_group}` : 'Merabetta',
+    brand: brandLabel,
     category: categoryName,
-    categoryId: bp.category_id != null ? String(bp.category_id) : undefined,
+    categoryId: primaryCatId,
     price,
     originalPrice: Math.round(price * 1.2),
     stock,
-    statusCode: stock > 0 ? 'PUBLISHED' : 'DRAFT',
+    statusCode,
+    image: resolvePrimaryProductImage(bp),
     createdAt: bp.created_at || new Date().toISOString(),
   };
 }
@@ -87,10 +123,14 @@ export default function ProductManagementPage() {
   const [editingProduct, setEditingProduct] = useState<{
     id: string;
     product_name: string;
-    prescription_required: boolean;
-    age_group: string;
+    slug: string;
+    brand_id: string;
+    product_status: ProductStatus;
+    short_description: string;
     description: string;
-    category_id: string;
+    category_ids: number[];
+    primary_category_id: string;
+    imageUrl?: string;
   } | null>(null);
   const [productToDelete, setProductToDelete] = useState<ProductRecord | null>(null);
   const [toastMessage, setToastMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
@@ -164,25 +204,51 @@ export default function ProductManagementPage() {
   }, [loadProducts]);
 
   const handleEditClick = async (product: ProductRecord) => {
+    const initialCatId = product.categoryId ? Number(product.categoryId) : null;
     setEditingProduct({
       id: product.id,
       product_name: product.name,
-      prescription_required: false,
-      age_group: '',
+      slug: generateProductSlug(product.productCode || product.name),
+      brand_id: '',
+      product_status:
+        product.statusCode === 'PUBLISHED'
+          ? 'active'
+          : product.statusCode === 'DRAFT'
+          ? 'draft'
+          : 'archived',
+      short_description: '',
       description: '',
-      category_id: '',
+      category_ids: initialCatId && !isNaN(initialCatId) ? [initialCatId] : [],
+      primary_category_id: product.categoryId || '',
+      imageUrl: product.image,
     });
     setIsLoadingDetails(true);
     try {
       const details = await getAdminProductById(product.id);
       if (details) {
+        const prodCats = Array.isArray(details.categories) ? details.categories : [];
+        const catIds = prodCats
+          .map((c) => Number(c.category_id ?? c.id))
+          .filter((n) => !isNaN(n) && n > 0);
+        const primaryCat =
+          prodCats.find((c) => c.ProductCategory?.is_primary) || prodCats[0] || null;
+        const primaryIdStr = primaryCat
+          ? String(primaryCat.category_id ?? primaryCat.id ?? '')
+          : product.categoryId || '';
+
         setEditingProduct({
           id: String(details.product_id ?? details.id ?? product.id),
           product_name: details.product_name || details.name || product.name,
-          prescription_required: Boolean(details.prescription_required),
-          age_group: details.age_group || '',
+          slug:
+            details.slug ||
+            generateProductSlug(details.product_name || details.name || product.name),
+          brand_id: details.brand_id != null ? String(details.brand_id) : '',
+          product_status: details.product_status || 'active',
+          short_description: details.short_description || '',
           description: details.description || '',
-          category_id: details.category_id != null ? String(details.category_id) : '',
+          category_ids: catIds,
+          primary_category_id: primaryIdStr,
+          imageUrl: resolvePrimaryProductImage(details) || product.image,
         });
       }
     } catch (err: any) {
@@ -198,12 +264,26 @@ export default function ProductManagementPage() {
 
     setIsSubmitting(true);
     try {
+      const primaryNum = editingProduct.primary_category_id
+        ? Number(editingProduct.primary_category_id)
+        : null;
+      const mergedCatIds = Array.from(
+        new Set([
+          ...editingProduct.category_ids,
+          ...(primaryNum && !isNaN(primaryNum) && primaryNum > 0 ? [primaryNum] : []),
+        ])
+      );
+
       await updateAdminProduct(editingProduct.id, {
         product_name: editingProduct.product_name.trim(),
-        prescription_required: editingProduct.prescription_required,
-        age_group: editingProduct.age_group.trim() || null,
+        slug: generateProductSlug(editingProduct.slug.trim() || editingProduct.product_name),
+        brand_id: editingProduct.brand_id ? Number(editingProduct.brand_id) : null,
+        product_status: editingProduct.product_status,
+        short_description: editingProduct.short_description.trim() || null,
         description: editingProduct.description.trim() || null,
-        category_id: editingProduct.category_id ? Number(editingProduct.category_id) : null,
+        category_ids: mergedCatIds,
+        primary_category_id:
+          primaryNum && !isNaN(primaryNum) && primaryNum > 0 ? primaryNum : null,
       });
       showToast(`Product "${editingProduct.product_name}" updated successfully.`);
       setEditingProduct(null);
@@ -496,8 +576,19 @@ export default function ProductManagementPage() {
                         {p.productCode}
                       </td>
                       <td className="px-3 text-center">
-                        <div className="flex h-9 w-9 items-center justify-center rounded-md bg-slate-100 text-slate-500 mx-auto">
+                        <div className="relative flex h-9 w-9 items-center justify-center overflow-hidden rounded-md border border-slate-200 bg-slate-100 text-slate-500 mx-auto">
                           <Package size={18} />
+                          {p.image && (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img
+                              src={p.image}
+                              alt={p.name}
+                              className="absolute inset-0 h-full w-full object-cover bg-white"
+                              onError={(e) => {
+                                (e.currentTarget as HTMLElement).style.display = 'none';
+                              }}
+                            />
+                          )}
                         </div>
                       </td>
                       <td className="px-3 font-medium text-slate-900">
@@ -675,7 +766,10 @@ export default function ProductManagementPage() {
                   maxLength={255}
                   value={editingProduct.product_name}
                   onChange={(e) =>
-                    setEditingProduct({ ...editingProduct, product_name: e.target.value })
+                    setEditingProduct({
+                      ...editingProduct,
+                      product_name: e.target.value,
+                    })
                   }
                   className="mt-1 h-10 w-full rounded-lg border border-[#D6DCE5] px-3 text-[13px] outline-none focus:border-[#F47C35]"
                 />
@@ -683,53 +777,102 @@ export default function ProductManagementPage() {
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block font-medium text-gray-700">Prescription Required</label>
+                  <label className="block font-medium text-gray-700">Slug *</label>
+                  <input
+                    type="text"
+                    required
+                    maxLength={280}
+                    value={editingProduct.slug}
+                    onChange={(e) =>
+                      setEditingProduct({ ...editingProduct, slug: e.target.value })
+                    }
+                    placeholder="e.g. arrex-cord-wheelchair"
+                    className="mt-1 h-10 w-full rounded-lg border border-[#D6DCE5] px-3 font-mono text-[12px] outline-none focus:border-[#F47C35]"
+                  />
+                </div>
+
+                <div>
+                  <label className="block font-medium text-gray-700">Product Status</label>
                   <select
-                    value={editingProduct.prescription_required ? 'yes' : 'no'}
+                    value={editingProduct.product_status}
                     onChange={(e) =>
                       setEditingProduct({
                         ...editingProduct,
-                        prescription_required: e.target.value === 'yes',
+                        product_status: e.target.value as ProductStatus,
                       })
                     }
                     className="mt-1 h-10 w-full rounded-lg border border-[#D6DCE5] px-3 text-[13px] outline-none focus:border-[#F47C35]"
                   >
-                    <option value="no">No</option>
-                    <option value="yes">Yes</option>
+                    <option value="active">Active (Published)</option>
+                    <option value="draft">Draft</option>
+                    <option value="inactive">Inactive</option>
+                    <option value="archived">Archived</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-medium text-gray-700">Primary Category</label>
+                  <select
+                    value={editingProduct.primary_category_id}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      const numId = val ? Number(val) : null;
+                      setEditingProduct({
+                        ...editingProduct,
+                        primary_category_id: val,
+                        category_ids:
+                          numId && !isNaN(numId)
+                            ? Array.from(new Set([numId, ...editingProduct.category_ids]))
+                            : editingProduct.category_ids,
+                      });
+                    }}
+                    className="mt-1 h-10 w-full rounded-lg border border-[#D6DCE5] px-3 text-[13px] outline-none focus:border-[#F47C35]"
+                  >
+                    <option value="">None / Unassigned</option>
+                    {categories.map((c) => (
+                      <option key={c.category_id ?? c.id} value={String(c.category_id ?? c.id)}>
+                        {c.category_name}
+                      </option>
+                    ))}
                   </select>
                 </div>
 
                 <div>
-                  <label className="block font-medium text-gray-700">Age Group</label>
-                  <input
-                    type="text"
-                    maxLength={100}
-                    value={editingProduct.age_group}
+                  <label className="block font-medium text-gray-700">Brand</label>
+                  <select
+                    value={editingProduct.brand_id}
                     onChange={(e) =>
-                      setEditingProduct({ ...editingProduct, age_group: e.target.value })
+                      setEditingProduct({ ...editingProduct, brand_id: e.target.value })
                     }
-                    placeholder="e.g. Adults, Seniors"
                     className="mt-1 h-10 w-full rounded-lg border border-[#D6DCE5] px-3 text-[13px] outline-none focus:border-[#F47C35]"
-                  />
+                  >
+                    <option value="">None / Unbranded</option>
+                    {Object.entries(BRAND_LOOKUP).map(([id, label]) => (
+                      <option key={id} value={id}>
+                        {label} (#{id})
+                      </option>
+                    ))}
+                  </select>
                 </div>
               </div>
 
               <div>
-                <label className="block font-medium text-gray-700">Category</label>
-                <select
-                  value={editingProduct.category_id}
+                <label className="block font-medium text-gray-700">Short Description</label>
+                <input
+                  type="text"
+                  maxLength={500}
+                  value={editingProduct.short_description}
                   onChange={(e) =>
-                    setEditingProduct({ ...editingProduct, category_id: e.target.value })
+                    setEditingProduct({
+                      ...editingProduct,
+                      short_description: e.target.value,
+                    })
                   }
+                  placeholder="Brief summary of the product"
                   className="mt-1 h-10 w-full rounded-lg border border-[#D6DCE5] px-3 text-[13px] outline-none focus:border-[#F47C35]"
-                >
-                  <option value="">None / Unassigned</option>
-                  {categories.map((c) => (
-                    <option key={c.category_id ?? c.id} value={String(c.category_id ?? c.id)}>
-                      {c.category_name}
-                    </option>
-                  ))}
-                </select>
+                />
               </div>
 
               <div>

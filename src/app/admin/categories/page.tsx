@@ -27,6 +27,8 @@ import {
   createAdminCategory,
   updateAdminCategory,
   deleteAdminCategory,
+  resolveCategoryImageUrl,
+  generateCategorySlug,
 } from '@/services/api/adminCategoriesApi';
 import { BackendCategory } from '@/types/api';
 
@@ -41,8 +43,9 @@ function getDescendantIds(targetId: number, categories: BackendCategory[]): Set<
   while (queue.length > 0) {
     const currentId = queue.shift()!;
     for (const cat of categories) {
-      const catId = cat.category_id ?? (typeof cat.id === 'number' ? cat.id : Number(cat.id));
-      if (cat.parent_category_id === currentId && catId && !descendants.has(catId)) {
+      const catId = Number(cat.category_id ?? cat.id);
+      const parentId = cat.parent_category_id != null ? Number(cat.parent_category_id) : null;
+      if (parentId === currentId && catId && !descendants.has(catId)) {
         descendants.add(catId);
         queue.push(catId);
       }
@@ -83,18 +86,25 @@ export default function CategoryManagementPage() {
   // Add category form state
   const [addForm, setAddForm] = useState({
     category_name: '',
+    slug: '',
+    slugTouched: false,
     parent_category_id: '',
     category_image: '',
     description: '',
+    sort_order: 0,
+    is_active: true,
   });
   const [addFormErrors, setAddFormErrors] = useState<Record<string, string>>({});
 
   // Edit category form state
   const [editForm, setEditForm] = useState({
     category_name: '',
+    slug: '',
     parent_category_id: '',
     category_image: '',
     description: '',
+    sort_order: 0,
+    is_active: true,
   });
   const [editFormErrors, setEditFormErrors] = useState<Record<string, string>>({});
 
@@ -186,9 +196,11 @@ export default function CategoryManagementPage() {
   const totalPages = Math.ceil(totalCount / pageSize) || 1;
 
   // Resolves parent category display name from cached records
-  const getParentName = (parentId?: number | null): string => {
+  const getParentName = (parentId?: number | string | null): string => {
     if (parentId == null) return 'None (Root)';
-    const parent = allCategories.find((c) => (c.category_id ?? c.id) === parentId);
+    const parent = allCategories.find(
+      (c) => String(c.category_id ?? c.id) === String(parentId)
+    );
     return parent ? parent.category_name : `#${parentId}`;
   };
 
@@ -198,9 +210,13 @@ export default function CategoryManagementPage() {
   const handleOpenAddModal = () => {
     setAddForm({
       category_name: '',
+      slug: '',
+      slugTouched: false,
       parent_category_id: '',
       category_image: '',
       description: '',
+      sort_order: 0,
+      is_active: true,
     });
     setAddFormErrors({});
     setIsAddModalOpen(true);
@@ -213,8 +229,8 @@ export default function CategoryManagementPage() {
 
     if (!name) {
       errors.category_name = 'Category name is required';
-    } else if (name.length > 255) {
-      errors.category_name = 'Category name cannot exceed 255 characters';
+    } else if (name.length > 150) {
+      errors.category_name = 'Category name cannot exceed 150 characters';
     }
 
     if (addForm.category_image.trim().length > 2048) {
@@ -233,9 +249,12 @@ export default function CategoryManagementPage() {
     try {
       const payload = {
         category_name: addForm.category_name.trim(),
+        slug: generateCategorySlug(addForm.slug.trim() || addForm.category_name),
         parent_category_id: addForm.parent_category_id ? Number(addForm.parent_category_id) : null,
         category_image: addForm.category_image.trim() || null,
         description: addForm.description.trim() || null,
+        sort_order: Number(addForm.sort_order) || 0,
+        is_active: addForm.is_active,
       };
 
       const created = await createAdminCategory(payload);
@@ -253,15 +272,18 @@ export default function CategoryManagementPage() {
   /* Edit Category Handlers                                             */
   /* ------------------------------------------------------------------ */
   const handleOpenEditModal = async (cat: BackendCategory) => {
-    const catId = cat.category_id ?? (typeof cat.id === 'number' ? cat.id : Number(cat.id));
+    const catId = Number(cat.category_id ?? cat.id);
     if (!catId) return;
 
     setEditingCategoryId(catId);
     setEditForm({
       category_name: cat.category_name || '',
+      slug: cat.slug || generateCategorySlug(cat.category_name || ''),
       parent_category_id: cat.parent_category_id != null ? String(cat.parent_category_id) : '',
-      category_image: cat.category_image || '',
+      category_image: resolveCategoryImageUrl(cat) || cat.category_image || '',
       description: cat.description || '',
+      sort_order: cat.sort_order ?? 0,
+      is_active: cat.is_active !== false,
     });
     setEditFormErrors({});
     setIsLoadingDetails(true);
@@ -271,9 +293,12 @@ export default function CategoryManagementPage() {
       if (fresh) {
         setEditForm({
           category_name: fresh.category_name || '',
+          slug: fresh.slug || generateCategorySlug(fresh.category_name || ''),
           parent_category_id: fresh.parent_category_id != null ? String(fresh.parent_category_id) : '',
-          category_image: fresh.category_image || '',
+          category_image: resolveCategoryImageUrl(fresh) || fresh.category_image || '',
           description: fresh.description || '',
+          sort_order: fresh.sort_order ?? 0,
+          is_active: fresh.is_active !== false,
         });
       }
     } catch (err: any) {
@@ -290,8 +315,8 @@ export default function CategoryManagementPage() {
 
     if (!name) {
       errors.category_name = 'Category name is required';
-    } else if (name.length > 255) {
-      errors.category_name = 'Category name cannot exceed 255 characters';
+    } else if (name.length > 150) {
+      errors.category_name = 'Category name cannot exceed 150 characters';
     }
 
     if (editForm.category_image.trim().length > 2048) {
@@ -314,9 +339,12 @@ export default function CategoryManagementPage() {
     try {
       const payload = {
         category_name: editForm.category_name.trim(),
+        slug: generateCategorySlug(editForm.slug.trim() || editForm.category_name),
         parent_category_id: editForm.parent_category_id ? Number(editForm.parent_category_id) : null,
         category_image: editForm.category_image.trim() || null,
         description: editForm.description.trim() || null,
+        sort_order: Number(editForm.sort_order) || 0,
+        is_active: editForm.is_active,
       };
 
       const updated = await updateAdminCategory(editingCategoryId, payload);
@@ -558,19 +586,19 @@ export default function CategoryManagementPage() {
                       >
                         {/* Image Thumbnail */}
                         <td className="px-4 text-center">
-                          <div className="mx-auto flex h-10 w-10 items-center justify-center overflow-hidden rounded-lg border border-gray-200 bg-gray-50">
-                            {c.category_image ? (
+                          <div className="relative mx-auto flex h-10 w-10 items-center justify-center overflow-hidden rounded-lg border border-gray-200 bg-gray-50">
+                            <FolderTree size={18} className="text-gray-400" />
+                            {resolveCategoryImageUrl(c) && (
+                              // eslint-disable-next-line @next/next/no-img-element
                               <img
-                                src={c.category_image}
+                                src={resolveCategoryImageUrl(c)}
                                 alt={c.category_name}
-                                className="h-full w-full object-cover"
+                                className="absolute inset-0 h-full w-full object-cover bg-white"
                                 onError={(e) => {
                                   // Fallback to placeholder on broken link
-                                  (e.target as HTMLElement).style.display = 'none';
+                                  (e.currentTarget as HTMLElement).style.display = 'none';
                                 }}
                               />
-                            ) : (
-                              <FolderTree size={18} className="text-gray-400" />
                             )}
                           </div>
                         </td>
@@ -761,10 +789,17 @@ export default function CategoryManagementPage() {
                 <input
                   type="text"
                   required
-                  maxLength={255}
+                  maxLength={150}
                   placeholder="e.g. Health Monitors, Respiratory Care"
                   value={addForm.category_name}
-                  onChange={(e) => setAddForm({ ...addForm, category_name: e.target.value })}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setAddForm({
+                      ...addForm,
+                      category_name: val,
+                      slug: addForm.slugTouched ? addForm.slug : generateCategorySlug(val),
+                    });
+                  }}
                   className={`mt-1 h-10 w-full rounded-lg border px-3 text-[13px] outline-none transition focus:border-[#F47C35] ${
                     addFormErrors.category_name ? 'border-rose-400 bg-rose-50/30' : 'border-[#D6DCE5]'
                   }`}
@@ -772,9 +807,40 @@ export default function CategoryManagementPage() {
                 {addFormErrors.category_name && (
                   <p className="mt-1 text-[11px] text-rose-600">{addFormErrors.category_name}</p>
                 )}
-                <div className="mt-1 flex justify-between text-[11px] text-gray-400">
-                  <span>Required. Maximum 255 characters.</span>
-                  <span>{addForm.category_name.length}/255</span>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                {/* Slug */}
+                <div>
+                  <label className="block font-medium text-gray-700">
+                    Slug <span className="text-rose-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    maxLength={180}
+                    placeholder="e.g. health-monitors"
+                    value={addForm.slug}
+                    onChange={(e) =>
+                      setAddForm({ ...addForm, slug: e.target.value, slugTouched: true })
+                    }
+                    className="mt-1 h-10 w-full rounded-lg border border-[#D6DCE5] px-3 font-mono text-[12px] outline-none focus:border-[#F47C35]"
+                  />
+                </div>
+
+                {/* Status */}
+                <div>
+                  <label className="block font-medium text-gray-700">Status</label>
+                  <select
+                    value={addForm.is_active ? 'true' : 'false'}
+                    onChange={(e) =>
+                      setAddForm({ ...addForm, is_active: e.target.value === 'true' })
+                    }
+                    className="mt-1 h-10 w-full rounded-lg border border-[#D6DCE5] bg-white px-3 text-[13px] outline-none focus:border-[#F47C35]"
+                  >
+                    <option value="true">Active</option>
+                    <option value="false">Inactive</option>
+                  </select>
                 </div>
               </div>
 
@@ -808,37 +874,30 @@ export default function CategoryManagementPage() {
                 </p>
               </div>
 
-              {/* Category Image URL */}
-              <div>
-                <label className="block font-medium text-gray-700">Category Image URL</label>
-                <input
-                  type="url"
-                  maxLength={2048}
-                  placeholder="https://example.com/images/category.png"
-                  value={addForm.category_image}
-                  onChange={(e) => setAddForm({ ...addForm, category_image: e.target.value })}
-                  className={`mt-1 h-10 w-full rounded-lg border px-3 text-[13px] outline-none transition focus:border-[#F47C35] ${
-                    addFormErrors.category_image ? 'border-rose-400 bg-rose-50/30' : 'border-[#D6DCE5]'
-                  }`}
-                />
-                {addFormErrors.category_image && (
-                  <p className="mt-1 text-[11px] text-rose-600">{addFormErrors.category_image}</p>
-                )}
-                {addForm.category_image && (
-                  <div className="mt-2 flex items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 p-2">
-                    <img
-                      src={addForm.category_image}
-                      alt="Preview"
-                      className="h-10 w-10 rounded-md object-cover border border-gray-300"
-                      onError={(e) => {
-                        (e.target as HTMLElement).style.display = 'none';
-                      }}
-                    />
-                    <div className="text-[11px] text-gray-500 overflow-hidden text-ellipsis">
-                      <span>Image Preview</span>
-                    </div>
-                  </div>
-                )}
+              {/* Category Image URL & Sort Order */}
+              <div className="grid grid-cols-3 gap-3">
+                <div className="col-span-2">
+                  <label className="block font-medium text-gray-700">Image URL</label>
+                  <input
+                    type="text"
+                    placeholder="https://..."
+                    value={addForm.category_image}
+                    onChange={(e) => setAddForm({ ...addForm, category_image: e.target.value })}
+                    className="mt-1 h-10 w-full rounded-lg border border-[#D6DCE5] px-3 text-[13px] outline-none focus:border-[#F47C35]"
+                  />
+                </div>
+                <div>
+                  <label className="block font-medium text-gray-700">Sort Order</label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={addForm.sort_order}
+                    onChange={(e) =>
+                      setAddForm({ ...addForm, sort_order: Number(e.target.value) || 0 })
+                    }
+                    className="mt-1 h-10 w-full rounded-lg border border-[#D6DCE5] px-3 text-[13px] outline-none focus:border-[#F47C35]"
+                  />
+                </div>
               </div>
 
               {/* Description */}
@@ -920,7 +979,7 @@ export default function CategoryManagementPage() {
                   <input
                     type="text"
                     required
-                    maxLength={255}
+                    maxLength={150}
                     value={editForm.category_name}
                     onChange={(e) => setEditForm({ ...editForm, category_name: e.target.value })}
                     className={`mt-1 h-10 w-full rounded-lg border px-3 text-[13px] outline-none transition focus:border-[#F47C35] ${
@@ -930,9 +989,37 @@ export default function CategoryManagementPage() {
                   {editFormErrors.category_name && (
                     <p className="mt-1 text-[11px] text-rose-600">{editFormErrors.category_name}</p>
                   )}
-                  <div className="mt-1 flex justify-between text-[11px] text-gray-400">
-                    <span>Required. Maximum 255 characters.</span>
-                    <span>{editForm.category_name.length}/255</span>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  {/* Slug */}
+                  <div>
+                    <label className="block font-medium text-gray-700">
+                      Slug <span className="text-rose-500">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      maxLength={180}
+                      value={editForm.slug}
+                      onChange={(e) => setEditForm({ ...editForm, slug: e.target.value })}
+                      className="mt-1 h-10 w-full rounded-lg border border-[#D6DCE5] px-3 font-mono text-[12px] outline-none focus:border-[#F47C35]"
+                    />
+                  </div>
+
+                  {/* Status */}
+                  <div>
+                    <label className="block font-medium text-gray-700">Status</label>
+                    <select
+                      value={editForm.is_active ? 'true' : 'false'}
+                      onChange={(e) =>
+                        setEditForm({ ...editForm, is_active: e.target.value === 'true' })
+                      }
+                      className="mt-1 h-10 w-full rounded-lg border border-[#D6DCE5] bg-white px-3 text-[13px] outline-none focus:border-[#F47C35]"
+                    >
+                      <option value="true">Active</option>
+                      <option value="false">Inactive</option>
+                    </select>
                   </div>
                 </div>
 
@@ -949,7 +1036,7 @@ export default function CategoryManagementPage() {
                     >
                       <option value="">None / Root Category (Top-level)</option>
                       {allCategories.map((cat) => {
-                        const id = cat.category_id ?? (typeof cat.id === 'number' ? cat.id : Number(cat.id));
+                        const id = Number(cat.category_id ?? cat.id);
                         const isDisabled = disabledParentIdsForEdit.has(id);
 
                         return (
@@ -983,37 +1070,30 @@ export default function CategoryManagementPage() {
                   </p>
                 </div>
 
-                {/* Category Image URL */}
-                <div>
-                  <label className="block font-medium text-gray-700">Category Image URL</label>
-                  <input
-                    type="url"
-                    maxLength={2048}
-                    placeholder="https://example.com/images/category.png"
-                    value={editForm.category_image}
-                    onChange={(e) => setEditForm({ ...editForm, category_image: e.target.value })}
-                    className={`mt-1 h-10 w-full rounded-lg border px-3 text-[13px] outline-none transition focus:border-[#F47C35] ${
-                      editFormErrors.category_image ? 'border-rose-400 bg-rose-50/30' : 'border-[#D6DCE5]'
-                    }`}
-                  />
-                  {editFormErrors.category_image && (
-                    <p className="mt-1 text-[11px] text-rose-600">{editFormErrors.category_image}</p>
-                  )}
-                  {editForm.category_image && (
-                    <div className="mt-2 flex items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 p-2">
-                      <img
-                        src={editForm.category_image}
-                        alt="Preview"
-                        className="h-10 w-10 rounded-md object-cover border border-gray-300"
-                        onError={(e) => {
-                          (e.target as HTMLElement).style.display = 'none';
-                        }}
-                      />
-                      <div className="text-[11px] text-gray-500 overflow-hidden text-ellipsis">
-                        <span>Current Image Preview</span>
-                      </div>
-                    </div>
-                  )}
+                {/* Category Image URL & Sort Order */}
+                <div className="grid grid-cols-3 gap-3">
+                  <div className="col-span-2">
+                    <label className="block font-medium text-gray-700">Image URL</label>
+                    <input
+                      type="text"
+                      placeholder="https://..."
+                      value={editForm.category_image}
+                      onChange={(e) => setEditForm({ ...editForm, category_image: e.target.value })}
+                      className="mt-1 h-10 w-full rounded-lg border border-[#D6DCE5] px-3 text-[13px] outline-none focus:border-[#F47C35]"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-medium text-gray-700">Sort Order</label>
+                    <input
+                      type="number"
+                      min="0"
+                      value={editForm.sort_order}
+                      onChange={(e) =>
+                        setEditForm({ ...editForm, sort_order: Number(e.target.value) || 0 })
+                      }
+                      className="mt-1 h-10 w-full rounded-lg border border-[#D6DCE5] px-3 text-[13px] outline-none focus:border-[#F47C35]"
+                    />
+                  </div>
                 </div>
 
                 {/* Description */}
