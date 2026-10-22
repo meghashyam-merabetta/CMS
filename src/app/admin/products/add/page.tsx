@@ -733,7 +733,7 @@ function AddProductContent() {
 
   return (
     <>
-      <section className="min-h-[calc(100vh-90px)] rounded-2xl bg-white px-6 pt-[18px] pb-8 text-[#252525]">
+      <section className="min-h-[calc(100vh-90px)] rounded-2xl bg-white px-4 sm:px-6 pt-4 sm:pt-[18px] pb-8 text-[#252525] shadow-sm">
         <form
           onSubmit={(e) => {
             e.preventDefault();
@@ -747,25 +747,25 @@ function AddProductContent() {
             setPreviewOpen(true);
           }}
         >
-          <div className="flex items-start justify-between gap-5">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between border-b border-[#F0F0F0] pb-4">
             <div>
-              <h2 className="text-[18px] font-semibold text-black">Add New Product</h2>
-              <p className="mt-2 text-[14px] text-[#626262]">Add new products here</p>
+              <h2 className="text-[20px] font-bold text-gray-900 tracking-tight">Add New Product</h2>
+              <p className="mt-1 text-[13px] text-gray-500">Configure product catalog details, pricing, and images</p>
             </div>
-            <div className="flex gap-4">
+            <div className="flex items-center gap-2.5 w-full sm:w-auto">
               <button
                 type="button"
-                disabled={saving}
+                disabled={saving || submitting}
                 onClick={() => void saveDraft()}
-                className="flex h-11 min-w-[150px] items-center justify-center gap-2 rounded-lg border border-[#777] bg-white px-6 text-[14px] font-medium text-[#626262] disabled:opacity-60"
+                className="flex-1 sm:flex-initial flex h-10 sm:h-11 items-center justify-center gap-2 rounded-lg border border-gray-300 bg-white px-4 sm:px-5 text-[13px] sm:text-[14px] font-medium text-gray-700 hover:bg-gray-50 hover:border-gray-400 transition-colors disabled:opacity-60"
               >
-                {saving && <Loader2 size={16} className="animate-spin" />}
+                {saving && <Loader2 size={16} className="animate-spin text-gray-600" />}
                 {saving ? 'Saving...' : 'Save as Draft'}
               </button>
               <button
                 type="submit"
-                disabled={saving}
-                className="h-11 min-w-[150px] rounded-lg bg-[#F47C35] px-7 text-[14px] font-semibold text-white hover:bg-[#E96F29] disabled:opacity-60"
+                disabled={saving || submitting}
+                className="flex-1 sm:flex-initial flex h-10 sm:h-11 items-center justify-center gap-2 rounded-lg bg-[#F47C35] px-5 sm:px-7 text-[13px] sm:text-[14px] font-semibold text-white hover:bg-[#E96F29] shadow-sm transition-colors disabled:opacity-60"
               >
                 Publish
               </button>
@@ -1455,7 +1455,7 @@ function AddProductContent() {
           role="dialog"
           aria-modal="true"
           aria-labelledby="product-preview-title"
-          className="fixed inset-0 z-[80] flex items-center justify-center bg-[#162033]/45 p-4 backdrop-blur-[2px]"
+          className="fixed inset-0 z-[80] flex items-center justify-center bg-[#162033]/50 p-3 sm:p-4 backdrop-blur-[2px] overflow-hidden"
           onMouseDown={(e) => {
             if (e.currentTarget === e.target && !submitting) {
               if (successMessage) router.push('/admin/products');
@@ -1463,14 +1463,14 @@ function AddProductContent() {
             }
           }}
         >
-          <div className="max-h-[92vh] w-full max-w-[850px] overflow-y-auto rounded-2xl bg-white shadow-[0_24px_70px_rgba(0,0,0,0.22)]">
-            <header className="flex items-start justify-between border-b border-[#ECECEC] px-6 py-5">
+          <div className="flex max-h-[90vh] w-full max-w-[800px] flex-col rounded-2xl bg-white shadow-2xl overflow-hidden">
+            <header className="flex items-start justify-between border-b border-gray-100 px-5 sm:px-6 py-4 bg-white flex-shrink-0">
               <div>
-                <h2 id="product-preview-title" className="text-[20px] font-semibold text-[#151515]">
+                <h2 id="product-preview-title" className="text-[18px] sm:text-[20px] font-bold text-gray-900">
                   {successMessage ? 'Product published' : 'Product preview'}
                 </h2>
-                <p className="mt-1 text-[13px] text-[#747474]">
-                  {successMessage || 'Confirmation will save the draft and request direct publication.'}
+                <p className="mt-0.5 text-[12px] sm:text-[13px] text-gray-500">
+                  {successMessage || 'Review details before saving and publishing to catalog.'}
                 </p>
               </div>
               {!submitting && (
@@ -1478,91 +1478,135 @@ function AddProductContent() {
                   type="button"
                   aria-label="Close product preview"
                   onClick={() => (successMessage ? router.push('/admin/products') : setPreviewOpen(false))}
-                  className="flex h-9 w-9 items-center justify-center rounded-full text-[#626262] hover:bg-[#F4F4F4]"
+                  className="flex h-8 w-8 items-center justify-center rounded-full text-gray-500 hover:bg-gray-100 transition-colors"
                 >
-                  <X size={20} />
+                  <X size={18} />
                 </button>
               )}
             </header>
 
             {successMessage ? (
-              <div className="flex flex-col items-center px-6 py-14 text-center">
-                <span className="flex h-16 w-16 items-center justify-center rounded-full bg-[#ECF8EF] text-[#279443]">
+              <div className="flex flex-col items-center px-6 py-12 text-center">
+                <span className="flex h-16 w-16 items-center justify-center rounded-full bg-emerald-50 text-emerald-600">
                   <CheckCircle2 size={34} />
                 </span>
-                <p className="mt-4 text-[14px] text-[#444]">{successMessage}</p>
+                <p className="mt-4 text-[15px] font-medium text-gray-800">{successMessage}</p>
                 <button
                   type="button"
                   onClick={() => router.push('/admin/products')}
-                  className="mt-6 h-11 rounded-lg bg-[#F47C35] px-7 text-[14px] font-semibold text-white hover:bg-[#E96F29]"
+                  className="mt-6 h-11 rounded-lg bg-[#F47C35] px-8 text-[14px] font-semibold text-white hover:bg-[#E96F29] shadow-sm transition-colors"
                 >
                   View products
                 </button>
               </div>
             ) : (
-              <div className="px-6 py-5">
-                <div className="grid gap-5 md:grid-cols-[200px_minmax(0,1fr)]">
-                  <div className="grid grid-cols-2 content-start gap-2">
-                    {images.slice(0, 4).map((img) => (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img
-                        key={img.key}
-                        src={img.src}
-                        alt={img.name}
-                        className="aspect-square w-full rounded-lg border object-contain"
-                      />
-                    ))}
-                    {images.length === 0 && (
-                      <div className="col-span-2 flex aspect-square items-center justify-center rounded-lg border text-[12px] text-[#999]">
-                        No image
-                      </div>
-                    )}
+              <>
+                <div className="flex-1 overflow-y-auto px-5 sm:px-6 py-4 space-y-4">
+                  <div className="grid gap-5 md:grid-cols-[180px_minmax(0,1fr)]">
+                    <div>
+                      {images.length > 0 ? (
+                        <div className="grid grid-cols-3 sm:grid-cols-2 gap-2">
+                          {images.slice(0, 4).map((img, idx) => (
+                            <div
+                              key={img.key}
+                              className="relative aspect-square rounded-lg border border-gray-200 bg-gray-50 overflow-hidden"
+                            >
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              <img
+                                src={img.src}
+                                alt={img.name}
+                                className="h-full w-full object-contain"
+                              />
+                              {idx === 0 && (
+                                <span className="absolute bottom-1 left-1 rounded bg-[#17375F] px-1 py-0.5 text-[8px] font-semibold text-white">
+                                  Primary
+                                </span>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="flex h-20 sm:h-28 md:h-36 items-center justify-center rounded-lg border border-dashed border-gray-300 bg-gray-50 text-[12px] text-gray-400">
+                          No images attached
+                        </div>
+                      )}
+                    </div>
+
+                    <dl className="grid grid-cols-[85px_1fr] sm:grid-cols-[105px_1fr] gap-x-3 gap-y-2.5 text-[13px]">
+                      <dt className="text-gray-500 font-medium">Product</dt>
+                      <dd className="font-semibold text-gray-900 break-words">{name.trim()}</dd>
+
+                      <dt className="text-gray-500 font-medium">Slug</dt>
+                      <dd className="font-mono text-[12px] text-gray-700 break-all">
+                        {generateProductSlug(slug.trim() || name.trim())}
+                      </dd>
+
+                      <dt className="text-gray-500 font-medium">Status</dt>
+                      <dd className="capitalize font-medium">
+                        <span
+                          className={`inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium ${
+                            productStatus === 'active'
+                              ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                              : productStatus === 'draft'
+                              ? 'bg-amber-50 text-amber-700 border border-amber-200'
+                              : 'bg-gray-100 text-gray-700 border border-gray-200'
+                          }`}
+                        >
+                          {productStatus}
+                        </span>
+                      </dd>
+
+                      <dt className="text-gray-500 font-medium">Category</dt>
+                      <dd className="text-gray-800">
+                        {category?.name || 'Unassigned'}
+                        {subCategoryId ? ` / ${category?.subs.find((s) => s.id === subCategoryId)?.name}` : ''}
+                      </dd>
+
+                      <dt className="text-gray-500 font-medium">Brand</dt>
+                      <dd className="text-gray-800">{brandName}</dd>
+
+                      {shortDescription.trim() && (
+                        <>
+                          <dt className="text-gray-500 font-medium">Short Desc</dt>
+                          <dd className="text-gray-800 break-words">{shortDescription.trim()}</dd>
+                        </>
+                      )}
+
+                      {description.trim() && (
+                        <>
+                          <dt className="text-gray-500 font-medium">Description</dt>
+                          <dd className="text-gray-800 whitespace-pre-line break-words max-h-32 overflow-y-auto pr-1">
+                            {description.trim()}
+                          </dd>
+                        </>
+                      )}
+
+                      {details.length > 0 && (
+                        <>
+                          <dt className="text-gray-500 font-medium">Details</dt>
+                          <dd className="text-gray-800 max-h-32 overflow-y-auto pr-1">
+                            <ul className="list-disc pl-4 space-y-0.5">
+                              {details.map((d) => (
+                                <li key={d}>{d}</li>
+                              ))}
+                            </ul>
+                          </dd>
+                        </>
+                      )}
+                    </dl>
                   </div>
-                  <dl className="grid grid-cols-[110px_1fr] gap-y-3 text-[13px]">
-                    <dt className="text-[#777]">Product</dt>
-                    <dd className="font-medium">{name.trim()}</dd>
-                    <dt className="text-[#777]">Slug</dt>
-                    <dd className="font-mono text-[12px]">
-                      {generateProductSlug(slug.trim() || name.trim())}
-                    </dd>
-                    <dt className="text-[#777]">Status</dt>
-                    <dd className="capitalize">{productStatus}</dd>
-                    <dt className="text-[#777]">Category</dt>
-                    <dd>
-                      {category?.name || 'Unassigned'}
-                      {subCategoryId ? ` / ${category?.subs.find((s) => s.id === subCategoryId)?.name}` : ''}
-                    </dd>
-                    <dt className="text-[#777]">Brand</dt>
-                    <dd>{brandName}</dd>
-                    {shortDescription.trim() && (
-                      <>
-                        <dt className="text-[#777]">Short Desc</dt>
-                        <dd>{shortDescription.trim()}</dd>
-                      </>
-                    )}
-                    <dt className="text-[#777]">Description</dt>
-                    <dd className="whitespace-pre-line">{description.trim()}</dd>
-                    <dt className="text-[#777]">Product details</dt>
-                    <dd>
-                      <ul className="list-disc pl-4">
-                        {details.map((d) => (
-                          <li key={d}>{d}</li>
-                        ))}
-                      </ul>
-                    </dd>
-                  </dl>
+
+                  {error && (
+                    <p
+                      role="alert"
+                      className="rounded-lg border border-red-200 bg-red-50 px-4 py-2.5 text-[13px] text-red-700 font-medium"
+                    >
+                      {error}
+                    </p>
+                  )}
                 </div>
 
-                {error && (
-                  <p
-                    role="alert"
-                    className="mt-4 rounded-lg border border-[#F4B6A2] bg-[#FFF6F2] px-4 py-3 text-[13px] text-[#C23D22]"
-                  >
-                    {error}
-                  </p>
-                )}
-
-                <div className="mt-6 flex justify-end gap-3">
+                <footer className="flex-shrink-0 border-t border-gray-100 bg-gray-50 px-5 sm:px-6 py-3 sm:py-4 flex flex-col-reverse sm:flex-row sm:justify-end gap-2 sm:gap-3">
                   <button
                     type="button"
                     disabled={submitting}
@@ -1570,7 +1614,7 @@ function AddProductContent() {
                       setPreviewOpen(false);
                       setError('');
                     }}
-                    className="h-11 min-w-[150px] rounded-lg border border-[#777] bg-white px-6 text-[14px] font-medium text-[#626262] disabled:opacity-60"
+                    className="h-10 sm:h-11 w-full sm:w-auto rounded-lg border border-gray-300 bg-white px-5 text-[13px] sm:text-[14px] font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-60 transition-colors"
                   >
                     Back to edit
                   </button>
@@ -1578,13 +1622,13 @@ function AddProductContent() {
                     type="button"
                     disabled={submitting}
                     onClick={() => void confirmPublish()}
-                    className="flex h-11 min-w-[190px] items-center justify-center gap-2 rounded-lg bg-[#F47C35] px-7 text-[14px] font-semibold text-white hover:bg-[#E96F29] disabled:opacity-60"
+                    className="h-10 sm:h-11 w-full sm:w-auto flex items-center justify-center gap-2 rounded-lg bg-[#F47C35] px-6 text-[13px] sm:text-[14px] font-semibold text-white hover:bg-[#E96F29] disabled:opacity-60 shadow-sm transition-colors"
                   >
-                    {submitting && <Loader2 size={17} className="animate-spin" />}
+                    {submitting && <Loader2 size={16} className="animate-spin" />}
                     {submitting ? 'Publishing...' : 'Confirm & Publish'}
                   </button>
-                </div>
-              </div>
+                </footer>
+              </>
             )}
           </div>
         </div>

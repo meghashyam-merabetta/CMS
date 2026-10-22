@@ -118,6 +118,7 @@ export default function ProductManagementPage() {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [pageSize, setPageSize] = useState<number>(10);
   const [currentPage, setCurrentPage] = useState<number>(0);
+  const [detailImages, setDetailImages] = useState<Record<string, string>>({});
 
   // Modals state
   const [editingProduct, setEditingProduct] = useState<{
@@ -354,6 +355,40 @@ export default function ProductManagementPage() {
     (safeCurrentPage + 1) * pageSize
   );
 
+  // Lazy-load images for visible page products if omitted from list response
+  React.useEffect(() => {
+    const missing = paginatedProducts.filter(
+      (p) => !p.image && !detailImages[p.id]
+    );
+    if (missing.length === 0) return;
+
+    let isMounted = true;
+    (async () => {
+      const newImages: Record<string, string> = {};
+      await Promise.all(
+        missing.map(async (p) => {
+          try {
+            const details = await getAdminProductById(p.id);
+            const img = resolvePrimaryProductImage(details);
+            if (img) {
+              newImages[p.id] = img;
+            }
+          } catch {
+            // Ignore fetch errors for individual items
+          }
+        })
+      );
+
+      if (isMounted && Object.keys(newImages).length > 0) {
+        setDetailImages((prev) => ({ ...prev, ...newImages }));
+      }
+    })();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [paginatedProducts, detailImages]);
+
   const isAllSelected =
     paginatedProducts.length > 0 &&
     paginatedProducts.every((p) => selectedIds.includes(p.id));
@@ -588,11 +623,12 @@ export default function ProductManagementPage() {
                       <td className="px-3 text-center">
                         <div className="relative flex h-9 w-9 items-center justify-center overflow-hidden rounded-md border border-slate-200 bg-slate-100 text-slate-500 mx-auto">
                           <Package size={18} />
-                          {p.image && (
+                          {(p.image || detailImages[p.id]) && (
                             // eslint-disable-next-line @next/next/no-img-element
                             <img
-                              src={p.image}
+                              src={p.image || detailImages[p.id]}
                               alt={p.name}
+                              loading="lazy"
                               className="absolute inset-0 h-full w-full object-cover bg-white"
                               onError={(e) => {
                                 (e.currentTarget as HTMLElement).style.display = 'none';

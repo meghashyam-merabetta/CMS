@@ -48,41 +48,138 @@ export function generateProductSlug(input: string): string {
 }
 
 /**
- * Extracts all valid signed/public image URLs from a BackendProduct record.
+ * Normalizes an image candidate string into a valid, loadable URL.
  */
-export function resolveProductImageUrls(bp?: BackendProduct | null): string[] {
-  if (!bp) return [];
+function normalizeImageUrl(val?: any): string | null {
+  if (typeof val !== 'string') return null;
+  const trimmed = val.trim();
+  if (!trimmed) return null;
+
+  // Already an absolute URL with HTTPS or data/blob URI
+  if (
+    trimmed.startsWith('https://') ||
+    trimmed.startsWith('blob:') ||
+    trimmed.startsWith('data:')
+  ) {
+    return trimmed;
+  }
+
+  // Handle http:// URLs
+  if (trimmed.startsWith('http://')) {
+    // If it points to an S3 bucket or merabetta domain, upgrade to https
+    if (trimmed.includes('amazonaws.com') || trimmed.includes('merabetta.com')) {
+      return trimmed.replace(/^http:\/\//i, 'https://');
+    }
+    // If it points to backend host or localhost with a path, extract relative path
+    const match = trimmed.match(/^http:\/\/[^/]+(\/.*)$/);
+    if (match && match[1]) {
+      return match[1];
+    }
+    return trimmed;
+  }
+
+  // If it starts with a leading slash, it is a valid relative path
+  if (trimmed.startsWith('/')) {
+    return trimmed;
+  }
+
+  // If it looks like a relative path with an image extension, prepend leading slash
+  if (/\.(png|jpe?g|webp|gif|svg|avif)($|\?)/i.test(trimmed)) {
+    return `/${trimmed}`;
+  }
+
+  return null;
+}
+
+/**
+ * Extracts all valid signed/public image URLs from a BackendProduct record.
+ * Handles Sequelize associations (product_images, ProductImages), Multer-S3 (location, key),
+ * and various nested or direct field naming schemes.
+ */
+export function resolveProductImageUrls(bp?: BackendProduct | any): string[] {
+  if (!bp || typeof bp !== 'object') return [];
   const urls: string[] = [];
 
-  const addIfUrl = (val?: string | null) => {
-    if (
-      typeof val === 'string' &&
-      val.trim() &&
-      (val.startsWith('http://') ||
-        val.startsWith('https://') ||
-        val.startsWith('blob:') ||
-        val.startsWith('data:') ||
-        val.startsWith('/'))
-    ) {
-      if (!urls.includes(val.trim())) {
-        urls.push(val.trim());
-      }
+  const addCandidate = (val?: any) => {
+    const url = normalizeImageUrl(val);
+    if (url && !urls.includes(url)) {
+      urls.push(url);
     }
   };
 
-  if (Array.isArray(bp.images)) {
-    for (const item of bp.images) {
-      if (typeof item === 'string') {
-        addIfUrl(item);
-      } else if (item && typeof item === 'object') {
-        addIfUrl(item.image_url || item.imageUrl || item.url);
+  const processItem = (item?: any) => {
+    if (!item) return;
+    if (typeof item === 'string') {
+      addCandidate(item);
+      return;
+    }
+    if (typeof item === 'object') {
+      // Check Multer-S3 standard properties and all common backend fields
+      addCandidate(item.location);
+      addCandidate(item.image_url);
+      addCandidate(item.imageUrl);
+      addCandidate(item.url);
+      addCandidate(item.image);
+      addCandidate(item.image_name);
+      addCandidate(item.imageName);
+      addCandidate(item.file_path);
+      addCandidate(item.filePath);
+      addCandidate(item.path);
+      addCandidate(item.signed_url);
+      addCandidate(item.signedUrl);
+      addCandidate(item.s3_url);
+      addCandidate(item.s3Url);
+      addCandidate(item.src);
+      addCandidate(item.key);
+    }
+  };
+
+  // 1. Check array properties on bp
+  const imageCollections = [
+    bp.images,
+    bp.product_images,
+    bp.ProductImages,
+    bp.productImages,
+    bp.ProductImage,
+    bp.media,
+    bp.photos,
+    bp.pictures,
+    bp.gallery,
+  ];
+
+  for (const collection of imageCollections) {
+    if (Array.isArray(collection)) {
+      for (const item of collection) {
+        processItem(item);
       }
+    } else if (collection && typeof collection === 'object') {
+      processItem(collection);
     }
   }
 
-  addIfUrl(bp.image_url);
-  addIfUrl(bp.imageUrl);
-  addIfUrl(bp.product_image);
+  // 2. Check direct image properties on bp
+  const directFields = [
+    bp.image,
+    bp.image_url,
+    bp.imageUrl,
+    bp.product_image,
+    bp.productImage,
+    bp.product_image_url,
+    bp.productImageUrl,
+    bp.primary_image,
+    bp.primaryImage,
+    bp.thumbnail,
+    bp.thumbnail_url,
+    bp.thumbnailUrl,
+    bp.location,
+    bp.image_name,
+    bp.imageName,
+    bp.image_path,
+  ];
+
+  for (const field of directFields) {
+    processItem(field);
+  }
 
   return urls;
 }
@@ -91,7 +188,7 @@ export function resolveProductImageUrls(bp?: BackendProduct | null): string[] {
  * Extracts the primary thumbnail URL for a product.
  */
 export function resolvePrimaryProductImage(
-  bp?: BackendProduct | null
+  bp?: BackendProduct | any
 ): string | undefined {
   return resolveProductImageUrls(bp)[0];
 }
@@ -186,41 +283,65 @@ export async function createAdminProduct(
     }
   }
 
-  const files = (payload.images ?? []).slice(0, MAX_PRODUCT_IMAGES);
-  if (files.length > 0) {
-    for (const file of files) {
-      if (!ALLOWED_PRODUCT_IMAGE_TYPES.includes(file.type)) {
-        throw new Error('Only JPEG, PNG, and WebP images are allowed');
-      }
-    }
-    const totalBytes = files.reduce((sum, f) => sum + f.size, 0);
-    if (totalBytes > MAX_TOTAL_IMAGE_BYTES) {
-      throw new Error('Total size of all product images cannot exceed 10 MB.');
-    }
-
-    const formData = new FormData();
-    Object.entries(cleanBody).forEach(([key, val]) => {
-      if (val === undefined || val === null) return;
-      if (Array.isArray(val)) {
-        formData.append(key, JSON.stringify(val));
-      } else {
-        formData.append(key, String(val));
-      }
-    });
-    for (const file of files) {
-      formData.append(PRODUCT_IMAGE_FIELD_NAME, file);
-    }
-
-    const res = await apiFetch<any>(ADMIN_PRODUCTS_ENDPOINT, {
-      method: 'POST',
-      body: formData,
-    });
-    return res?.data ?? res;
-  }
-
+  // 1. Create the product first using application/json
   const res = await apiFetch<any>(ADMIN_PRODUCTS_ENDPOINT, {
     method: 'POST',
     body: JSON.stringify(cleanBody),
+  });
+  const created: BackendProduct = res?.data ?? res;
+  const newProdId = created?.product_id ?? created?.id;
+
+  // 2. Upload images to POST /api/admin/products/:productId/images if any images were provided
+  const files = (payload.images ?? []).slice(0, MAX_PRODUCT_IMAGES);
+  if (files.length > 0 && newProdId) {
+    try {
+      await uploadAdminProductImages(newProdId, files);
+      try {
+        const fresh = await getAdminProductById(newProdId);
+        if (fresh) return fresh;
+      } catch {
+        // Fallback to created
+      }
+    } catch (uploadErr: any) {
+      console.warn('Product created, but image upload encountered an issue:', uploadErr);
+      throw new Error(
+        `Product was created (ID: ${newProdId}), but image upload failed: ${uploadErr?.message || 'Upload error'}`
+      );
+    }
+  }
+
+  return created;
+}
+
+/**
+ * Uploads images for a specific product via POST /api/admin/products/:productId/images.
+ * Uses multipart/form-data with field name 'uploadimage' matching Multer configuration.
+ */
+export async function uploadAdminProductImages(
+  productId: number | string,
+  images: File[]
+): Promise<any> {
+  const files = images.slice(0, MAX_PRODUCT_IMAGES);
+  if (files.length === 0) return null;
+
+  for (const file of files) {
+    if (!ALLOWED_PRODUCT_IMAGE_TYPES.includes(file.type)) {
+      throw new Error('Only JPEG, PNG, and WebP images are allowed');
+    }
+  }
+  const totalBytes = files.reduce((sum, f) => sum + f.size, 0);
+  if (totalBytes > MAX_TOTAL_IMAGE_BYTES) {
+    throw new Error('Total size of all product images cannot exceed 10 MB.');
+  }
+
+  const formData = new FormData();
+  for (const file of files) {
+    formData.append(PRODUCT_IMAGE_FIELD_NAME, file);
+  }
+
+  const res = await apiFetch<any>(`/api/admin/products/${productId}/images`, {
+    method: 'POST',
+    body: formData,
   });
   return res?.data ?? res;
 }
@@ -278,43 +399,33 @@ export async function updateAdminProduct(
     }
   }
 
-  const files = (payload.images ?? []).slice(0, MAX_PRODUCT_IMAGES);
-  if (files.length > 0) {
-    for (const file of files) {
-      if (!ALLOWED_PRODUCT_IMAGE_TYPES.includes(file.type)) {
-        throw new Error('Only JPEG, PNG, and WebP images are allowed');
-      }
-    }
-    const totalBytes = files.reduce((sum, f) => sum + f.size, 0);
-    if (totalBytes > MAX_TOTAL_IMAGE_BYTES) {
-      throw new Error('Total size of all product images cannot exceed 10 MB.');
-    }
-
-    const formData = new FormData();
-    Object.entries(cleanBody).forEach(([key, val]) => {
-      if (val === undefined || val === null) return;
-      if (Array.isArray(val)) {
-        formData.append(key, JSON.stringify(val));
-      } else {
-        formData.append(key, String(val));
-      }
-    });
-    for (const file of files) {
-      formData.append(PRODUCT_IMAGE_FIELD_NAME, file);
-    }
-
-    const res = await apiFetch<any>(`/api/admin/products/${productId}`, {
-      method: 'PATCH',
-      body: formData,
-    });
-    return res?.data ?? res;
-  }
-
+  // 1. Update product metadata using application/json
   const res = await apiFetch<any>(`/api/admin/products/${productId}`, {
     method: 'PATCH',
     body: JSON.stringify(cleanBody),
   });
-  return res?.data ?? res;
+  const updated: BackendProduct = res?.data ?? res;
+
+  // 2. Upload any new images via POST /api/admin/products/:productId/images
+  const files = (payload.images ?? []).slice(0, MAX_PRODUCT_IMAGES);
+  if (files.length > 0) {
+    try {
+      await uploadAdminProductImages(productId, files);
+      try {
+        const fresh = await getAdminProductById(productId);
+        if (fresh) return fresh;
+      } catch {
+        // Fallback to updated
+      }
+    } catch (uploadErr: any) {
+      console.warn('Product updated, but image upload encountered an issue:', uploadErr);
+      throw new Error(
+        `Product was updated, but image upload failed: ${uploadErr?.message || 'Upload error'}`
+      );
+    }
+  }
+
+  return updated;
 }
 
 /**
