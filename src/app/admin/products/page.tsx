@@ -20,7 +20,6 @@ import {
   RefreshCw,
   Loader2,
 } from 'lucide-react';
-import { mockProducts } from '@/data/mockData';
 import { ProductRecord } from '@/types/dashboard';
 import {
   getAdminProducts,
@@ -118,7 +117,6 @@ export default function ProductManagementPage() {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [pageSize, setPageSize] = useState<number>(10);
   const [currentPage, setCurrentPage] = useState<number>(0);
-  const [detailImages, setDetailImages] = useState<Record<string, string>>({});
 
   // Modals state
   const [editingProduct, setEditingProduct] = useState<{
@@ -164,24 +162,7 @@ export default function ProductManagementPage() {
       const BATCH_SIZE = 100;
       const res = await getAdminProducts({ limit: BATCH_SIZE, offset: 0 });
       if (Array.isArray(res.data)) {
-        let allBackendProducts: BackendProduct[] = [...res.data];
-        const total = res.pagination?.total ?? res.data.length;
-
-        let nextOffset = res.data.length;
-        while (nextOffset < total && res.data.length > 0) {
-          const nextRes = await getAdminProducts({
-            limit: BATCH_SIZE,
-            offset: nextOffset,
-          });
-          if (!Array.isArray(nextRes.data) || nextRes.data.length === 0) {
-            break;
-          }
-          allBackendProducts = [...allBackendProducts, ...nextRes.data];
-          nextOffset += nextRes.data.length;
-          if (nextRes.pagination && !nextRes.pagination.hasMore) {
-            break;
-          }
-        }
+        const allBackendProducts = [...res.data];
 
         // Sort newest products first (by created_at desc, then numeric product_id desc)
         allBackendProducts.sort((a, b) => {
@@ -198,7 +179,7 @@ export default function ProductManagementPage() {
             mapBackendProductToRecord(bp, idx, categories)
           )
         );
-        setTotalCount(Math.max(total, allBackendProducts.length));
+        setTotalCount(res.pagination?.total ?? allBackendProducts.length);
         setIsLive(true);
       }
     } catch (err: any) {
@@ -355,39 +336,6 @@ export default function ProductManagementPage() {
     (safeCurrentPage + 1) * pageSize
   );
 
-  // Lazy-load images for visible page products if omitted from list response
-  React.useEffect(() => {
-    const missing = paginatedProducts.filter(
-      (p) => !p.image && !detailImages[p.id]
-    );
-    if (missing.length === 0) return;
-
-    let isMounted = true;
-    (async () => {
-      const newImages: Record<string, string> = {};
-      await Promise.all(
-        missing.map(async (p) => {
-          try {
-            const details = await getAdminProductById(p.id);
-            const img = resolvePrimaryProductImage(details);
-            if (img) {
-              newImages[p.id] = img;
-            }
-          } catch {
-            // Ignore fetch errors for individual items
-          }
-        })
-      );
-
-      if (isMounted && Object.keys(newImages).length > 0) {
-        setDetailImages((prev) => ({ ...prev, ...newImages }));
-      }
-    })();
-
-    return () => {
-      isMounted = false;
-    };
-  }, [paginatedProducts, detailImages]);
 
   const isAllSelected =
     paginatedProducts.length > 0 &&
@@ -623,10 +571,10 @@ export default function ProductManagementPage() {
                       <td className="px-3 text-center">
                         <div className="relative flex h-9 w-9 items-center justify-center overflow-hidden rounded-md border border-slate-200 bg-slate-100 text-slate-500 mx-auto">
                           <Package size={18} />
-                          {(p.image || detailImages[p.id]) && (
+                          {p.image && (
                             // eslint-disable-next-line @next/next/no-img-element
                             <img
-                              src={p.image || detailImages[p.id]}
+                              src={p.image}
                               alt={p.name}
                               loading="lazy"
                               className="absolute inset-0 h-full w-full object-cover bg-white"

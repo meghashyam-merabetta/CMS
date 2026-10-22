@@ -324,16 +324,6 @@ export async function uploadAdminProductImages(
   const files = images.slice(0, MAX_PRODUCT_IMAGES);
   if (files.length === 0) return null;
 
-  for (const file of files) {
-    if (!ALLOWED_PRODUCT_IMAGE_TYPES.includes(file.type)) {
-      throw new Error('Only JPEG, PNG, and WebP images are allowed');
-    }
-  }
-  const totalBytes = files.reduce((sum, f) => sum + f.size, 0);
-  if (totalBytes > MAX_TOTAL_IMAGE_BYTES) {
-    throw new Error('Total size of all product images cannot exceed 10 MB.');
-  }
-
   const formData = new FormData();
   for (const file of files) {
     formData.append(PRODUCT_IMAGE_FIELD_NAME, file);

@@ -160,28 +160,6 @@ function parseDetails(text: string): string[] {
   return [...seen.values()];
 }
 
-const ALLOWED_IMAGE_MIME_TYPES = new Set(['image/jpeg', 'image/jpg', 'image/png', 'image/webp']);
-
-async function validateImage(file: File): Promise<void> {
-  if (file.size > IMAGE_RULES.maxBytes) {
-    throw new Error(`${file.name} exceeds the 10 MB limit.`);
-  }
-  const extAllowed = /\.(jpe?g|png|webp)$/i.test(file.name);
-  if (!ALLOWED_IMAGE_MIME_TYPES.has(file.type.toLowerCase()) && !extAllowed) {
-    throw new Error(`${file.name} is not supported. Only JPG, PNG, and WebP images are allowed.`);
-  }
-  const url = URL.createObjectURL(file);
-  try {
-    await new Promise<void>((resolve, reject) => {
-      const img = new window.Image();
-      img.onload = () => resolve();
-      img.onerror = () => reject(new Error(`${file.name} could not be read as a valid image.`));
-      img.src = url;
-    });
-  } finally {
-    URL.revokeObjectURL(url);
-  }
-}
 
 /* ------------------------------ small UI ---------------------------- */
 function Label({ htmlFor, required, children }: { htmlFor?: string; required?: boolean; children: React.ReactNode }) {
@@ -537,17 +515,6 @@ function AddProductContent() {
 
   function validateBasics(): string {
     if (!name.trim()) return 'Product name is required.';
-    const resolvedSlug = generateProductSlug(slug.trim() || name.trim());
-    if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(resolvedSlug)) {
-      return 'Slug must contain only lowercase letters, numbers, and hyphens.';
-    }
-    if (!description.trim() && details.length === 0) {
-      return 'Enter a product description or product details.';
-    }
-    if (images.length > IMAGE_RULES.maxFiles)
-      return `A product can have a maximum of ${IMAGE_RULES.maxFiles} gallery images.`;
-    if (totalImageBytes > IMAGE_RULES.maxTotalBytes)
-      return 'Total size of all product images cannot exceed 10 MB overall.';
     return '';
   }
 
@@ -555,30 +522,18 @@ function AddProductContent() {
     return validateBasics();
   }
 
-  async function onPickImages(e: React.ChangeEvent<HTMLInputElement>) {
+  function onPickImages(e: React.ChangeEvent<HTMLInputElement>) {
     const files = Array.from(e.target.files ?? []);
     const room = IMAGE_RULES.maxFiles - images.length;
     const take = files.slice(0, room);
-    const accepted: File[] = [];
-    let runningBytes = images.reduce((sum, img) => sum + (img.size || img.file?.size || 0), 0);
-    let msg = files.length > room ? `A product can have a maximum of ${IMAGE_RULES.maxFiles} gallery images.` : '';
-    for (const f of take) {
-      try {
-        await validateImage(f);
-        if (runningBytes + f.size > IMAGE_RULES.maxTotalBytes) {
-          msg = `Cannot add "${f.name}": total size of all images cannot exceed 10 MB overall.`;
-          continue;
-        }
-        runningBytes += f.size;
-        accepted.push(f);
-      } catch (err) {
-        msg = err instanceof Error ? err.message : 'Unable to use one of the selected images.';
-      }
+    if (files.length > room) {
+      setError(`A product can have a maximum of ${IMAGE_RULES.maxFiles} gallery images.`);
+    } else {
+      setError('');
     }
-    setError(msg);
     setImages((prev) => [
       ...prev,
-      ...accepted.map((f) => ({
+      ...take.map((f) => ({
         key: uid(),
         src: URL.createObjectURL(f),
         name: f.name,
@@ -589,16 +544,10 @@ function AddProductContent() {
     e.target.value = '';
   }
 
-  async function onPickTermImage(key: string, e: React.ChangeEvent<HTMLInputElement>) {
+  function onPickTermImage(key: string, e: React.ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0];
     e.target.value = '';
     if (!f) return;
-    try {
-      await validateImage(f);
-    } catch (err) {
-      setTermError(err instanceof Error ? err.message : 'Unable to use the selected term image.');
-      return;
-    }
     setTerms((prev) =>
       prev.map((t) => {
         if (t.key !== key) return t;
@@ -707,6 +656,11 @@ function AddProductContent() {
     setSubmitting(true);
     setError('');
     try {
+      const msg = validateBasics();
+      if (msg) {
+        setPreviewOpen(false);
+        throw new Error(msg);
+      }
       const publishStatus: ProductStatus =
         productStatus === 'draft' ? 'active' : productStatus;
       const payload = buildApiPayload(publishStatus);
