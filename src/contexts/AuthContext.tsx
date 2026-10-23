@@ -94,7 +94,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       console.warn('Backend login failed:', err?.message);
       return {
         success: false,
-        error: err?.message || 'Invalid email or password. Please check your credentials.',
+        error: err?.message || 'Login failed. Please check your connection or credentials.',
       };
     }
   };

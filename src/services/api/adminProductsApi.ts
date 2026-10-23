@@ -313,6 +313,39 @@ export async function createAdminProduct(
   return created;
 }
 
+export interface BackendProductImageRecord {
+  id: string;
+  product_id: string;
+  image_url: string;
+  s3_key?: string;
+  alt_text?: string | null;
+  sort_order?: number;
+  is_primary?: boolean;
+  created_at?: string;
+}
+
+/**
+ * Fetches all images for a specific product via GET /api/admin/products/:productId/images.
+ */
+export async function getAdminProductImages(
+  productId: number | string
+): Promise<BackendProductImageRecord[]> {
+  const res = await apiFetch<any>(`/api/admin/products/${productId}/images`);
+  return Array.isArray(res?.data) ? res.data : Array.isArray(res) ? res : [];
+}
+
+/**
+ * Deletes a specific product image via DELETE /api/admin/products/:productId/images/:imageId.
+ */
+export async function deleteAdminProductImage(
+  productId: number | string,
+  imageId: number | string
+): Promise<void> {
+  await apiFetch(`/api/admin/products/${productId}/images/${imageId}`, {
+    method: 'DELETE',
+  });
+}
+
 /**
  * Uploads images for a specific product via POST /api/admin/products/:productId/images.
  * Uses multipart/form-data with field name 'uploadimage' matching Multer configuration.

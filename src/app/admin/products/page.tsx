@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
@@ -28,6 +28,10 @@ import {
   deleteAdminProduct,
   resolvePrimaryProductImage,
   generateProductSlug,
+  getAdminProductImages,
+  deleteAdminProductImage,
+  uploadAdminProductImages,
+  BackendProductImageRecord,
 } from '@/services/api/adminProductsApi';
 import { getAdminCategories } from '@/services/api/adminCategoriesApi';
 import { BackendProduct, BackendCategory, ProductStatus } from '@/types/api';
@@ -139,6 +143,89 @@ export default function ProductManagementPage() {
     setTimeout(() => setToastMessage(null), 4000);
   };
 
+  // Gallery Modal State
+  const [galleryProduct, setGalleryProduct] = useState<ProductRecord | null>(null);
+  const [galleryImages, setGalleryImages] = useState<BackendProductImageRecord[]>([]);
+  const [isLoadingGallery, setIsLoadingGallery] = useState(false);
+  const [isUploadingImage, setIsUploadingImage] = useState(false);
+  const [deletingImageId, setDeletingImageId] = useState<string | null>(null);
+  const [galleryError, setGalleryError] = useState<string | null>(null);
+  const [selectedPreviewImage, setSelectedPreviewImage] = useState<string | null>(null);
+  const galleryFileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleOpenGallery = async (p: ProductRecord) => {
+    setGalleryProduct(p);
+    setGalleryImages([]);
+    setGalleryError(null);
+    setSelectedPreviewImage(p.image || null);
+    setIsLoadingGallery(true);
+    try {
+      const imgs = await getAdminProductImages(p.id);
+      setGalleryImages(imgs);
+      if (imgs.length > 0) {
+        setSelectedPreviewImage(imgs[0].image_url);
+        setProducts((prev) =>
+          prev.map((item) => (item.id === p.id ? { ...item, image: imgs[0].image_url } : item))
+        );
+      }
+    } catch (err: any) {
+      setGalleryError(err?.message || 'Failed to load images from backend');
+    } finally {
+      setIsLoadingGallery(false);
+    }
+  };
+
+  const handleDeleteGalleryImage = async (imageId: string) => {
+    if (!galleryProduct) return;
+    setDeletingImageId(imageId);
+    setGalleryError(null);
+    try {
+      await deleteAdminProductImage(galleryProduct.id, imageId);
+      const updated = galleryImages.filter((img) => String(img.id) !== String(imageId));
+      setGalleryImages(updated);
+      const nextPrimary = updated[0]?.image_url || null;
+      if (selectedPreviewImage && !updated.some((img) => img.image_url === selectedPreviewImage)) {
+        setSelectedPreviewImage(nextPrimary);
+      }
+      setProducts((prev) =>
+        prev.map((item) =>
+          item.id === galleryProduct.id ? { ...item, image: nextPrimary || undefined } : item
+        )
+      );
+      showToast('Image deleted successfully');
+    } catch (err: any) {
+      setGalleryError(err?.message || 'Failed to delete image');
+    } finally {
+      setDeletingImageId(null);
+    }
+  };
+
+  const handleUploadGalleryImages = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files ?? []);
+    e.target.value = '';
+    if (!files.length || !galleryProduct) return;
+
+    setIsUploadingImage(true);
+    setGalleryError(null);
+    try {
+      await uploadAdminProductImages(galleryProduct.id, files);
+      const fresh = await getAdminProductImages(galleryProduct.id);
+      setGalleryImages(fresh);
+      if (fresh.length > 0) {
+        const newest = fresh[fresh.length - 1].image_url;
+        setSelectedPreviewImage(newest);
+        setProducts((prev) =>
+          prev.map((item) => (item.id === galleryProduct.id ? { ...item, image: fresh[0]?.image_url } : item))
+        );
+      }
+      showToast('Image(s) uploaded successfully');
+    } catch (err: any) {
+      setGalleryError(err?.message || 'Failed to upload images');
+    } finally {
+      setIsUploadingImage(false);
+    }
+  };
+
   // Load categories for dropdown and mapping
   React.useEffect(() => {
     async function loadCats() {
@@ -159,10 +246,31 @@ export default function ProductManagementPage() {
     setIsLoading(true);
     setFetchError(null);
     try {
-      const BATCH_SIZE = 100;
+      const BATCH_SIZE = 50;
       const res = await getAdminProducts({ limit: BATCH_SIZE, offset: 0 });
       if (Array.isArray(res.data)) {
-        const allBackendProducts = [...res.data];
+        let allBackendProducts = [...res.data];
+        const total = res.pagination?.total ?? res.data.length;
+
+        // Fetch remaining batches in smaller chunks of 50
+        let nextOffset = res.data.length;
+        while (nextOffset < total && allBackendProducts.length < total) {
+          try {
+            const nextRes = await getAdminProducts({
+              limit: BATCH_SIZE,
+              offset: nextOffset,
+            });
+            if (Array.isArray(nextRes.data) && nextRes.data.length > 0) {
+              allBackendProducts = [...allBackendProducts, ...nextRes.data];
+              nextOffset += nextRes.data.length;
+            } else {
+              break;
+            }
+          } catch (pageErr) {
+            console.warn('Could not fetch remaining products batch:', pageErr);
+            break;
+          }
+        }
 
         // Sort newest products first (by created_at desc, then numeric product_id desc)
         allBackendProducts.sort((a, b) => {
@@ -179,7 +287,7 @@ export default function ProductManagementPage() {
             mapBackendProductToRecord(bp, idx, categories)
           )
         );
-        setTotalCount(res.pagination?.total ?? allBackendProducts.length);
+        setTotalCount(Math.max(total, allBackendProducts.length));
         setIsLive(true);
       }
     } catch (err: any) {
@@ -228,6 +336,14 @@ export default function ProductManagementPage() {
           ? String(primaryCat.category_id ?? primaryCat.id ?? '')
           : product.categoryId || '';
 
+        let imgUrl = resolvePrimaryProductImage(details) || product.image;
+        try {
+          const apiImgs = await getAdminProductImages(product.id);
+          if (apiImgs.length > 0) {
+            imgUrl = apiImgs[0].image_url;
+          }
+        } catch {}
+
         setEditingProduct({
           id: String(details.product_id ?? details.id ?? product.id),
           product_name: details.product_name || details.name || product.name,
@@ -240,7 +356,7 @@ export default function ProductManagementPage() {
           description: details.description || '',
           category_ids: catIds,
           primary_category_id: primaryIdStr,
-          imageUrl: resolvePrimaryProductImage(details) || product.image,
+          imageUrl: imgUrl,
         });
       }
     } catch (err: any) {
@@ -569,8 +685,13 @@ export default function ProductManagementPage() {
                         {p.productCode}
                       </td>
                       <td className="px-3 text-center">
-                        <div className="relative flex h-9 w-9 items-center justify-center overflow-hidden rounded-md border border-slate-200 bg-slate-100 text-slate-500 mx-auto">
-                          <Package size={18} />
+                        <button
+                          type="button"
+                          onClick={() => handleOpenGallery(p)}
+                          title="Click to view & manage product images"
+                          className="group relative flex h-9 w-9 items-center justify-center overflow-hidden rounded-md border border-slate-200 bg-slate-100 text-slate-500 mx-auto hover:border-[#F47C35] hover:bg-orange-50 hover:text-[#F47C35] transition-all cursor-pointer shadow-2xs"
+                        >
+                          <Package size={18} className="group-hover:scale-110 transition-transform" />
                           {p.image && (
                             // eslint-disable-next-line @next/next/no-img-element
                             <img
@@ -583,7 +704,7 @@ export default function ProductManagementPage() {
                               }}
                             />
                           )}
-                        </div>
+                        </button>
                       </td>
                       <td className="px-3 font-medium text-slate-900">
                         {p.name}
@@ -933,6 +1054,176 @@ export default function ProductManagementPage() {
               >
                 {isSubmitting && <Loader2 size={14} className="animate-spin" />}
                 <span>{isSubmitting ? 'Deleting...' : 'Yes, Delete'}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Product Image Gallery Modal */}
+      {galleryProduct && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-xs">
+          <div className="w-full max-w-2xl rounded-2xl bg-white shadow-2xl animate-in fade-in flex flex-col max-h-[90vh] overflow-hidden">
+            {/* Header */}
+            <div className="flex items-center justify-between border-b border-gray-100 px-6 py-4">
+              <div>
+                <div className="flex items-center gap-2">
+                  <h3 className="text-[17px] font-bold text-gray-900">{galleryProduct.name}</h3>
+                  <span className="rounded bg-slate-100 px-2 py-0.5 font-mono text-[11px] font-semibold text-slate-700">
+                    {galleryProduct.productCode}
+                  </span>
+                </div>
+                <p className="mt-0.5 text-[12px] text-gray-500">Manage S3 gallery images for this product</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setGalleryProduct(null)}
+                className="rounded-lg p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-700 transition-colors cursor-pointer"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            {/* Content Body */}
+            <div className="flex-1 overflow-y-auto p-6 space-y-4">
+              {galleryError && (
+                <div className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-[13px] text-rose-700 flex items-center justify-between">
+                  <span>{galleryError}</span>
+                  <button type="button" onClick={() => setGalleryError(null)} className="text-rose-500 hover:text-rose-700 cursor-pointer">
+                    <X size={16} />
+                  </button>
+                </div>
+              )}
+
+              {isLoadingGallery ? (
+                <div className="flex flex-col items-center justify-center py-16 text-slate-500">
+                  <Loader2 size={32} className="animate-spin text-[#F47C35] mb-3" />
+                  <p className="text-[14px]">Loading images from S3...</p>
+                </div>
+              ) : galleryImages.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-12 text-center rounded-xl border border-dashed border-gray-200 bg-slate-50/50 p-6">
+                  <div className="flex h-14 w-14 items-center justify-center rounded-full bg-orange-100 text-[#F47C35] mb-3">
+                    <Package size={28} />
+                  </div>
+                  <h4 className="text-[15px] font-semibold text-gray-800">No images uploaded yet</h4>
+                  <p className="mt-1 text-[13px] text-gray-500 max-w-sm">
+                    Upload product photos to store them in AWS S3 and display them on product listings.
+                  </p>
+                  <button
+                    type="button"
+                    disabled={isUploadingImage}
+                    onClick={() => galleryFileInputRef.current?.click()}
+                    className="mt-4 inline-flex items-center gap-2 rounded-lg bg-[#F47C35] px-4 py-2 text-[13px] font-semibold text-white hover:bg-[#E96F29] transition-colors cursor-pointer disabled:opacity-50"
+                  >
+                    {isUploadingImage ? <Loader2 size={16} className="animate-spin" /> : <Plus size={16} />}
+                    <span>{isUploadingImage ? 'Uploading...' : 'Upload Images'}</span>
+                  </button>
+                </div>
+              ) : (
+                <>
+                  {/* Large Preview */}
+                  {selectedPreviewImage && (
+                    <div className="relative flex items-center justify-center rounded-xl border border-gray-200 bg-slate-50 p-3 max-h-[300px] overflow-hidden">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={selectedPreviewImage}
+                        alt="Preview"
+                        className="max-h-[280px] w-auto max-w-full object-contain rounded-lg shadow-xs"
+                      />
+                    </div>
+                  )}
+
+                  {/* Gallery Thumbnails Grid */}
+                  <div>
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-[13px] font-medium text-gray-700">
+                        {galleryImages.length} {galleryImages.length === 1 ? 'Image' : 'Images'} Available
+                      </span>
+                      <button
+                        type="button"
+                        disabled={isUploadingImage}
+                        onClick={() => galleryFileInputRef.current?.click()}
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-[#F47C35] px-3 py-1.5 text-[12px] font-semibold text-[#F47C35] hover:bg-orange-50 transition-colors cursor-pointer disabled:opacity-50"
+                      >
+                        {isUploadingImage ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
+                        <span>{isUploadingImage ? 'Uploading...' : 'Add More'}</span>
+                      </button>
+                    </div>
+
+                    <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-3">
+                      {galleryImages.map((img) => {
+                        const isSelected = selectedPreviewImage === img.image_url;
+                        const isDeleting = deletingImageId === String(img.id);
+                        return (
+                          <div
+                            key={img.id}
+                            className={`group relative aspect-square rounded-lg border overflow-hidden transition-all bg-slate-50 cursor-pointer ${
+                              isSelected
+                                ? 'border-[#F47C35] ring-2 ring-[#F47C35]/30'
+                                : 'border-gray-200 hover:border-gray-400'
+                            }`}
+                            onClick={() => setSelectedPreviewImage(img.image_url)}
+                          >
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img
+                              src={img.image_url}
+                              alt="Thumbnail"
+                              className="h-full w-full object-cover"
+                            />
+
+                            {/* Primary Badge */}
+                            {img.is_primary && (
+                              <span className="absolute bottom-1 left-1 rounded bg-[#F47C35] px-1.5 py-0.5 text-[9px] font-bold text-white shadow-xs">
+                                Primary
+                              </span>
+                            )}
+
+                            {/* Delete Button */}
+                            <button
+                              type="button"
+                              title="Delete image"
+                              disabled={isDeleting}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (window.confirm('Are you sure you want to delete this image?')) {
+                                  void handleDeleteGalleryImage(String(img.id));
+                                }
+                              }}
+                              className="absolute top-1 right-1 flex h-6 w-6 items-center justify-center rounded-md bg-white/90 text-gray-500 hover:bg-rose-600 hover:text-white shadow-xs transition-colors cursor-pointer disabled:opacity-50"
+                            >
+                              {isDeleting ? (
+                                <Loader2 size={12} className="animate-spin text-rose-600" />
+                              ) : (
+                                <Trash2 size={12} />
+                              )}
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </>
+              )}
+
+              {/* Hidden file input for uploading */}
+              <input
+                ref={galleryFileInputRef}
+                type="file"
+                multiple
+                accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp"
+                className="hidden"
+                onChange={handleUploadGalleryImages}
+              />
+            </div>
+
+            {/* Footer */}
+            <div className="flex items-center justify-end border-t border-gray-100 bg-gray-50/50 px-6 py-3">
+              <button
+                type="button"
+                onClick={() => setGalleryProduct(null)}
+                className="rounded-lg border border-gray-300 bg-white px-4 py-2 text-[13px] font-medium text-gray-700 hover:bg-gray-50 cursor-pointer"
+              >
+                Close
               </button>
             </div>
           </div>

@@ -1,8 +1,6 @@
 import path from "path";
 import type { NextConfig } from "next";
 
-const API_TARGET = process.env.API_PROXY_TARGET ;
-
 const nextConfig: NextConfig = {
   reactStrictMode: true,
   allowedDevOrigins: [

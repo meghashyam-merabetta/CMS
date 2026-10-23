@@ -7,6 +7,7 @@ import {
   createAdminProduct,
   updateAdminProduct,
   getAdminProductById,
+  getAdminProductImages,
   resolveProductImageUrls,
   generateProductSlug,
   MAX_PRODUCT_IMAGES,
@@ -456,10 +457,20 @@ function AddProductContent() {
           setMaxQty('10');
           setStock(String(prod.stock ?? 10));
           setRegular(String(prod.price ?? 999));
-          const descBullets = prod.description ? parseDetails(prod.description) : ['Standard medical specifications'];
-          setDetails(descBullets.length ? descBullets : ['Standard medical specifications']);
-          setDetailsText(prod.description || 'Standard medical specifications');
-          const existingUrls = resolveProductImageUrls(prod);
+          const descBullets = prod.description ? parseDetails(prod.description) : [];
+          setDetails(descBullets);
+          setDetailsText(prod.description || '');
+          let existingUrls = resolveProductImageUrls(prod);
+          try {
+            const apiImgs = await getAdminProductImages(id);
+            if (Array.isArray(apiImgs) && apiImgs.length > 0) {
+              const fromApi = apiImgs.map((i) => i.image_url).filter(Boolean);
+              existingUrls = Array.from(new Set([...existingUrls, ...fromApi]));
+            }
+          } catch (e) {
+            console.warn('Could not load product images from API:', e);
+          }
+
           if (existingUrls.length > 0) {
             setImages(
               existingUrls.slice(0, IMAGE_RULES.maxFiles).map((url, idx) => ({
@@ -644,6 +655,7 @@ function AddProductContent() {
       setSuccessMessage('Draft saved successfully.');
       setTimeout(() => {
         router.replace('/admin/products');
+        router.refresh();
       }, 1200);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to save the product draft.');
@@ -674,6 +686,7 @@ function AddProductContent() {
       }
       setTimeout(() => {
         router.push('/admin/products');
+        router.refresh();
       }, 1500);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to publish the product.');
@@ -1277,10 +1290,10 @@ function AddProductContent() {
                         <button
                           type="button"
                           onClick={() => {
-                            URL.revokeObjectURL(img.src);
+                            if (img.src.startsWith('blob:')) URL.revokeObjectURL(img.src);
                             setImages((prev) => prev.filter((x) => x.key !== img.key));
                           }}
-                          className="absolute top-1 right-1 flex h-6 w-6 items-center justify-center rounded bg-white text-[#D43B28]"
+                          className="absolute top-1 right-1 flex h-6 w-6 items-center justify-center rounded bg-white text-[#D43B28] cursor-pointer"
                         >
                           <Trash2 size={13} />
                         </button>

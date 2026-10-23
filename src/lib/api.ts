@@ -1,7 +1,9 @@
-const BASE_URL =
-  typeof window !== 'undefined' && process.env.NEXT_PUBLIC_DIRECT_API !== 'true'
-    ? ''
-    : (process.env.NEXT_PUBLIC_API_URL || '');
+const RAW_BASE_URL = (
+  process.env.NEXT_PUBLIC_API_URL || 'http://16.4.61.3:3000'
+).trim().replace(/\/+$/, '');
+
+// Ensure no duplicate /api segment if user includes /api in NEXT_PUBLIC_API_URL
+const BASE_URL = RAW_BASE_URL.replace(/\/api$/, '');
 
 const STORAGE_AUTH_KEY = 'admin_auth';
 const STORAGE_TOKEN_KEY = 'token';
@@ -66,12 +68,22 @@ export async function apiFetch<T>(
   }
 
   const isFormData = typeof FormData !== 'undefined' && rest.body instanceof FormData;
-  const requestHeaders: HeadersInit = isFormData
-    ? { ...(headers as Record<string, string>) }
+  const requestHeaders: Record<string, string> = isFormData
+    ? { ...((headers as Record<string, string>) || {}) }
     : {
         'Content-Type': 'application/json',
-        ...(headers as Record<string, string>),
+        ...((headers as Record<string, string>) || {}),
       };
+
+  const token = getAdminAuth();
+  if (token) {
+    if (!requestHeaders['Authorization'] && !requestHeaders['authorization']) {
+      requestHeaders['Authorization'] = `Bearer ${token}`;
+    }
+    if (!requestHeaders['admin_auth']) {
+      requestHeaders['admin_auth'] = token;
+    }
+  }
 
   let res: Response;
   try {
@@ -81,31 +93,37 @@ export async function apiFetch<T>(
       headers: requestHeaders,
     });
   } catch (err: any) {
-    if (err instanceof TypeError || err?.name === 'TypeError' || err?.message?.includes('fetch')) {
-      throw new Error(
-        'Network error: Failed to connect to backend server. Please verify network connectivity and CORS configuration.'
-      );
-    }
-    throw err;
+    throw new Error(err?.message || 'Failed to connect to backend server');
   }
 
   if (!res.ok) {
-    let errorMessage = `Request failed with status ${res.status}`;
+    let errorMessage = `Server error ${res.status}: ${res.statusText || 'Request failed'}`.trim();
     try {
       const errorData = await res.json();
-      if (errorData.error) {
-        errorMessage = errorData.error;
+      if (typeof errorData === 'string') {
+        errorMessage = errorData;
+      } else if (errorData.error) {
+        errorMessage = typeof errorData.error === 'string' ? errorData.error : JSON.stringify(errorData.error);
         if (errorData.details && Array.isArray(errorData.details)) {
           const detailMsgs = errorData.details
-            .map((d: { path: string; message: string }) => `${d.path}: ${d.message}`)
+            .map((d: any) => (d.message ? `${d.path ? d.path + ': ' : ''}${d.message}` : JSON.stringify(d)))
             .join(', ');
           errorMessage += ` (${detailMsgs})`;
         }
       } else if (errorData.message) {
-        errorMessage = errorData.message;
+        errorMessage = typeof errorData.message === 'string' ? errorData.message : JSON.stringify(errorData.message);
+      } else if (errorData.msg) {
+        errorMessage = String(errorData.msg);
       }
     } catch {
-      // Non-JSON response
+      try {
+        const text = await res.text();
+        if (text && text.length < 300) {
+          errorMessage = text;
+        }
+      } catch {
+        // ignore
+      }
     }
     throw new Error(errorMessage);
   }
