@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useMemo, useRef } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
@@ -282,62 +282,88 @@ export default function ProductManagementPage() {
     loadCats();
   }, []);
 
-  const loadProducts = React.useCallback(async () => {
-    setIsLoading(true);
-    setFetchError(null);
-    try {
-      const BATCH_SIZE = 50;
-      const res = await getAdminProducts({ limit: BATCH_SIZE, offset: 0 });
-      if (Array.isArray(res.data)) {
-        let allBackendProducts = [...res.data];
-        const total = res.pagination?.total ?? res.data.length;
+  // Keep latest categories in a ref so loading categories does NOT trigger a products re-fetch.
+  const categoriesRef = useRef<BackendCategory[]>([]);
+  useEffect(() => {
+    categoriesRef.current = categories;
+  }, [categories]);
 
-        // Fetch remaining batches in smaller chunks of 50
-        let nextOffset = res.data.length;
-        while (nextOffset < total && allBackendProducts.length < total) {
-          try {
-            const nextRes = await getAdminProducts({
-              limit: BATCH_SIZE,
-              offset: nextOffset,
-            });
-            if (Array.isArray(nextRes.data) && nextRes.data.length > 0) {
-              allBackendProducts = [...allBackendProducts, ...nextRes.data];
-              nextOffset += nextRes.data.length;
-            } else {
-              break;
-            }
-          } catch (pageErr) {
-            console.warn('Could not fetch remaining products batch:', pageErr);
-            break;
-          }
+  // Debounced search so typing doesn't fire a request per keystroke.
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(searchQuery.trim()), 400);
+    return () => clearTimeout(t);
+  }, [searchQuery]);
+
+  // Guards against out-of-order responses.
+  const requestIdRef = useRef(0);
+
+  // Backend returns products ordered by product_id ASC (oldest first) and has no sort option.
+  // To show the newest products first we paginate from the END of the list and reverse each page.
+  const totalCacheRef = useRef<{ key: string; total: number } | null>(null);
+
+  // Server-side pagination: fetch ONLY the current page (never the whole catalogue).
+  const loadProducts = React.useCallback(
+    async (forceRecount = false) => {
+      const requestId = ++requestIdRef.current;
+      setIsLoading(true);
+      setFetchError(null);
+      try {
+        const catNum = selectedCategory ? Number(selectedCategory) : NaN;
+        const baseParams = {
+          search: debouncedSearch || undefined,
+          category_id: !isNaN(catNum) && catNum > 0 ? catNum : undefined,
+          product_status:
+            selectedStatus === 'PUBLISHED'
+              ? ('active' as const)
+              : selectedStatus === 'DRAFT'
+              ? ('draft' as const)
+              : undefined,
+        };
+        const filterKey = JSON.stringify(baseParams);
+
+        // Total for the current filter (one tiny request, cached until filters change / refresh).
+        let total: number;
+        if (!forceRecount && totalCacheRef.current?.key === filterKey) {
+          total = totalCacheRef.current.total;
+        } else {
+          const countRes = await getAdminProducts({ ...baseParams, limit: 1, offset: 0 });
+          total = countRes.pagination?.total ?? countRes.data.length;
+          totalCacheRef.current = { key: filterKey, total };
         }
+        if (requestId !== requestIdRef.current) return;
 
-        // Sort newest products first (by created_at desc, then numeric product_id desc)
-        allBackendProducts.sort((a, b) => {
-          const timeA = a.created_at ? new Date(a.created_at).getTime() : 0;
-          const timeB = b.created_at ? new Date(b.created_at).getTime() : 0;
-          if (timeB !== timeA) return timeB - timeA;
-          const idA = Number(a.product_id ?? a.id ?? 0);
-          const idB = Number(b.product_id ?? b.id ?? 0);
-          return idB - idA;
-        });
+        // Window counted from the newest end.
+        const end = Math.max(total - currentPage * pageSize, 0);
+        const start = Math.max(end - pageSize, 0);
+        const limit = end - start;
+
+        let items: BackendProduct[] = [];
+        if (limit > 0) {
+          const res = await getAdminProducts({ ...baseParams, limit, offset: start });
+          items = Array.isArray(res.data) ? res.data : [];
+        }
+        if (requestId !== requestIdRef.current) return; // stale response
+
+        // Newest first within the page.
+        items.sort((a, b) => Number(b.product_id ?? b.id ?? 0) - Number(a.product_id ?? a.id ?? 0));
 
         setProducts(
-          allBackendProducts.map((bp, idx) =>
-            mapBackendProductToRecord(bp, idx, categories)
-          )
+          items.map((bp, idx) => mapBackendProductToRecord(bp, idx, categoriesRef.current))
         );
-        setTotalCount(Math.max(total, allBackendProducts.length));
+        setTotalCount(total);
         setIsLive(true);
+      } catch (err: any) {
+        if (requestId !== requestIdRef.current) return;
+        console.warn('Backend products error:', err.message);
+        setFetchError(err.message || 'Unable to connect to live backend');
+        setIsLive(false);
+      } finally {
+        if (requestId === requestIdRef.current) setIsLoading(false);
       }
-    } catch (err: any) {
-      console.warn('Backend products error:', err.message);
-      setFetchError(err.message || 'Unable to connect to live backend');
-      setIsLive(false);
-    } finally {
-      setIsLoading(false);
-    }
-  }, [categories]);
+    },
+    [pageSize, currentPage, debouncedSearch, selectedCategory, selectedStatus]
+  );
 
   React.useEffect(() => {
     loadProducts();
@@ -435,7 +461,7 @@ export default function ProductManagementPage() {
       });
       showToast(`Product "${editingProduct.product_name}" updated successfully.`);
       setEditingProduct(null);
-      await loadProducts();
+      await loadProducts(true);
     } catch (err: any) {
       showToast(err.message || 'Failed to update product on server.', 'error');
     } finally {
@@ -451,7 +477,7 @@ export default function ProductManagementPage() {
       await deleteAdminProduct(productToDelete.id);
       showToast(`Product "${productToDelete.name}" removed successfully.`);
       setProductToDelete(null);
-      await loadProducts();
+      await loadProducts(true);
     } catch (err: any) {
       showToast(err.message || 'Failed to delete product on server.', 'error');
     } finally {
@@ -459,39 +485,22 @@ export default function ProductManagementPage() {
     }
   };
 
-  // Filtered products
+  // Search / category / published / draft filters are applied by the server.
+  // Brand (and the "Archived" bucket) are not supported server-side, so filter the current page here.
   const filteredProducts = useMemo(() => {
     return products.filter((p) => {
-      const q = searchQuery.trim().toLowerCase();
-      const matchesSearch =
-        !q ||
-        p.productCode.toLowerCase().includes(q) ||
-        p.name.toLowerCase().includes(q) ||
-        p.brand.toLowerCase().includes(q);
-
-      const matchesCat =
-        !selectedCategory ||
-        p.categoryId === selectedCategory ||
-        p.category.toLowerCase().includes(selectedCategory.toLowerCase());
-
       const matchesBrand =
         !selectedBrand || p.brand.toLowerCase() === selectedBrand.toLowerCase();
-
       const matchesStatus =
         !selectedStatus || p.statusCode.toLowerCase() === selectedStatus.toLowerCase();
-
-      return matchesSearch && matchesCat && matchesBrand && matchesStatus;
+      return matchesBrand && matchesStatus;
     });
-  }, [products, searchQuery, selectedCategory, selectedBrand, selectedStatus]);
+  }, [products, selectedBrand, selectedStatus]);
 
-  // Paginated products
-  const totalPages = Math.ceil(filteredProducts.length / pageSize) || 1;
+  // Pagination is server-side: `products` already holds just the current page.
+  const totalPages = Math.max(Math.ceil((totalCount || products.length) / pageSize), 1);
   const safeCurrentPage = Math.min(currentPage, totalPages - 1);
-  const paginatedProducts = filteredProducts.slice(
-    safeCurrentPage * pageSize,
-    (safeCurrentPage + 1) * pageSize
-  );
-
+  const paginatedProducts = filteredProducts;
 
   const currencyFormatter = new Intl.NumberFormat('en-IN', {
     style: 'currency',
@@ -524,7 +533,7 @@ export default function ProductManagementPage() {
           </div>
           <button
             type="button"
-            onClick={loadProducts}
+            onClick={() => loadProducts(true)}
             className="inline-flex items-center gap-1 font-semibold text-amber-900 underline hover:text-black cursor-pointer"
           >
             <RefreshCw size={12} />
@@ -553,7 +562,7 @@ export default function ProductManagementPage() {
         <div className="flex flex-wrap items-center gap-3">
           <button
             type="button"
-            onClick={loadProducts}
+            onClick={() => loadProducts(true)}
             disabled={isLoading}
             title="Reload from API"
             className="inline-flex h-11 items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 text-[13px] font-semibold text-slate-700 hover:bg-slate-50 transition cursor-pointer disabled:opacity-50"
@@ -796,9 +805,7 @@ export default function ProductManagementPage() {
 
         <div className="flex items-center gap-4">
           <span className="text-[11px] text-[#777]">
-            {searchQuery.trim() || selectedCategory || selectedBrand || selectedStatus
-              ? `${filteredProducts.length} of ${totalCount || products.length} total`
-              : `${totalCount || filteredProducts.length} total`}
+            {`${totalCount || filteredProducts.length} total`}
           </span>
           <button
             type="button"
