@@ -1,5 +1,5 @@
 const RAW_BASE_URL = (
-  process.env.NEXT_PUBLIC_API_URL || 'http://16.4.61.3:3000'
+  process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000'
 ).trim().replace(/\/+$/, '');
 
 // Ensure no duplicate /api segment if user includes /api in NEXT_PUBLIC_API_URL
@@ -41,6 +41,7 @@ export function clearAdminAuth() {
 
 export interface RequestOptions extends RequestInit {
   params?: Record<string, string | number | boolean | undefined>;
+  timeoutMs?: number;
 }
 
 
@@ -48,7 +49,7 @@ export async function apiFetch<T>(
   endpoint: string,
   options: RequestOptions = {}
 ): Promise<T> {
-  const { params, headers, ...rest } = options;
+  const { params, headers, timeoutMs = 8000, signal, ...rest } = options;
 
   let url =
     endpoint.startsWith('http://') || endpoint.startsWith('https://')
@@ -67,7 +68,19 @@ export async function apiFetch<T>(
     }
   }
 
+  const method = (rest.method || 'GET').toUpperCase();
   const isFormData = typeof FormData !== 'undefined' && rest.body instanceof FormData;
+
+  // Backend csrfGuard requires Content-Type: application/json on mutating operations.
+  // When fetch is called with no body, browsers strip Content-Type, triggering 415.
+  if (
+    !isFormData &&
+    (method === 'POST' || method === 'PUT' || method === 'PATCH' || method === 'DELETE') &&
+    rest.body === undefined
+  ) {
+    rest.body = JSON.stringify({});
+  }
+
   const requestHeaders: Record<string, string> = isFormData
     ? { ...((headers as Record<string, string>) || {}) }
     : {
@@ -85,15 +98,40 @@ export async function apiFetch<T>(
     }
   }
 
+  const controller = new AbortController();
+  const timer = setTimeout(() => {
+    controller.abort();
+  }, timeoutMs);
+
   let res: Response;
   try {
     res = await fetch(url, {
       ...rest,
+      signal: signal || controller.signal,
       credentials: 'include',
       headers: requestHeaders,
     });
   } catch (err: any) {
+    if (err?.name === 'AbortError' || controller.signal.aborted) {
+      throw new Error(
+        `Backend connection error: Request to ${BASE_URL} timed out after ${timeoutMs / 1000}s. Please ensure the backend server is running.`
+      );
+    }
+    const isNetworkError =
+      !err?.message ||
+      err.message === 'Failed to fetch' ||
+      err.message.includes('NetworkError') ||
+      err.message.includes('load failed') ||
+      err.name === 'TypeError';
+
+    if (isNetworkError) {
+      throw new Error(
+        `Backend connection error: Could not connect to backend server at ${BASE_URL}. Please ensure the backend is running.`
+      );
+    }
     throw new Error(err?.message || 'Failed to connect to backend server');
+  } finally {
+    clearTimeout(timer);
   }
 
   if (!res.ok) {

@@ -19,6 +19,7 @@ import {
   CheckCircle2,
   RefreshCw,
   Loader2,
+  Star,
 } from 'lucide-react';
 import { ProductRecord } from '@/types/dashboard';
 import {
@@ -30,6 +31,7 @@ import {
   generateProductSlug,
   getAdminProductImages,
   deleteAdminProductImage,
+  setPrimaryProductImage,
   uploadAdminProductImages,
   BackendProductImageRecord,
 } from '@/services/api/adminProductsApi';
@@ -118,7 +120,6 @@ export default function ProductManagementPage() {
   const [selectedCategory, setSelectedCategory] = useState<string>('');
   const [selectedBrand, setSelectedBrand] = useState<string>('');
   const [selectedStatus, setSelectedStatus] = useState<string>('');
-  const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [pageSize, setPageSize] = useState<number>(10);
   const [currentPage, setCurrentPage] = useState<number>(0);
 
@@ -149,6 +150,8 @@ export default function ProductManagementPage() {
   const [isLoadingGallery, setIsLoadingGallery] = useState(false);
   const [isUploadingImage, setIsUploadingImage] = useState(false);
   const [deletingImageId, setDeletingImageId] = useState<string | null>(null);
+  const [settingPrimaryId, setSettingPrimaryId] = useState<string | null>(null);
+  const [imageToDelete, setImageToDelete] = useState<{ id: string; url: string } | null>(null);
   const [galleryError, setGalleryError] = useState<string | null>(null);
   const [selectedPreviewImage, setSelectedPreviewImage] = useState<string | null>(null);
   const galleryFileInputRef = useRef<HTMLInputElement>(null);
@@ -180,11 +183,25 @@ export default function ProductManagementPage() {
     setDeletingImageId(imageId);
     setGalleryError(null);
     try {
-      await deleteAdminProductImage(galleryProduct.id, imageId);
-      const updated = galleryImages.filter((img) => String(img.id) !== String(imageId));
-      setGalleryImages(updated);
-      const nextPrimary = updated[0]?.image_url || null;
-      if (selectedPreviewImage && !updated.some((img) => img.image_url === selectedPreviewImage)) {
+      try {
+        await deleteAdminProductImage(galleryProduct.id, imageId);
+      } catch (apiErr: any) {
+        console.warn('Backend image delete returned status:', apiErr?.message);
+        // The backend deletes the database row before attempting S3 deletion.
+        // If S3 deletion throws 500 (due to AWS keys in local dev), the DB row is still deleted.
+      }
+
+      // Re-fetch fresh images from backend database
+      const fresh = await getAdminProductImages(galleryProduct.id);
+      const stillExists = fresh.some((img) => String(img.id) === String(imageId));
+
+      if (stillExists) {
+        throw new Error('Image could not be deleted from the server.');
+      }
+
+      setGalleryImages(fresh);
+      const nextPrimary = fresh.find((i) => i.is_primary)?.image_url || fresh[0]?.image_url || null;
+      if (selectedPreviewImage && !fresh.some((img) => img.image_url === selectedPreviewImage)) {
         setSelectedPreviewImage(nextPrimary);
       }
       setProducts((prev) =>
@@ -197,6 +214,29 @@ export default function ProductManagementPage() {
       setGalleryError(err?.message || 'Failed to delete image');
     } finally {
       setDeletingImageId(null);
+    }
+  };
+
+  const handleSetPrimaryGalleryImage = async (imageId: string) => {
+    if (!galleryProduct) return;
+    setSettingPrimaryId(imageId);
+    setGalleryError(null);
+    try {
+      await setPrimaryProductImage(galleryProduct.id, imageId);
+      const fresh = await getAdminProductImages(galleryProduct.id);
+      setGalleryImages(fresh);
+      const primaryImg = fresh.find((i) => i.is_primary)?.image_url || fresh[0]?.image_url;
+      if (primaryImg) {
+        setSelectedPreviewImage(primaryImg);
+        setProducts((prev) =>
+          prev.map((item) => (item.id === galleryProduct.id ? { ...item, image: primaryImg } : item))
+        );
+      }
+      showToast('Primary image set successfully');
+    } catch (err: any) {
+      setGalleryError(err?.message || 'Failed to set primary image');
+    } finally {
+      setSettingPrimaryId(null);
     }
   };
 
@@ -453,28 +493,6 @@ export default function ProductManagementPage() {
   );
 
 
-  const isAllSelected =
-    paginatedProducts.length > 0 &&
-    paginatedProducts.every((p) => selectedIds.includes(p.id));
-
-  const handleSelectAll = () => {
-    if (isAllSelected) {
-      setSelectedIds((prev) =>
-        prev.filter((id) => !paginatedProducts.some((p) => p.id === id))
-      );
-    } else {
-      setSelectedIds((prev) => [
-        ...new Set([...prev, ...paginatedProducts.map((p) => p.id)]),
-      ]);
-    }
-  };
-
-  const handleToggleRow = (id: string) => {
-    setSelectedIds((prev) =>
-      prev.includes(id) ? prev.filter((i) => i !== id) : [...prev, id]
-    );
-  };
-
   const currencyFormatter = new Intl.NumberFormat('en-IN', {
     style: 'currency',
     currency: 'INR',
@@ -636,15 +654,6 @@ export default function ProductManagementPage() {
           <table className="w-full min-w-[1050px] border-collapse text-left">
             <thead className="bg-[#E4E4E4] text-[12px] font-medium text-[#292929]">
               <tr className="h-[46px]">
-                <th className="w-[50px] border-r border-white px-3 py-3 text-center">
-                  <input
-                    type="checkbox"
-                    checked={isAllSelected}
-                    onChange={handleSelectAll}
-                    aria-label="Select all products"
-                    className="h-4 w-4 rounded border-gray-300 accent-[#F47C35] cursor-pointer"
-                  />
-                </th>
                 <th className="w-[120px] border-r border-white px-3 py-3 font-medium">ID</th>
                 <th className="w-[60px] border-r border-white px-3 py-3 text-center font-medium">Image</th>
                 <th className="min-w-[220px] border-r border-white px-3 py-3 font-medium">Product Name</th>
@@ -659,28 +668,17 @@ export default function ProductManagementPage() {
             <tbody className="text-[11px] text-[#505050]">
               {paginatedProducts.length === 0 ? (
                 <tr>
-                  <td colSpan={10} className="px-4 py-12 text-center text-[13px] text-[#777]">
+                  <td colSpan={9} className="px-4 py-12 text-center text-[13px] text-[#777]">
                     No products found matching your search.
                   </td>
                 </tr>
               ) : (
                 paginatedProducts.map((p) => {
-                  const isSelected = selectedIds.includes(p.id);
-
                   return (
                     <tr
                       key={p.id}
                       className="h-[50px] border-b border-[#ECECEC] last:border-b-0 hover:bg-[#FAFAFA] transition-colors"
                     >
-                      <td className="px-3 py-2 text-center">
-                        <input
-                          type="checkbox"
-                          checked={isSelected}
-                          onChange={() => handleToggleRow(p.id)}
-                          aria-label={`Select ${p.name}`}
-                          className="h-4 w-4 rounded border-gray-300 accent-[#F47C35] cursor-pointer"
-                        />
-                      </td>
                       <td className="px-3 font-mono font-medium text-slate-800">
                         {p.productCode}
                       </td>
@@ -992,7 +990,7 @@ export default function ProductManagementPage() {
                   onClick={() => {
                     const id = editingProduct.id;
                     setEditingProduct(null);
-                    router.push(`/admin/products/add?id=${id}`);
+                    router.push(`/admin/products/edit?id=${id}`);
                   }}
                   className="text-xs font-semibold text-[#F47C35] hover:text-[#E96F29] underline cursor-pointer"
                 >
@@ -1054,6 +1052,51 @@ export default function ProductManagementPage() {
               >
                 {isSubmitting && <Loader2 size={14} className="animate-spin" />}
                 <span>{isSubmitting ? 'Deleting...' : 'Yes, Delete'}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Image Delete Confirmation Modal */}
+      {imageToDelete && (
+        <div className="fixed inset-0 z-60 flex items-center justify-center bg-black/50 p-4 backdrop-blur-xs">
+          <div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-2xl animate-in fade-in">
+            <div className="flex h-12 w-12 items-center justify-center rounded-full bg-rose-50 text-rose-600">
+              <AlertTriangle size={24} />
+            </div>
+
+            <h3 className="mt-4 text-[16px] font-bold text-gray-900">Delete Image?</h3>
+            <p className="mt-2 text-[13px] text-gray-600">
+              Are you sure you want to delete this image? It will be removed from this product.
+            </p>
+
+            <div className="mt-4 flex items-center justify-center overflow-hidden rounded-lg border border-gray-200 bg-gray-50 h-24 w-24 mx-auto">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={imageToDelete.url} alt="Image preview" className="h-full w-full object-cover" />
+            </div>
+
+            <div className="mt-6 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setImageToDelete(null)}
+                disabled={Boolean(deletingImageId)}
+                className="h-10 rounded-lg border border-[#D6DCE5] px-4 text-[13px] font-medium text-gray-700 hover:bg-gray-50 cursor-pointer disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  const targetId = imageToDelete.id;
+                  setImageToDelete(null);
+                  await handleDeleteGalleryImage(targetId);
+                }}
+                disabled={Boolean(deletingImageId)}
+                className="inline-flex items-center gap-1.5 h-10 rounded-lg bg-rose-600 px-4 text-[13px] font-semibold text-white hover:bg-rose-700 cursor-pointer disabled:opacity-50"
+              >
+                {deletingImageId && <Loader2 size={14} className="animate-spin" />}
+                <span>{deletingImageId ? 'Deleting...' : 'Yes, Delete'}</span>
               </button>
             </div>
           </div>
@@ -1172,10 +1215,27 @@ export default function ProductManagementPage() {
                             />
 
                             {/* Primary Badge */}
-                            {img.is_primary && (
-                              <span className="absolute bottom-1 left-1 rounded bg-[#F47C35] px-1.5 py-0.5 text-[9px] font-bold text-white shadow-xs">
-                                Primary
+                            {img.is_primary ? (
+                              <span className="absolute bottom-1 left-1 rounded bg-[#F47C35] px-1.5 py-0.5 text-[9px] font-bold text-white shadow-xs flex items-center gap-0.5">
+                                <Star size={9} className="fill-white" /> Primary
                               </span>
+                            ) : (
+                              <button
+                                type="button"
+                                title="Set as primary image"
+                                disabled={settingPrimaryId === String(img.id)}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  void handleSetPrimaryGalleryImage(String(img.id));
+                                }}
+                                className="absolute top-1 left-1 flex h-6 w-6 items-center justify-center rounded-md bg-white/90 text-gray-500 hover:bg-[#F47C35] hover:text-white shadow-xs transition-colors cursor-pointer disabled:opacity-50"
+                              >
+                                {settingPrimaryId === String(img.id) ? (
+                                  <Loader2 size={12} className="animate-spin text-[#F47C35]" />
+                                ) : (
+                                  <Star size={12} />
+                                )}
+                              </button>
                             )}
 
                             {/* Delete Button */}
@@ -1185,9 +1245,7 @@ export default function ProductManagementPage() {
                               disabled={isDeleting}
                               onClick={(e) => {
                                 e.stopPropagation();
-                                if (window.confirm('Are you sure you want to delete this image?')) {
-                                  void handleDeleteGalleryImage(String(img.id));
-                                }
+                                setImageToDelete({ id: String(img.id), url: img.image_url });
                               }}
                               className="absolute top-1 right-1 flex h-6 w-6 items-center justify-center rounded-md bg-white/90 text-gray-500 hover:bg-rose-600 hover:text-white shadow-xs transition-colors cursor-pointer disabled:opacity-50"
                             >

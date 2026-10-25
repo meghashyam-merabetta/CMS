@@ -343,13 +343,24 @@ export async function deleteAdminProductImage(
 ): Promise<void> {
   await apiFetch(`/api/admin/products/${productId}/images/${imageId}`, {
     method: 'DELETE',
+    body: JSON.stringify({}),
   });
 }
 
 /**
- * Uploads images for a specific product via POST /api/admin/products/:productId/images.
- * Uses multipart/form-data with field name 'uploadimage' matching Multer configuration.
+ * Sets an image as the primary image for a product via PATCH /api/admin/products/:productId/images/:imageId/primary.
  */
+export async function setPrimaryProductImage(
+  productId: number | string,
+  imageId: number | string
+): Promise<void> {
+  await apiFetch(`/api/admin/products/${productId}/images/${imageId}/primary`, {
+    method: 'PATCH',
+    body: JSON.stringify({}),
+  });
+}
+
+
 export async function uploadAdminProductImages(
   productId: number | string,
   images: File[]

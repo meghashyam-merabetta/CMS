@@ -18,6 +18,7 @@ const routeTitles: Record<string, string> = {
   '/admin/users': 'User Management',
   '/admin/products': 'Product Management',
   '/admin/products/add': 'Product Management',
+  '/admin/products/edit': 'Product Management',
   '/admin/categories': 'Category Management',
   '/admin/brands': 'Brand Management',
   '/admin/product-variants': 'Product Variants',
