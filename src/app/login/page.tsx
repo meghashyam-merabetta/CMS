@@ -27,10 +27,10 @@ export default function LoginPage() {
       if (result.success) {
         router.replace('/admin/dashboard');
       } else {
-        setErrorMessage(result.error || 'Unable to log in. Please try again.');
+        setErrorMessage(result.error || 'Unable to log in. Please check backend connection.');
       }
-    } catch {
-      setErrorMessage('An unexpected error occurred. Please try again.');
+    } catch (err: any) {
+      setErrorMessage(err?.message || 'Backend connection error. Please try again.');
     } finally {
       setIsSubmitting(false);
     }

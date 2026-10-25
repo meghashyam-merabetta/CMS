@@ -343,6 +343,20 @@ export async function deleteAdminProductImage(
 ): Promise<void> {
   await apiFetch(`/api/admin/products/${productId}/images/${imageId}`, {
     method: 'DELETE',
+    body: JSON.stringify({}),
+  });
+}
+
+/**
+ * Sets an image as the primary image for a product via PATCH /api/admin/products/:productId/images/:imageId/primary.
+ */
+export async function setPrimaryProductImage(
+  productId: number | string,
+  imageId: number | string
+): Promise<void> {
+  await apiFetch(`/api/admin/products/${productId}/images/${imageId}/primary`, {
+    method: 'PATCH',
+    body: JSON.stringify({}),
   });
 }
 
