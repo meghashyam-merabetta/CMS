@@ -117,7 +117,9 @@ export default function ProductManagementPage() {
   const [isLoadingDetails, setIsLoadingDetails] = useState(false);
 
   const [searchQuery, setSearchQuery] = useState('');
-  const [selectedCategory, setSelectedCategory] = useState<string>('');
+  const [selectedRootCategory, setSelectedRootCategory] = useState<string>('');
+  const [selectedSubCategory, setSelectedSubCategory] = useState<string>('');
+  const selectedCategory = selectedSubCategory || selectedRootCategory;
   const [selectedBrand, setSelectedBrand] = useState<string>('');
   const [selectedStatus, setSelectedStatus] = useState<string>('');
   const [pageSize, setPageSize] = useState<number>(10);
@@ -266,14 +268,29 @@ export default function ProductManagementPage() {
     }
   };
 
-  // Load categories for dropdown and mapping
+  const [subCategoriesByRoot, setSubCategoriesByRoot] = useState<Record<string, BackendCategory[]>>({});
+
+  // Load categories for dropdown and mapping + read optional ?category_id= from URL
   React.useEffect(() => {
+    const params = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null;
+    const urlCatId = params?.get('category_id') || '';
+
     async function loadCats() {
       try {
-        const res = await getAdminCategories();
+        const res = await getAdminCategories({ limit: 100 });
         const catList = Array.isArray(res) ? res : (res?.data ?? []);
         if (Array.isArray(catList)) {
           setCategories(catList);
+          if (urlCatId) {
+            const matched = catList.find((c) => String(c.category_id ?? c.id) === urlCatId);
+            if (matched && matched.parent_category_id != null) {
+              setSelectedRootCategory(String(matched.parent_category_id));
+              setSelectedSubCategory(urlCatId);
+            } else {
+              setSelectedRootCategory(urlCatId);
+              setSelectedSubCategory('');
+            }
+          }
         }
       } catch (e) {
         console.warn('Categories API note:', e);
@@ -281,6 +298,46 @@ export default function ProductManagementPage() {
     }
     loadCats();
   }, []);
+
+  // Fetch sub-categories via backend parent_category_id query whenever a Root Category is selected
+  React.useEffect(() => {
+    if (!selectedRootCategory) return;
+    const rootNum = Number(selectedRootCategory);
+    if (isNaN(rootNum) || rootNum <= 0) return;
+
+    getAdminCategories({ parent_category_id: rootNum, limit: 100 })
+      .then((res) => {
+        const children = Array.isArray(res?.data) ? res.data : [];
+        setSubCategoriesByRoot((prev) => ({
+          ...prev,
+          [selectedRootCategory]: children,
+        }));
+      })
+      .catch(() => {});
+  }, [selectedRootCategory]);
+
+  const rootCategories = useMemo(
+    () => categories.filter((c) => c.parent_category_id == null),
+    [categories]
+  );
+
+  const activeSubCategories = useMemo(() => {
+    if (!selectedRootCategory) return [];
+    const fromApi = subCategoriesByRoot[selectedRootCategory] || [];
+    const fromAll = categories.filter(
+      (c) => String(c.parent_category_id ?? '') === selectedRootCategory
+    );
+    const seen = new Set<string>();
+    const merged: BackendCategory[] = [];
+    for (const c of [...fromApi, ...fromAll]) {
+      const id = String(c.category_id ?? c.id ?? '');
+      if (id && !seen.has(id)) {
+        seen.add(id);
+        merged.push(c);
+      }
+    }
+    return merged;
+  }, [selectedRootCategory, subCategoriesByRoot, categories]);
 
   // Keep latest categories in a ref so loading categories does NOT trigger a products re-fetch.
   const categoriesRef = useRef<BackendCategory[]>([]);
@@ -602,38 +659,54 @@ export default function ProductManagementPage() {
           />
         </label>
 
-        {/* Category Filter */}
+        {/* Root Category Filter */}
         <div className="relative">
           <select
-            value={selectedCategory}
+            value={selectedRootCategory}
             onChange={(e) => {
-              setSelectedCategory(e.target.value);
+              setSelectedRootCategory(e.target.value);
+              setSelectedSubCategory('');
               setCurrentPage(0);
             }}
             className="h-11 appearance-none rounded-lg border border-[#D6DCE5] bg-white pr-8 pl-3 text-[13px] font-normal text-[#505050] outline-none cursor-pointer focus:border-[#F47C35]"
           >
-            <option value="">Category: All</option>
-            {categories.map((c) => (
+            <option value="">Root Category: All</option>
+            {rootCategories.map((c) => (
               <option key={c.category_id ?? c.id} value={String(c.category_id ?? c.id)}>
                 {c.category_name}
               </option>
             ))}
-            {categories.length === 0 && (
-              <>
-                <option value="Mobility Aids">Mobility Aids</option>
-                <option value="Health Monitoring">Health Monitoring</option>
-                <option value="Patient Care">Patient Care</option>
-                <option value="Daily Living Aids">Daily Living Aids</option>
-                <option value="Personal Hygiene">Personal Hygiene</option>
-                <option value="Sensory & Hearing">Sensory & Hearing</option>
-              </>
-            )}
           </select>
           <ChevronDown
             size={14}
             className="pointer-events-none absolute top-1/2 right-3 -translate-y-1/2 text-[#9AA7BA]"
           />
         </div>
+
+        {/* Sub-category Filter — only visible after a Root Category is selected */}
+        {selectedRootCategory && (
+          <div className="relative">
+            <select
+              value={selectedSubCategory}
+              onChange={(e) => {
+                setSelectedSubCategory(e.target.value);
+                setCurrentPage(0);
+              }}
+              className="h-11 appearance-none rounded-lg border border-[#F47C35]/50 bg-[#FFF7F2] pr-8 pl-3 text-[13px] font-medium text-[#111] outline-none cursor-pointer focus:border-[#F47C35]"
+            >
+              <option value="">Sub-category: All under Root</option>
+              {activeSubCategories.map((sub) => (
+                <option key={sub.category_id ?? sub.id} value={String(sub.category_id ?? sub.id)}>
+                  ↳ {sub.category_name}
+                </option>
+              ))}
+            </select>
+            <ChevronDown
+              size={14}
+              className="pointer-events-none absolute top-1/2 right-3 -translate-y-1/2 text-[#F47C35]"
+            />
+          </div>
+        )}
 
         {/* Status Filter */}
         <div className="relative">
@@ -934,11 +1007,25 @@ export default function ProductManagementPage() {
                     className="mt-1 h-10 w-full rounded-lg border border-[#D6DCE5] px-3 text-[13px] outline-none focus:border-[#F47C35]"
                   >
                     <option value="">None / Unassigned</option>
-                    {categories.map((c) => (
-                      <option key={c.category_id ?? c.id} value={String(c.category_id ?? c.id)}>
-                        {c.category_name}
-                      </option>
-                    ))}
+                    {rootCategories.map((root) => {
+                      const rootId = String(root.category_id ?? root.id);
+                      const children = categories.filter(
+                        (c) => String(c.parent_category_id ?? '') === rootId
+                      );
+                      return (
+                        <React.Fragment key={rootId}>
+                          <option value={rootId}>{root.category_name}</option>
+                          {children.map((sub) => {
+                            const subId = String(sub.category_id ?? sub.id);
+                            return (
+                              <option key={subId} value={subId}>
+                                {'\u00A0\u00A0'}↳ {sub.category_name}
+                              </option>
+                            );
+                          })}
+                        </React.Fragment>
+                      );
+                    })}
                   </select>
                 </div>
 

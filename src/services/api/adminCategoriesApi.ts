@@ -92,7 +92,7 @@ export async function getAdminCategories(
 
 export async function getAllAdminCategories(): Promise<BackendCategory[]> {
   try {
-    const res = await getAdminCategories({ limit: 50, offset: 0 });
+    const res = await getAdminCategories({ limit: 100, offset: 0 });
     return res.data;
   } catch {
     return [];

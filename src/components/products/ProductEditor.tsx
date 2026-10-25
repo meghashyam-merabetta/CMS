@@ -2,7 +2,7 @@
 
 import React, { Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { ChevronDown, CheckCircle2, FileUp, Loader2, Trash2, X } from 'lucide-react';
+import { ChevronDown, ChevronRight, CheckCircle2, FileUp, Loader2, Trash2, X } from 'lucide-react';
 import {
   createAdminProduct,
   updateAdminProduct,
@@ -13,7 +13,7 @@ import {
   MAX_PRODUCT_IMAGES,
   MAX_TOTAL_IMAGE_BYTES,
 } from '@/services/api/adminProductsApi';
-import { getAllAdminCategories } from '@/services/api/adminCategoriesApi';
+import { getAdminCategories, getAllAdminCategories } from '@/services/api/adminCategoriesApi';
 import { ProductStatus } from '@/types/api';
 
 /* ------------------------------------------------------------------ */
@@ -425,6 +425,39 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
     }
     void fetchCategories();
   }, []);
+
+  // When a root category is selected, fetch its sub-categories from backend (?parent_category_id=...)
+  useEffect(() => {
+    const rootNum = categoryId ? Number(categoryId) : NaN;
+    if (!rootNum || isNaN(rootNum)) return;
+    let cancelled = false;
+    async function fetchSubsForRoot() {
+      try {
+        const res = await getAdminCategories({ parent_category_id: rootNum, limit: 100 });
+        if (cancelled || !Array.isArray(res.data)) return;
+        const fetchedSubs: Subcategory[] = res.data.map((ch) => ({
+          id: String(ch.category_id ?? ch.id),
+          name: ch.category_name || ch.name || `Category #${ch.category_id ?? ch.id}`,
+          active: ch.is_active !== false,
+        }));
+        setCategoriesList((prev) =>
+          prev.map((cat) => {
+            if (cat.id !== String(rootNum)) return cat;
+            const mergedMap = new Map<string, Subcategory>();
+            for (const s of cat.subs) mergedMap.set(s.id, s);
+            for (const s of fetchedSubs) mergedMap.set(s.id, s);
+            return { ...cat, subs: Array.from(mergedMap.values()) };
+          })
+        );
+      } catch (err) {
+        console.warn('Could not load sub-categories for root:', err);
+      }
+    }
+    void fetchSubsForRoot();
+    return () => {
+      cancelled = true;
+    };
+  }, [categoryId]);
 
   // Load existing product if editId is provided
   useEffect(() => {
@@ -1345,21 +1378,25 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
 
               <section className={sectionCard}>
                 <h3 className="text-[16px] font-semibold text-[#0D2B53]">Product Categories</h3>
-                <div className="mt-4 max-h-[320px] overflow-y-auto pr-1">
+                <p className="mt-1 text-[11px] text-[#6E6E6E]">
+                  Select a root category to view and choose its sub-categories.
+                </p>
+                <div className="mt-3 max-h-[340px] overflow-y-auto pr-1">
                   {categoriesList.map((c) => {
                     const active = c.active !== false;
+                    const isRootSelected = categoryId === c.id;
                     return (
                       <div key={c.id} className="border-b border-[#E1E1E1] last:border-b-0">
                         <label
-                          className={`flex min-h-11 items-center gap-3 px-2 text-[12px] font-medium ${
+                          className={`flex min-h-11 items-center gap-2.5 px-2 text-[12px] font-semibold transition-colors ${
                             active ? 'cursor-pointer' : 'cursor-not-allowed text-[#999]'
-                          }`}
+                          } ${isRootSelected ? 'bg-[#FFF5EF] text-[#0D2B53] rounded-t-lg' : ''}`}
                         >
                           <input
                             type="radio"
-                            name="product-category"
+                            name="product-root-category"
                             disabled={!active}
-                            checked={categoryId === c.id && !subCategoryId}
+                            checked={isRootSelected}
                             onChange={() => {
                               setCategoryId(c.id);
                               setSubCategoryId('');
@@ -1367,40 +1404,69 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                             }}
                             className="h-[18px] w-[18px] accent-[#F47C35]"
                           />
-                          {c.name}
+                          {isRootSelected ? (
+                            <ChevronDown size={14} className="text-[#F47C35] shrink-0" />
+                          ) : (
+                            <ChevronRight size={14} className="text-[#888] shrink-0" />
+                          )}
+                          <span className="truncate">{c.name}</span>
+                          {c.subs.length > 0 && (
+                            <span className="ml-auto rounded-full bg-white border border-[#E2E8F0] px-2 py-0.5 text-[10px] font-medium text-[#555]">
+                              {c.subs.length} sub{c.subs.length === 1 ? '' : 's'}
+                            </span>
+                          )}
                           {!active && (
                             <span className="ml-auto rounded-full bg-[#F1F1F1] px-2 py-0.5 text-[9px] font-medium text-[#777]">
                               Inactive
                             </span>
                           )}
                         </label>
-                        {c.subs.map((s) => {
-                          const subActive = active && s.active !== false;
-                          return (
-                            <label
-                              key={s.id}
-                              className={`flex min-h-10 items-center gap-3 border-t border-[#ECECEC] bg-white px-7 text-[11px] ${
-                                subActive ? 'cursor-pointer text-[#5C5C5C]' : 'cursor-not-allowed text-[#A0A0A0]'
-                              }`}
-                            >
-                              <input
-                                type="radio"
-                                name="product-category"
-                                disabled={!subActive}
-                                checked={categoryId === c.id && subCategoryId === s.id}
-                                onChange={() => {
-                                  setCategoryId(c.id);
-                                  setSubCategoryId(s.id);
-                                  setError('');
-                                }}
-                                className="h-4 w-4 accent-[#F47C35]"
-                              />
-                              <span aria-hidden="true">↳</span>
-                              {s.name}
-                              {!subActive && <span className="ml-auto text-[9px]">Inactive</span>}
-                            </label>
-                          );
-                        })}
+
+                        {/* Sub-categories are ONLY visible after selecting this root category */}
+                        {isRootSelected && (
+                          <div className="border-l-2 border-[#F47C35]/40 ml-4 my-1 pl-2 space-y-0.5">
+                            {c.subs.length === 0 ? (
+                              <p className="px-3 py-2 text-[11px] italic text-[#888]">
+                                No sub-categories under this root category.
+                              </p>
+                            ) : (
+                              c.subs.map((s) => {
+                                const subActive = active && s.active !== false;
+                                const isSubSelected = subCategoryId === s.id;
+                                return (
+                                  <label
+                                    key={s.id}
+                                    className={`flex min-h-9 items-center gap-2.5 rounded-md px-3 text-[11px] transition-colors ${
+                                      subActive
+                                        ? 'cursor-pointer text-[#333] hover:bg-white'
+                                        : 'cursor-not-allowed text-[#A0A0A0]'
+                                    } ${isSubSelected ? 'bg-white font-semibold text-[#F47C35] shadow-2xs' : ''}`}
+                                  >
+                                    <input
+                                      type="radio"
+                                      name="product-subcategory"
+                                      disabled={!subActive}
+                                      checked={isSubSelected}
+                                      onChange={() => {
+                                        setCategoryId(c.id);
+                                        setSubCategoryId(s.id);
+                                        setError('');
+                                      }}
+                                      className="h-4 w-4 accent-[#F47C35]"
+                                    />
+                                    <span aria-hidden="true" className="text-[#F47C35] font-bold">
+                                      ↳
+                                    </span>
+                                    <span className="truncate">{s.name}</span>
+                                    {!subActive && (
+                                      <span className="ml-auto text-[9px]">Inactive</span>
+                                    )}
+                                  </label>
+                                );
+                              })
+                            )}
+                          </div>
+                        )}
                       </div>
                     );
                   })}

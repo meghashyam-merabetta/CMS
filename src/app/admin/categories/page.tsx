@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import Link from 'next/link';
 import {
   Search,
   ChevronDown,
@@ -19,6 +20,7 @@ import {
   Loader2,
   Image as ImageIcon,
   ExternalLink,
+  Package,
 } from 'lucide-react';
 import {
   getAdminCategories,
@@ -30,7 +32,8 @@ import {
   resolveCategoryImageUrl,
   generateCategorySlug,
 } from '@/services/api/adminCategoriesApi';
-import { BackendCategory } from '@/types/api';
+import { getAdminProducts, resolvePrimaryProductImage } from '@/services/api/adminProductsApi';
+import { BackendCategory, BackendProduct } from '@/types/api';
 
 /**
  * Traverses category hierarchy to identify all descendant IDs of a given category.
@@ -71,9 +74,21 @@ export default function CategoryManagementPage() {
 
   // Filter & Pagination state
   const [searchQuery, setSearchQuery] = useState<string>('');
-  const [parentFilter, setParentFilter] = useState<string>(''); // '' = all, 'root' = root only, or categoryId
+  const [parentFilter, setParentFilter] = useState<string>(''); // '' = all roots, or specific root categoryId
   const [pageSize, setPageSize] = useState<number>(10);
   const [currentPage, setCurrentPage] = useState<number>(0);
+
+  // Hierarchical branching state:
+  // Sub-categories and items are only visible after selecting/expanding a root category.
+  const [expandedRootIds, setExpandedRootIds] = useState<Set<number>>(new Set());
+  const [subCategoriesMap, setSubCategoriesMap] = useState<Record<number, BackendCategory[]>>({});
+  const [loadingSubRootIds, setLoadingSubRootIds] = useState<Set<number>>(new Set());
+
+  // Category items (products) state when a category or sub-category is selected to view items
+  const [activeItemsCategoryId, setActiveItemsCategoryId] = useState<number | null>(null);
+  const [categoryItemsMap, setCategoryItemsMap] = useState<Record<number, BackendProduct[]>>({});
+  const [categoryItemsTotalMap, setCategoryItemsTotalMap] = useState<Record<number, number>>({});
+  const [loadingItemsCategoryId, setLoadingItemsCategoryId] = useState<number | null>(null);
 
   // Notification state
   const [toastMessage, setToastMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
@@ -114,7 +129,91 @@ export default function CategoryManagementPage() {
   };
 
   /**
-   * Refreshes the broader category list used for parent selectors and parent name lookup.
+   * Fetches sub-categories for a specific root category using backend query ?parent_category_id=<rootId>
+   */
+  const fetchSubCategoriesForRoot = useCallback(async (rootId: number) => {
+    setLoadingSubRootIds((prev) => new Set(prev).add(rootId));
+    try {
+      const res = await getAdminCategories({ parent_category_id: rootId, limit: 100 });
+      if (Array.isArray(res.data)) {
+        setSubCategoriesMap((prev) => ({
+          ...prev,
+          [rootId]: res.data,
+        }));
+      }
+    } catch (err) {
+      console.warn(`Failed to load sub-categories for root #${rootId}:`, err);
+    } finally {
+      setLoadingSubRootIds((prev) => {
+        const next = new Set(prev);
+        next.delete(rootId);
+        return next;
+      });
+    }
+  }, []);
+
+  /**
+   * Fetches items (products) belonging to a category using backend query ?category_id=<catId>
+   */
+  const fetchItemsForCategory = useCallback(async (catId: number) => {
+    setLoadingItemsCategoryId(catId);
+    try {
+      const res = await getAdminProducts({ category_id: catId, limit: 20, offset: 0 });
+      setCategoryItemsMap((prev) => ({
+        ...prev,
+        [catId]: Array.isArray(res.data) ? res.data : [],
+      }));
+      setCategoryItemsTotalMap((prev) => ({
+        ...prev,
+        [catId]: res.pagination?.total ?? (Array.isArray(res.data) ? res.data.length : 0),
+      }));
+    } catch (err) {
+      console.warn(`Failed to load items for category #${catId}:`, err);
+      setCategoryItemsMap((prev) => ({ ...prev, [catId]: [] }));
+    } finally {
+      setLoadingItemsCategoryId((prev) => (prev === catId ? null : prev));
+    }
+  }, []);
+
+  /**
+   * Toggles a root category expansion: only after selecting a root category
+   * do its sub-categories and items become visible.
+   */
+  const handleToggleRootCategory = useCallback(
+    (rootId: number) => {
+      setExpandedRootIds((prev) => {
+        const next = new Set(prev);
+        if (next.has(rootId)) {
+          next.delete(rootId);
+          setActiveItemsCategoryId((curr) => (curr === rootId ? null : curr));
+        } else {
+          next.add(rootId);
+          void fetchSubCategoriesForRoot(rootId);
+          setActiveItemsCategoryId(rootId);
+          void fetchItemsForCategory(rootId);
+        }
+        return next;
+      });
+    },
+    [fetchSubCategoriesForRoot, fetchItemsForCategory]
+  );
+
+  /**
+   * Toggles viewing items for a specific category or sub-category.
+   */
+  const handleToggleCategoryItems = useCallback(
+    (catId: number) => {
+      setActiveItemsCategoryId((prev) => {
+        if (prev === catId) return null;
+        void fetchItemsForCategory(catId);
+        return catId;
+      });
+    },
+    [fetchItemsForCategory]
+  );
+
+  /**
+   * Refreshes the full category list used for root heads, parent selectors, and lookup.
    */
   const refreshAllCategories = useCallback(async () => {
     try {
@@ -128,38 +227,32 @@ export default function CategoryManagementPage() {
   }, []);
 
   /**
-   * Loads paginated categories from the real backend endpoint GET /api/admin/categories.
+   * Loads categories from GET /api/admin/categories.
    */
   const loadCategories = useCallback(async () => {
     setIsLoading(true);
     setFetchError(null);
 
     try {
-      const params: { limit: number; offset: number; parent_category_id?: number } = {
-        limit: pageSize,
-        offset: currentPage * pageSize,
-      };
-
-      if (parentFilter && parentFilter !== 'root') {
-        const numId = Number(parentFilter);
-        if (!isNaN(numId)) {
-          params.parent_category_id = numId;
-        }
-      }
-
-      const res = await getAdminCategories(params);
-
-      let fetchedData = res.data;
-
-      // If filtering specifically for root categories (parent_category_id is null)
-      if (parentFilter === 'root') {
-        fetchedData = fetchedData.filter((c) => c.parent_category_id == null);
-      }
+      const res = await getAdminCategories({ limit: 100, offset: 0 });
+      const fetchedData = Array.isArray(res.data) ? res.data : [];
 
       setCategories(fetchedData);
+      setAllCategories(fetchedData);
       setTotalCount(res.pagination?.total ?? fetchedData.length);
       setHasMore(res.pagination?.hasMore ?? false);
       setIsLive(true);
+
+      // If a specific root category filter is selected, auto-expand that root category
+      if (parentFilter && parentFilter !== 'root') {
+        const numId = Number(parentFilter);
+        if (!isNaN(numId) && numId > 0) {
+          setExpandedRootIds(new Set([numId]));
+          void fetchSubCategoriesForRoot(numId);
+          setActiveItemsCategoryId(numId);
+          void fetchItemsForCategory(numId);
+        }
+      }
     } catch (err: any) {
       const msg = err.message || 'Failed to load categories from backend API.';
       setFetchError(msg);
@@ -168,32 +261,76 @@ export default function CategoryManagementPage() {
     } finally {
       setIsLoading(false);
     }
-  }, [pageSize, currentPage, parentFilter]);
+  }, [parentFilter, fetchSubCategoriesForRoot, fetchItemsForCategory]);
 
   // Initial load
-  useEffect(() => {
-    refreshAllCategories();
-  }, [refreshAllCategories]);
-
   useEffect(() => {
     loadCategories();
   }, [loadCategories]);
 
-  // Client-side search on the fetched records
-  const filteredCategories = useMemo(() => {
+  // Group into Root Heads and Sub-categories map
+  const rootCategories = useMemo(() => {
+    const roots = allCategories.filter((c) => c.parent_category_id == null);
+    return roots.length > 0 ? roots : categories;
+  }, [allCategories, categories]);
+
+  const getSubCategoriesForRoot = useCallback(
+    (rootId: number): BackendCategory[] => {
+      const fromApi = subCategoriesMap[rootId] || [];
+      const fromAll = allCategories.filter(
+        (c) => c.parent_category_id != null && Number(c.parent_category_id) === rootId
+      );
+      const merged = new Map<number, BackendCategory>();
+      for (const item of fromAll) {
+        const id = Number(item.category_id ?? item.id);
+        if (id) merged.set(id, item);
+      }
+      for (const item of fromApi) {
+        const id = Number(item.category_id ?? item.id);
+        if (id) merged.set(id, item);
+      }
+      return Array.from(merged.values());
+    },
+    [subCategoriesMap, allCategories]
+  );
+
+  // Filter root heads (and auto-include roots whose sub-category matches search)
+  const filteredRootCategories = useMemo(() => {
+    let baseRoots = rootCategories;
+    if (parentFilter && parentFilter !== 'root') {
+      baseRoots = baseRoots.filter(
+        (r) => String(r.category_id ?? r.id) === String(parentFilter)
+      );
+    }
     const q = searchQuery.trim().toLowerCase();
-    if (!q) return categories;
+    if (!q) return baseRoots;
 
-    return categories.filter((c) => {
-      const id = String(c.category_id ?? c.id ?? '');
-      const name = (c.category_name || '').toLowerCase();
-      const desc = (c.description || '').toLowerCase();
-      return id.includes(q) || name.includes(q) || desc.includes(q);
+    return baseRoots.filter((r) => {
+      const rId = Number(r.category_id ?? r.id);
+      const idStr = String(rId || '');
+      const name = (r.category_name || '').toLowerCase();
+      const desc = (r.description || '').toLowerCase();
+      const rootMatches = idStr.includes(q) || name.includes(q) || desc.includes(q);
+      if (rootMatches) return true;
+      const subs = getSubCategoriesForRoot(rId);
+      return subs.some((s) => {
+        const sId = String(s.category_id ?? s.id ?? '');
+        const sName = (s.category_name || '').toLowerCase();
+        const sDesc = (s.description || '').toLowerCase();
+        return sId.includes(q) || sName.includes(sName) && (sId.includes(q) || sName.includes(q) || sDesc.includes(q));
+      });
     });
-  }, [categories, searchQuery]);
+  }, [rootCategories, parentFilter, searchQuery, getSubCategoriesForRoot]);
 
-  // Compute pagination counts
-  const totalPages = Math.ceil(totalCount / pageSize) || 1;
+  // Paginate root categories
+  const totalPages = Math.ceil(filteredRootCategories.length / pageSize) || 1;
+  const paginatedRootCategories = useMemo(() => {
+    const start = currentPage * pageSize;
+    return filteredRootCategories.slice(start, start + pageSize);
+  }, [filteredRootCategories, currentPage, pageSize]);
+
+  // Keep filteredCategories alias for empty check
+  const filteredCategories = paginatedRootCategories;
 
   // Resolves parent category display name from cached records
   const getParentName = (parentId?: number | string | null): string => {
@@ -207,12 +344,12 @@ export default function CategoryManagementPage() {
   /* ------------------------------------------------------------------ */
   /* Add Category Handlers                                              */
   /* ------------------------------------------------------------------ */
-  const handleOpenAddModal = () => {
+  const handleOpenAddModal = (defaultParentId = '') => {
     setAddForm({
       category_name: '',
       slug: '',
       slugTouched: false,
-      parent_category_id: '',
+      parent_category_id: defaultParentId,
       category_image: '',
       description: '',
       sort_order: 0,
@@ -261,6 +398,10 @@ export default function CategoryManagementPage() {
       showToast(`Category "${created.category_name}" created successfully.`);
       setIsAddModalOpen(false);
       await Promise.all([loadCategories(), refreshAllCategories()]);
+      if (payload.parent_category_id) {
+        setExpandedRootIds((prev) => new Set(prev).add(payload.parent_category_id!));
+        await fetchSubCategoriesForRoot(payload.parent_category_id);
+      }
     } catch (err: any) {
       showToast(err.message || 'Failed to create category on backend.', 'error');
     } finally {
@@ -351,6 +492,10 @@ export default function CategoryManagementPage() {
       showToast(`Category "${updated.category_name}" updated successfully.`);
       setEditingCategoryId(null);
       await Promise.all([loadCategories(), refreshAllCategories()]);
+      if (payload.parent_category_id) {
+        setExpandedRootIds((prev) => new Set(prev).add(payload.parent_category_id!));
+        await fetchSubCategoriesForRoot(payload.parent_category_id);
+      }
     } catch (err: any) {
       showToast(err.message || 'Failed to update category on backend.', 'error');
     } finally {
@@ -368,10 +513,17 @@ export default function CategoryManagementPage() {
 
     setIsSubmitting(true);
     try {
+      const parentIdToRefresh =
+        categoryToDelete.parent_category_id != null
+          ? Number(categoryToDelete.parent_category_id)
+          : null;
       await deleteAdminCategory(catId);
       showToast(`Category "${categoryToDelete.category_name}" deleted successfully.`);
       setCategoryToDelete(null);
       await Promise.all([loadCategories(), refreshAllCategories()]);
+      if (parentIdToRefresh) {
+        await fetchSubCategoriesForRoot(parentIdToRefresh);
+      }
     } catch (err: any) {
       showToast(err.message || 'Failed to delete category.', 'error');
     } finally {
@@ -459,7 +611,7 @@ export default function CategoryManagementPage() {
 
             <button
               type="button"
-              onClick={handleOpenAddModal}
+              onClick={() => handleOpenAddModal('')}
               className="inline-flex h-11 items-center gap-2 rounded-lg bg-[#F47C35] px-5 text-[13px] font-semibold text-white shadow-xs transition hover:bg-[#E96F29] cursor-pointer"
             >
               <Plus size={16} />
@@ -470,9 +622,19 @@ export default function CategoryManagementPage() {
 
         {/* Filters & Search */}
         <div className="mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-gray-100 pt-4">
-          <div className="text-[12px] text-gray-500">
-            Total records:{' '}
-            <span className="font-semibold text-gray-900">{totalCount}</span>
+          <div className="flex flex-wrap items-center gap-3 text-[12px] text-gray-500">
+            <span>
+              Root Heads:{' '}
+              <span className="font-semibold text-gray-900">{filteredRootCategories.length}</span>
+            </span>
+            <span className="text-gray-300">|</span>
+            <span>
+              Total Categories:{' '}
+              <span className="font-semibold text-gray-900">{totalCount || allCategories.length}</span>
+            </span>
+            <span className="hidden sm:inline text-[11px] text-[#F47C35] bg-orange-50 border border-orange-200 rounded-md px-2 py-0.5 font-medium">
+              Select a root category to branch out its sub-categories &amp; items
+            </span>
           </div>
 
           <div className="flex flex-wrap items-center gap-3">
@@ -486,35 +648,48 @@ export default function CategoryManagementPage() {
               <input
                 type="search"
                 value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search category name or ID..."
+                onChange={(e) => {
+                  setSearchQuery(e.target.value);
+                  setCurrentPage(0);
+                }}
+                placeholder="Search root or sub-category..."
                 className="h-10 w-full rounded-lg border border-[#D6DCE5] pr-4 pl-9 text-[13px] outline-none transition focus:border-[#F47C35]"
               />
             </label>
 
-            {/* Parent Category Filter */}
+            {/* Root Category Selector */}
             <div className="relative">
               <select
                 value={parentFilter}
                 onChange={(e) => {
-                  setParentFilter(e.target.value);
+                  const val = e.target.value;
+                  setParentFilter(val);
                   setCurrentPage(0);
+                  if (!val || val === 'root') {
+                    setExpandedRootIds(new Set());
+                    setActiveItemsCategoryId(null);
+                  } else {
+                    const numId = Number(val);
+                    if (!isNaN(numId) && numId > 0) {
+                      setExpandedRootIds(new Set([numId]));
+                      void fetchSubCategoriesForRoot(numId);
+                      setActiveItemsCategoryId(numId);
+                      void fetchItemsForCategory(numId);
+                    }
+                  }
                 }}
                 className="h-10 appearance-none rounded-lg border border-[#D6DCE5] bg-white pr-8 pl-3 text-[13px] font-normal text-[#505050] outline-none cursor-pointer focus:border-[#F47C35]"
               >
-                <option value="">Filter: All Categories</option>
-                <option value="root">Root Categories Only</option>
-                <optgroup label="Filter by Parent Category">
-                  {allCategories
-                    .filter((c) => c.parent_category_id == null)
-                    .map((p) => {
-                      const pId = p.category_id ?? p.id;
-                      return (
-                        <option key={String(pId)} value={String(pId)}>
-                          Parent: {p.category_name} (#{pId})
-                        </option>
-                      );
-                    })}
+                <option value="">Root Directory: All Heads</option>
+                <optgroup label="Select Root Directory to View Sub-categories & Items">
+                  {rootCategories.map((p) => {
+                    const pId = p.category_id ?? p.id;
+                    return (
+                      <option key={String(pId)} value={String(pId)}>
+                        {p.category_name} (#{pId})
+                      </option>
+                    );
+                  })}
                 </optgroup>
               </select>
               <ChevronDown
@@ -522,22 +697,36 @@ export default function CategoryManagementPage() {
                 className="pointer-events-none absolute top-1/2 right-3 -translate-y-1/2 text-[#9AA7BA]"
               />
             </div>
+
+            {expandedRootIds.size > 0 && (
+              <button
+                type="button"
+                onClick={() => {
+                  setExpandedRootIds(new Set());
+                  setActiveItemsCategoryId(null);
+                  if (parentFilter) setParentFilter('');
+                }}
+                className="h-10 rounded-lg border border-gray-200 bg-gray-50 px-3 text-[12px] font-medium text-gray-600 hover:bg-gray-100 transition cursor-pointer"
+              >
+                Collapse All
+              </button>
+            )}
           </div>
         </div>
 
-        {/* Table */}
+        {/* Hierarchical Table (Root Heads -> Branched Sub-categories -> Items) */}
         <div className="mt-4 overflow-hidden rounded-lg border border-[#E5E5E5] shadow-[0_14px_28px_rgba(15,23,42,0.06)]">
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[850px] border-collapse text-left">
+            <table className="w-full min-w-[900px] border-collapse text-left">
               <thead className="bg-[#E4E4E4] text-[12px] font-medium text-[#292929]">
                 <tr className="h-[46px]">
                   <th className="w-[80px] border-r border-white px-4 font-medium text-center">Image</th>
                   <th className="w-[90px] border-r border-white px-4 font-medium">ID</th>
-                  <th className="min-w-[220px] border-r border-white px-4 font-medium">Category Name</th>
-                  <th className="min-w-[160px] border-r border-white px-4 font-medium">Parent Category</th>
+                  <th className="min-w-[260px] border-r border-white px-4 font-medium">Category Hierarchy</th>
+                  <th className="min-w-[160px] border-r border-white px-4 font-medium">Level / Branch</th>
                   <th className="min-w-[200px] border-r border-white px-4 font-medium">Description</th>
-                  <th className="w-[130px] border-r border-white px-4 font-medium">Created Date</th>
-                  <th className="w-[110px] px-4 font-medium text-center">Action</th>
+                  <th className="w-[125px] border-r border-white px-4 font-medium">Created Date</th>
+                  <th className="w-[180px] px-4 font-medium text-center">Action</th>
                 </tr>
               </thead>
               <tbody className="text-[12px] text-[#505050]">
@@ -546,7 +735,7 @@ export default function CategoryManagementPage() {
                     <td colSpan={7} className="py-12 text-center text-gray-500">
                       <div className="flex flex-col items-center justify-center gap-2">
                         <Loader2 size={24} className="animate-spin text-[#F47C35]" />
-                        <span>Loading category records...</span>
+                        <span>Loading category hierarchy...</span>
                       </div>
                     </td>
                   </tr>
@@ -559,126 +748,514 @@ export default function CategoryManagementPage() {
                         <p className="text-[12px] text-gray-400">
                           {searchQuery || parentFilter
                             ? 'No categories match the active filter criteria.'
-                            : 'Get started by creating your first catalog category.'}
+                            : 'Get started by creating your first root category.'}
                         </p>
                         {!searchQuery && !parentFilter && (
                           <button
                             type="button"
-                            onClick={handleOpenAddModal}
+                            onClick={() => handleOpenAddModal('')}
                             className="mt-2 inline-flex items-center gap-1.5 rounded-lg bg-[#F47C35] px-4 py-2 text-xs font-semibold text-white shadow-xs hover:bg-[#E96F29] cursor-pointer"
                           >
                             <Plus size={14} />
-                            <span>Add Category</span>
+                            <span>Add Root Category</span>
                           </button>
                         )}
                       </div>
                     </td>
                   </tr>
                 ) : (
-                  filteredCategories.map((c) => {
-                    const catId = c.category_id ?? (typeof c.id === 'number' ? c.id : Number(c.id));
-                    const isRoot = c.parent_category_id == null;
+                  filteredCategories.map((rootCat) => {
+                    const rootId = Number(
+                      rootCat.category_id ??
+                        (typeof rootCat.id === 'number' ? rootCat.id : Number(rootCat.id))
+                    );
+                    const isSearching = Boolean(searchQuery.trim());
+                    const isExpanded = isSearching || expandedRootIds.has(rootId);
+                    const isLoadingSubs = loadingSubRootIds.has(rootId);
+                    const allSubs = getSubCategoriesForRoot(rootId);
+                    const q = searchQuery.trim().toLowerCase();
+                    const visibleSubs = isSearching
+                      ? allSubs.filter((s) => {
+                          const sId = String(s.category_id ?? s.id ?? '');
+                          const sName = (s.category_name || '').toLowerCase();
+                          const sDesc = (s.description || '').toLowerCase();
+                          const rName = (rootCat.category_name || '').toLowerCase();
+                          return (
+                            rName.includes(q) ||
+                            sId.includes(q) ||
+                            sName.includes(q) ||
+                            sDesc.includes(q)
+                          );
+                        })
+                      : allSubs;
 
-                    return (
+                    const isShowingRootItems = activeItemsCategoryId === rootId;
+                    const rootItems = categoryItemsMap[rootId] || [];
+                    const rootItemsTotal = categoryItemsTotalMap[rootId] ?? rootItems.length;
+
+                    const renderItemsDrawerRow = (
+                      targetCatId: number,
+                      targetCatName: string,
+                      items: BackendProduct[],
+                      itemsTotal: number
+                    ) => (
                       <tr
-                        key={String(catId ?? Math.random())}
-                        className="h-[56px] border-b border-[#ECECEC] last:border-b-0 hover:bg-[#FAFAFA] transition-colors"
+                        key={`items-drawer-${targetCatId}`}
+                        className="bg-orange-50/40 border-b border-orange-200/70"
                       >
-                        {/* Image Thumbnail */}
-                        <td className="px-4 text-center">
-                          <div className="relative mx-auto flex h-10 w-10 items-center justify-center overflow-hidden rounded-lg border border-gray-200 bg-gray-50">
-                            <FolderTree size={18} className="text-gray-400" />
-                            {resolveCategoryImageUrl(c) && (
-                              // eslint-disable-next-line @next/next/no-img-element
-                              <img
-                                src={resolveCategoryImageUrl(c)}
-                                alt={c.category_name}
-                                className="absolute inset-0 h-full w-full object-cover bg-white"
-                                onError={(e) => {
-                                  // Fallback to placeholder on broken link
-                                  (e.currentTarget as HTMLElement).style.display = 'none';
-                                }}
-                              />
+                        <td colSpan={7} className="px-6 py-3.5">
+                          <div className="rounded-xl border border-orange-200/80 bg-white p-4 shadow-2xs">
+                            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-gray-100 pb-2.5">
+                              <div className="flex items-center gap-2">
+                                <Package size={15} className="text-[#F47C35]" />
+                                <span className="text-[12px] font-bold text-slate-900">
+                                  Items in &ldquo;{targetCatName}&rdquo;
+                                </span>
+                                <span className="rounded-full bg-orange-50 border border-orange-200 px-2 py-0.5 text-[10px] font-semibold text-[#F47C35]">
+                                  {itemsTotal} {itemsTotal === 1 ? 'item' : 'items'}
+                                </span>
+                              </div>
+                              <div className="flex items-center gap-3">
+                                <Link
+                                  href={`/admin/products?category_id=${targetCatId}`}
+                                  className="inline-flex items-center gap-1 text-[11px] font-semibold text-[#F47C35] hover:underline"
+                                >
+                                  <span>Open in Products</span>
+                                  <ExternalLink size={12} />
+                                </Link>
+                                <button
+                                  type="button"
+                                  onClick={() => setActiveItemsCategoryId(null)}
+                                  className="text-gray-400 hover:text-gray-600 cursor-pointer"
+                                  title="Hide items"
+                                >
+                                  <X size={14} />
+                                </button>
+                              </div>
+                            </div>
+
+                            {loadingItemsCategoryId === targetCatId ? (
+                              <div className="flex items-center justify-center gap-2 py-6 text-gray-500 text-[12px]">
+                                <Loader2 size={16} className="animate-spin text-[#F47C35]" />
+                                <span>Loading items in {targetCatName}...</span>
+                              </div>
+                            ) : items.length === 0 ? (
+                              <div className="py-5 text-center text-[12px] text-gray-400">
+                                No items/products assigned to this category yet.
+                              </div>
+                            ) : (
+                              <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
+                                {items.map((item) => {
+                                  const pId = item.product_id ?? item.id;
+                                  const pName = item.product_name || item.name || `Product #${pId}`;
+                                  const pImg = resolvePrimaryProductImage(item);
+                                  const pStatus = (item.product_status || 'active').toLowerCase();
+                                  return (
+                                    <div
+                                      key={String(pId)}
+                                      className="flex items-center justify-between gap-2.5 rounded-lg border border-gray-200 bg-gray-50/70 p-2 hover:border-[#F47C35]/50 hover:bg-white transition"
+                                    >
+                                      <div className="flex items-center gap-2.5 min-w-0">
+                                        <div className="relative flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-md border border-gray-200 bg-white">
+                                          <Package size={15} className="text-gray-400" />
+                                          {pImg && (
+                                            // eslint-disable-next-line @next/next/no-img-element
+                                            <img
+                                              src={pImg}
+                                              alt={pName}
+                                              className="absolute inset-0 h-full w-full object-cover bg-white"
+                                              onError={(e) => {
+                                                (e.currentTarget as HTMLElement).style.display =
+                                                  'none';
+                                              }}
+                                            />
+                                          )}
+                                        </div>
+                                        <div className="min-w-0">
+                                          <p className="truncate text-[12px] font-semibold text-slate-900">
+                                            {pName}
+                                          </p>
+                                          <div className="flex items-center gap-1.5 text-[10px] text-gray-500">
+                                            <span className="font-mono">PRD-{pId}</span>
+                                            <span>•</span>
+                                            <span
+                                              className={`capitalize font-semibold ${
+                                                pStatus === 'active'
+                                                  ? 'text-emerald-600'
+                                                  : pStatus === 'draft'
+                                                  ? 'text-amber-600'
+                                                  : 'text-gray-500'
+                                              }`}
+                                            >
+                                              {pStatus}
+                                            </span>
+                                          </div>
+                                        </div>
+                                      </div>
+                                      <Link
+                                        href={`/admin/products/edit?id=${pId}`}
+                                        className="shrink-0 rounded-md border border-gray-200 bg-white px-2 py-1 text-[10px] font-semibold text-slate-700 hover:border-[#F47C35] hover:text-[#F47C35] transition"
+                                      >
+                                        Edit
+                                      </Link>
+                                    </div>
+                                  );
+                                })}
+                              </div>
                             )}
                           </div>
                         </td>
+                      </tr>
+                    );
 
-                        {/* ID */}
-                        <td className="px-4 font-mono font-semibold text-slate-800">
-                          #{catId}
-                        </td>
+                    return (
+                      <React.Fragment key={`root-group-${rootId}`}>
+                        {/* Root Category Head Row */}
+                        <tr
+                          onClick={() => handleToggleRootCategory(rootId)}
+                          className={`h-[58px] border-b border-[#ECECEC] transition-colors cursor-pointer ${
+                            isExpanded
+                              ? 'bg-[#FFF8F3] hover:bg-[#FFF3EB]'
+                              : 'hover:bg-[#FAFAFA]'
+                          }`}
+                        >
+                          {/* Image Thumbnail */}
+                          <td className="px-4 text-center">
+                            <div className="relative mx-auto flex h-10 w-10 items-center justify-center overflow-hidden rounded-lg border border-gray-200 bg-gray-50">
+                              <FolderTree size={18} className="text-[#F47C35]" />
+                              {resolveCategoryImageUrl(rootCat) && (
+                                // eslint-disable-next-line @next/next/no-img-element
+                                <img
+                                  src={resolveCategoryImageUrl(rootCat)}
+                                  alt={rootCat.category_name}
+                                  className="absolute inset-0 h-full w-full object-cover bg-white"
+                                  onError={(e) => {
+                                    (e.currentTarget as HTMLElement).style.display = 'none';
+                                  }}
+                                />
+                              )}
+                            </div>
+                          </td>
 
-                        {/* Category Name */}
-                        <td className="px-4 font-medium text-slate-900">
-                          <div className="flex items-center gap-2">
-                            <FolderTree
-                              size={16}
-                              className={isRoot ? 'text-[#F47C35] shrink-0' : 'text-blue-500 shrink-0'}
-                            />
-                            <span className="font-semibold">{c.category_name}</span>
-                          </div>
-                        </td>
+                          {/* ID */}
+                          <td className="px-4 font-mono font-semibold text-slate-800">
+                            #{rootId}
+                          </td>
 
-                        {/* Parent Category */}
-                        <td className="px-4">
-                          {isRoot ? (
-                            <span className="inline-flex items-center rounded-md border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700">
-                              Root Category
-                            </span>
-                          ) : (
-                            <div className="flex flex-col">
-                              <span className="font-medium text-slate-800">
-                                {getParentName(c.parent_category_id)}
-                              </span>
-                              <span className="text-[10px] text-gray-400">
-                                Subcategory of #{c.parent_category_id}
+                          {/* Category Hierarchy Name */}
+                          <td className="px-4 font-medium text-slate-900">
+                            <div className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleToggleRootCategory(rootId);
+                                }}
+                                aria-label={
+                                  isExpanded
+                                    ? `Collapse ${rootCat.category_name}`
+                                    : `Expand ${rootCat.category_name}`
+                                }
+                                className="inline-flex h-6 w-6 items-center justify-center rounded-md border border-gray-200 bg-white text-gray-600 hover:border-[#F47C35] hover:text-[#F47C35] transition cursor-pointer"
+                              >
+                                {isExpanded ? (
+                                  <ChevronDown size={14} className="text-[#F47C35]" />
+                                ) : (
+                                  <ChevronRight size={14} />
+                                )}
+                              </button>
+                              <FolderTree size={16} className="text-[#F47C35] shrink-0" />
+                              <span className="font-bold text-[13px] text-slate-900">
+                                {rootCat.category_name}
                               </span>
                             </div>
+                          </td>
+
+                          {/* Level / Branch */}
+                          <td className="px-4">
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span className="inline-flex items-center rounded-md border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">
+                                Root Head
+                              </span>
+                              <span className="inline-flex items-center rounded-md border border-slate-200 bg-white px-2 py-0.5 text-[10px] font-medium text-slate-600">
+                                {allSubs.length} {allSubs.length === 1 ? 'sub-category' : 'sub-categories'}
+                              </span>
+                            </div>
+                          </td>
+
+                          {/* Description */}
+                          <td
+                            className="px-4 text-[#606060] max-w-[260px] truncate"
+                            title={rootCat.description || ''}
+                          >
+                            {rootCat.description || (
+                              <span className="text-gray-300 italic">No description</span>
+                            )}
+                          </td>
+
+                          {/* Created Date */}
+                          <td className="px-4 text-gray-500">
+                            {rootCat.created_at
+                              ? new Date(rootCat.created_at).toLocaleDateString('en-US', {
+                                  month: 'short',
+                                  day: 'numeric',
+                                  year: 'numeric',
+                                })
+                              : '—'}
+                          </td>
+
+                          {/* Actions */}
+                          <td
+                            className="px-4 text-center"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <div className="inline-flex items-center justify-center gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => handleOpenAddModal(String(rootId))}
+                                title={`Add sub-category under ${rootCat.category_name}`}
+                                className="inline-flex h-8 items-center gap-1 rounded-md border border-orange-200 bg-orange-50 px-2 text-[11px] font-semibold text-[#F47C35] hover:bg-[#F47C35] hover:text-white transition cursor-pointer"
+                              >
+                                <Plus size={12} />
+                                <span>Sub</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleToggleCategoryItems(rootId)}
+                                title={`View items in ${rootCat.category_name}`}
+                                className={`inline-flex h-8 items-center gap-1 rounded-md border px-2 text-[11px] font-semibold transition cursor-pointer ${
+                                  isShowingRootItems
+                                    ? 'border-[#F47C35] bg-[#F47C35] text-white'
+                                    : 'border-gray-200 bg-white text-slate-700 hover:border-[#F47C35] hover:text-[#F47C35]'
+                                }`}
+                              >
+                                <Package size={12} />
+                                <span>Items</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleOpenEditModal(rootCat)}
+                                title="Edit root category"
+                                aria-label={`Edit ${rootCat.category_name}`}
+                                className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-gray-200 bg-white text-blue-600 hover:bg-blue-50 hover:border-blue-300 transition cursor-pointer"
+                              >
+                                <Edit2 size={14} />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setCategoryToDelete(rootCat)}
+                                title="Delete root category"
+                                aria-label={`Delete ${rootCat.category_name}`}
+                                className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-gray-200 bg-white text-rose-600 hover:bg-rose-50 hover:border-rose-300 transition cursor-pointer"
+                              >
+                                <Trash2 size={14} />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+
+                        {/* Root Category Items Drawer (visible when root category is selected) */}
+                        {isExpanded &&
+                          isShowingRootItems &&
+                          renderItemsDrawerRow(
+                            rootId,
+                            rootCat.category_name,
+                            rootItems,
+                            rootItemsTotal
                           )}
-                        </td>
 
-                        {/* Description */}
-                        <td className="px-4 text-[#606060] max-w-[280px] truncate" title={c.description || ''}>
-                          {c.description || <span className="text-gray-300 italic">No description</span>}
-                        </td>
+                        {/* Branched Sub-categories (ONLY visible after root category is selected/expanded) */}
+                        {isExpanded && (
+                          <>
+                            {isLoadingSubs && visibleSubs.length === 0 ? (
+                              <tr className="bg-slate-50/70 border-b border-[#ECECEC]">
+                                <td colSpan={7} className="py-3 pl-16 text-[12px] text-gray-500">
+                                  <div className="flex items-center gap-2">
+                                    <Loader2 size={14} className="animate-spin text-[#F47C35]" />
+                                    <span>
+                                      Loading sub-categories under {rootCat.category_name}...
+                                    </span>
+                                  </div>
+                                </td>
+                              </tr>
+                            ) : visibleSubs.length === 0 ? (
+                              <tr className="bg-slate-50/50 border-b border-[#ECECEC]">
+                                <td colSpan={7} className="py-2.5 pl-16 pr-4">
+                                  <div className="flex items-center justify-between text-[11px] text-gray-400">
+                                    <span>
+                                      ↳ No sub-categories under{' '}
+                                      <strong className="text-gray-600">
+                                        {rootCat.category_name}
+                                      </strong>{' '}
+                                      yet.
+                                    </span>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleOpenAddModal(String(rootId))}
+                                      className="inline-flex items-center gap-1 text-[11px] font-semibold text-[#F47C35] hover:underline cursor-pointer"
+                                    >
+                                      <Plus size={12} />
+                                      <span>Add Sub-category</span>
+                                    </button>
+                                  </div>
+                                </td>
+                              </tr>
+                            ) : (
+                              visibleSubs.map((subCat, subIdx) => {
+                                const subId = Number(
+                                  subCat.category_id ??
+                                    (typeof subCat.id === 'number'
+                                      ? subCat.id
+                                      : Number(subCat.id))
+                                );
+                                const isLastSub = subIdx === visibleSubs.length - 1;
+                                const isShowingSubItems = activeItemsCategoryId === subId;
+                                const subItems = categoryItemsMap[subId] || [];
+                                const subItemsTotal =
+                                  categoryItemsTotalMap[subId] ?? subItems.length;
 
-                        {/* Created Date */}
-                        <td className="px-4 text-gray-500">
-                          {c.created_at ? (
-                            new Date(c.created_at).toLocaleDateString('en-US', {
-                              month: 'short',
-                              day: 'numeric',
-                              year: 'numeric',
-                            })
-                          ) : (
-                            '—'
-                          )}
-                        </td>
+                                return (
+                                  <React.Fragment key={`sub-row-${subId}`}>
+                                    <tr
+                                      onClick={() => handleToggleCategoryItems(subId)}
+                                      className={`h-[52px] border-b border-[#ECECEC] bg-slate-50/70 hover:bg-blue-50/40 transition-colors cursor-pointer ${
+                                        isShowingSubItems ? 'bg-blue-50/60' : ''
+                                      }`}
+                                    >
+                                      {/* Image Thumbnail */}
+                                      <td className="px-4 text-center">
+                                        <div className="relative mx-auto flex h-8 w-8 items-center justify-center overflow-hidden rounded-md border border-gray-200 bg-white">
+                                          <FolderTree size={14} className="text-blue-500" />
+                                          {resolveCategoryImageUrl(subCat) && (
+                                            // eslint-disable-next-line @next/next/no-img-element
+                                            <img
+                                              src={resolveCategoryImageUrl(subCat)}
+                                              alt={subCat.category_name}
+                                              className="absolute inset-0 h-full w-full object-cover bg-white"
+                                              onError={(e) => {
+                                                (e.currentTarget as HTMLElement).style.display =
+                                                  'none';
+                                              }}
+                                            />
+                                          )}
+                                        </div>
+                                      </td>
 
-                        {/* Actions */}
-                        <td className="px-4 text-center">
-                          <div className="inline-flex items-center justify-center gap-1.5">
-                            <button
-                              type="button"
-                              onClick={() => handleOpenEditModal(c)}
-                              title="Edit category"
-                              aria-label={`Edit ${c.category_name}`}
-                              className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-gray-200 bg-white text-blue-600 hover:bg-blue-50 hover:border-blue-300 transition cursor-pointer"
-                            >
-                              <Edit2 size={14} />
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => setCategoryToDelete(c)}
-                              title="Delete category"
-                              aria-label={`Delete ${c.category_name}`}
-                              className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-gray-200 bg-white text-rose-600 hover:bg-rose-50 hover:border-rose-300 transition cursor-pointer"
-                            >
-                              <Trash2 size={14} />
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
+                                      {/* ID */}
+                                      <td className="px-4 font-mono text-[11px] font-medium text-slate-600">
+                                        #{subId}
+                                      </td>
+
+                                      {/* Branched Sub-category Name */}
+                                      <td className="px-4 font-medium text-slate-800">
+                                        <div className="flex items-center gap-2 pl-6">
+                                          <span
+                                            aria-hidden="true"
+                                            className="font-mono text-[14px] font-bold text-[#F47C35]"
+                                          >
+                                            {isLastSub ? '└─' : '├─'}
+                                          </span>
+                                          <FolderTree
+                                            size={15}
+                                            className="text-blue-500 shrink-0"
+                                          />
+                                          <span className="font-semibold text-[12px] text-slate-800">
+                                            {subCat.category_name}
+                                          </span>
+                                        </div>
+                                      </td>
+
+                                      {/* Parent Branch Info */}
+                                      <td className="px-4">
+                                        <div className="flex flex-col">
+                                          <span className="inline-flex w-fit items-center rounded-md border border-blue-200 bg-blue-50 px-2 py-0.5 text-[10px] font-medium text-blue-700">
+                                            ↳ Sub-category of {rootCat.category_name}
+                                          </span>
+                                        </div>
+                                      </td>
+
+                                      {/* Description */}
+                                      <td
+                                        className="px-4 text-[#606060] max-w-[260px] truncate"
+                                        title={subCat.description || ''}
+                                      >
+                                        {subCat.description || (
+                                          <span className="text-gray-300 italic">
+                                            No description
+                                          </span>
+                                        )}
+                                      </td>
+
+                                      {/* Created Date */}
+                                      <td className="px-4 text-gray-500">
+                                        {subCat.created_at
+                                          ? new Date(subCat.created_at).toLocaleDateString(
+                                              'en-US',
+                                              {
+                                                month: 'short',
+                                                day: 'numeric',
+                                                year: 'numeric',
+                                              }
+                                            )
+                                          : '—'}
+                                      </td>
+
+                                      {/* Actions */}
+                                      <td
+                                        className="px-4 text-center"
+                                        onClick={(e) => e.stopPropagation()}
+                                      >
+                                        <div className="inline-flex items-center justify-center gap-1.5">
+                                          <button
+                                            type="button"
+                                            onClick={() => handleToggleCategoryItems(subId)}
+                                            title={`View items in ${subCat.category_name}`}
+                                            className={`inline-flex h-8 items-center gap-1 rounded-md border px-2.5 text-[11px] font-semibold transition cursor-pointer ${
+                                              isShowingSubItems
+                                                ? 'border-[#F47C35] bg-[#F47C35] text-white'
+                                                : 'border-gray-200 bg-white text-slate-700 hover:border-[#F47C35] hover:text-[#F47C35]'
+                                            }`}
+                                          >
+                                            <Package size={12} />
+                                            <span>Items</span>
+                                          </button>
+                                          <button
+                                            type="button"
+                                            onClick={() => handleOpenEditModal(subCat)}
+                                            title="Edit sub-category"
+                                            aria-label={`Edit ${subCat.category_name}`}
+                                            className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-gray-200 bg-white text-blue-600 hover:bg-blue-50 hover:border-blue-300 transition cursor-pointer"
+                                          >
+                                            <Edit2 size={14} />
+                                          </button>
+                                          <button
+                                            type="button"
+                                            onClick={() => setCategoryToDelete(subCat)}
+                                            title="Delete sub-category"
+                                            aria-label={`Delete ${subCat.category_name}`}
+                                            className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-gray-200 bg-white text-rose-600 hover:bg-rose-50 hover:border-rose-300 transition cursor-pointer"
+                                          >
+                                            <Trash2 size={14} />
+                                          </button>
+                                        </div>
+                                      </td>
+                                    </tr>
+
+                                    {/* Sub-category Items Drawer */}
+                                    {isShowingSubItems &&
+                                      renderItemsDrawerRow(
+                                        subId,
+                                        subCat.category_name,
+                                        subItems,
+                                        subItemsTotal
+                                      )}
+                                  </React.Fragment>
+                                );
+                              })
+                            )}
+                          </>
+                        )}
+                      </React.Fragment>
                     );
                   })
                 )}
@@ -690,7 +1267,7 @@ export default function CategoryManagementPage() {
         {/* Pagination Bar */}
         <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-gray-100 pt-4 text-[12px] text-gray-600">
           <div className="flex items-center gap-2">
-            <span>Rows per page:</span>
+            <span>Root heads per page:</span>
             <select
               value={pageSize}
               onChange={(e) => {
@@ -704,8 +1281,9 @@ export default function CategoryManagementPage() {
               <option value="100">100</option>
             </select>
             <span className="ml-2 text-gray-500">
-              Showing {categories.length > 0 ? currentPage * pageSize + 1 : 0} to{' '}
-              {Math.min((currentPage + 1) * pageSize, totalCount)} of {totalCount}
+              Showing {filteredCategories.length > 0 ? currentPage * pageSize + 1 : 0} to{' '}
+              {Math.min((currentPage + 1) * pageSize, filteredRootCategories.length)} of{' '}
+              {filteredRootCategories.length} root categories
             </span>
           </div>
 
