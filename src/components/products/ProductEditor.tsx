@@ -543,14 +543,17 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
             }))
           );
         }
-        if (Array.isArray(liveAttrDefs) && liveAttrDefs.length > 0) {
+        const sizeDefs = Array.isArray(liveAttrDefs)
+          ? liveAttrDefs.filter((a) => a.name.toLowerCase() === 'size')
+          : [];
+        if (sizeDefs.length > 0) {
           setVariantTypesList(
-            liveAttrDefs.map((attr) => {
+            sizeDefs.map((attr) => {
               const attrId = String(attr.id);
               const vals = Array.isArray(attr.values) ? attr.values : [];
               return {
                 id: attrId,
-                name: attr.name,
+                name: 'Size',
                 terms: vals.map((val, i) => ({
                   id: `${attrId}-opt-${i}`,
                   name: val,
@@ -558,6 +561,17 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
               };
             })
           );
+        } else {
+          setVariantTypesList([
+            {
+              id: 'size',
+              name: 'Size',
+              terms: ['S', 'M', 'L', 'XL', 'XXL'].map((val, i) => ({
+                id: `size-opt-${i}`,
+                name: val,
+              })),
+            },
+          ]);
         }
         if (Array.isArray(all) && all.length > 0) {
           const roots = all.filter((c) => c.parent_category_id == null);
@@ -759,53 +773,28 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
           if (prodVariants.length > 0) {
             setInitialVariantIds(prodVariants.map((v) => v.id));
             const liveAttrs = await getAllAdminVariantAttributes().catch(() => []);
-            const loadedTerms: Term[] = [];
-            const usedVtIds = new Set<string>();
-            const discoveredTypes = new Map<string, VariantType>();
+            const sizeAttrDef = liveAttrs.find((a) => a.name.toLowerCase() === 'size');
+            const sizeVtId = sizeAttrDef ? String(sizeAttrDef.id) : 'size';
+            const baseSizeTerms = Array.isArray(sizeAttrDef?.values)
+              ? [...sizeAttrDef!.values]
+              : ['S', 'M', 'L', 'XL', 'XXL'];
 
-            // Seed discoveredTypes with live backend attribute definitions
-            liveAttrs.forEach((attr) => {
-              const attrId = String(attr.id);
-              const vals = Array.isArray(attr.values) ? attr.values : [];
-              discoveredTypes.set(attr.name.toLowerCase(), {
-                id: attrId,
-                name: attr.name,
-                terms: vals.map((val, i) => ({
-                  id: `${attrId}-opt-${i}`,
-                  name: val,
-                })),
-              });
-            });
+            const loadedTerms: Term[] = [];
 
             prodVariants.forEach((v, idx) => {
-              const attrEntries = Object.entries(v.attributes || {});
-              const [rawAttrName, rawAttrVal] = attrEntries[0] || [
-                'Size',
-                v.display_name || `Variant ${idx + 1}`,
-              ];
-              const attrName = String(rawAttrName || 'Size').trim();
-              const attrVal = String(rawAttrVal || v.display_name || `Variant ${idx + 1}`).trim();
-              const lowerKey = attrName.toLowerCase();
+              const attrsObj = v.attributes || {};
+              const explicitSize =
+                attrsObj.Size ||
+                attrsObj.size ||
+                attrsObj.SIZE ||
+                (v.variant_name ? v.variant_name.replace(/\s*\(Pack of \d+\)/i, '').trim() : '') ||
+                (v.display_name ? v.display_name.replace(/\s*\(Pack of \d+\)/i, '').trim() : '') ||
+                `Size ${idx + 1}`;
+              const sizeVal = String(explicitSize).trim();
 
-              let vtEntry = discoveredTypes.get(lowerKey);
-              if (!vtEntry) {
-                const fallbackId = `attr-${lowerKey.replace(/[^a-z0-9]+/g, '-')}`;
-                vtEntry = {
-                  id: fallbackId,
-                  name: attrName,
-                  terms: [],
-                };
-                discoveredTypes.set(lowerKey, vtEntry);
+              if (!baseSizeTerms.some((s) => s.toLowerCase() === sizeVal.toLowerCase())) {
+                baseSizeTerms.push(sizeVal);
               }
-              if (!vtEntry.terms.some((t) => t.name.toLowerCase() === attrVal.toLowerCase())) {
-                vtEntry.terms.push({
-                  id: `${vtEntry.id}-opt-${vtEntry.terms.length}`,
-                  name: attrVal,
-                });
-              }
-
-              const vtId = vtEntry.id;
-              usedVtIds.add(vtId);
 
               // Extract unit count if stored in variant_name like "M (Pack of 10)"
               const packMatch = (v.variant_name || '').match(/Pack of (\d+)/i);
@@ -819,9 +808,9 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                 key: `variant-${v.id}`,
                 termId: `variant-${v.id}`,
                 backendVariantId: v.id,
-                variantTypeId: vtId,
-                variantTypeName: vtEntry.name,
-                name: attrVal,
+                variantTypeId: sizeVtId,
+                variantTypeName: 'Size',
+                name: sizeVal,
                 sku: v.sku || '',
                 variantName: v.variant_name || '',
                 unitCount: extractedUnitCount,
@@ -839,10 +828,18 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
               });
             });
 
-            setVariantTypesList(Array.from(discoveredTypes.values()));
-            const vtIdsArr = Array.from(usedVtIds);
-            setSelectedVariantTypeIds(vtIdsArr);
-            setActiveVariantTabId(vtIdsArr[0] || '');
+            setVariantTypesList([
+              {
+                id: sizeVtId,
+                name: 'Size',
+                terms: baseSizeTerms.map((val, i) => ({
+                  id: `${sizeVtId}-opt-${i}`,
+                  name: val,
+                })),
+              },
+            ]);
+            setSelectedVariantTypeIds([sizeVtId]);
+            setActiveVariantTabId(sizeVtId);
             setTerms(loadedTerms);
             if (loadedTerms[0]) {
               setOpenTerm(loadedTerms[0].key);
@@ -1866,29 +1863,17 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                         <h5 className="text-[13px] font-bold uppercase tracking-wider text-[#0D2B53]">
                           1. Tax & Compliance
                         </h5>
-                        <div className="grid gap-4 md:grid-cols-2">
-                          <div>
-                            <Label htmlFor="spec-gst">GST Rate (%)</Label>
-                            <PresetChipsWithCustom
-                              id="spec-gst"
-                              value={gstRate}
-                              onChange={setGstRate}
-                              presets={GST_PRESETS}
-                              suffix="%"
-                              type="number"
-                              placeholder="Enter custom GST % (e.g. 12)"
-                            />
-                          </div>
-                          <div>
-                            <Label htmlFor="spec-hsn">HSN Code</Label>
-                            <PresetChipsWithCustom
-                              id="spec-hsn"
-                              value={hsnCode}
-                              onChange={setHsnCode}
-                              presets={HSN_PRESETS}
-                              placeholder="Enter 4 to 8 digit HSN code (e.g. 961900)"
-                            />
-                          </div>
+                        <div>
+                          <Label htmlFor="spec-gst">GST Rate (%)</Label>
+                          <PresetChipsWithCustom
+                            id="spec-gst"
+                            value={gstRate}
+                            onChange={setGstRate}
+                            presets={GST_PRESETS}
+                            suffix="%"
+                            type="number"
+                            placeholder="Enter custom GST % (e.g. 12)"
+                          />
                         </div>
                       </div>
 
@@ -1936,16 +1921,6 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                               onChange={setMaterial}
                               presets={MATERIAL_PRESETS}
                               placeholder="Enter custom material"
-                            />
-                          </div>
-                          <div>
-                            <Label htmlFor="spec-colour">Colour</Label>
-                            <PresetChipsWithCustom
-                              id="spec-colour"
-                              value={colour}
-                              onChange={setColour}
-                              presets={COLOUR_PRESETS}
-                              placeholder="Enter custom colour"
                             />
                           </div>
                           <div>

@@ -59,7 +59,7 @@ export default function ProductVariantsPage() {
     setIsLoading(true);
     try {
       const res = await getAdminVariantAttributes({ limit: 100, offset: 0 });
-      setVariants(res.data);
+      setVariants(res.data.filter((v) => (v.name || '').toLowerCase() !== 'hsn'));
     } catch (err: any) {
       showToast(err.message || 'Failed to load variant attributes', 'error');
     } finally {
