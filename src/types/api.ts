@@ -230,6 +230,9 @@ export interface CreateProductPayload extends ProductSpecificationsFields {
   max_order_quantity?: number | null;
   category_ids?: number[];
   primary_category_id?: number | null;
+  category_id?: number | null;
+  age_group?: string | null;
+  prescription_required?: boolean | null;
   images?: File[];
 }
 
