@@ -457,7 +457,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
   const [description, setDescription] = useState('');
   const [detailsText, setDetailsText] = useState('');
   const [details, setDetails] = useState<string[]>([]);
-  const [productType, setProductType] = useState<'SIMPLE' | 'VARIABLE'>('SIMPLE');
+  const [productType, setProductType] = useState<'SIMPLE' | 'VARIABLE'>('VARIABLE');
   const [tab, setTab] = useState<TabId>('inventory');
   const [productCode, setProductCode] = useState('');
   const [sku, setSku] = useState('');
@@ -748,20 +748,63 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
 
           // Load existing per-product variants if variable product
           let prodVariants = Array.isArray(prod.variants) ? prod.variants : [];
-          if (prodVariants.length === 0 && prod.product_type === 'variable') {
+          if (prodVariants.length === 0) {
             try {
               prodVariants = await getAdminProductVariants(id);
             } catch {}
           }
+          const isVarProd = prod.product_type === 'variable' || prodVariants.length > 0;
+          setProductType(isVarProd ? 'VARIABLE' : 'SIMPLE');
+
           if (prodVariants.length > 0) {
             setInitialVariantIds(prodVariants.map((v) => v.id));
+            const liveAttrs = await getAllAdminVariantAttributes().catch(() => []);
             const loadedTerms: Term[] = [];
             const usedVtIds = new Set<string>();
+            const discoveredTypes = new Map<string, VariantType>();
+
+            // Seed discoveredTypes with live backend attribute definitions
+            liveAttrs.forEach((attr) => {
+              const attrId = String(attr.id);
+              const vals = Array.isArray(attr.values) ? attr.values : [];
+              discoveredTypes.set(attr.name.toLowerCase(), {
+                id: attrId,
+                name: attr.name,
+                terms: vals.map((val, i) => ({
+                  id: `${attrId}-opt-${i}`,
+                  name: val,
+                })),
+              });
+            });
 
             prodVariants.forEach((v, idx) => {
               const attrEntries = Object.entries(v.attributes || {});
-              const [attrName, attrVal] = attrEntries[0] || ['Size', v.display_name || `Variant ${idx + 1}`];
-              const vtId = `attr-${attrName.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
+              const [rawAttrName, rawAttrVal] = attrEntries[0] || [
+                'Size',
+                v.display_name || `Variant ${idx + 1}`,
+              ];
+              const attrName = String(rawAttrName || 'Size').trim();
+              const attrVal = String(rawAttrVal || v.display_name || `Variant ${idx + 1}`).trim();
+              const lowerKey = attrName.toLowerCase();
+
+              let vtEntry = discoveredTypes.get(lowerKey);
+              if (!vtEntry) {
+                const fallbackId = `attr-${lowerKey.replace(/[^a-z0-9]+/g, '-')}`;
+                vtEntry = {
+                  id: fallbackId,
+                  name: attrName,
+                  terms: [],
+                };
+                discoveredTypes.set(lowerKey, vtEntry);
+              }
+              if (!vtEntry.terms.some((t) => t.name.toLowerCase() === attrVal.toLowerCase())) {
+                vtEntry.terms.push({
+                  id: `${vtEntry.id}-opt-${vtEntry.terms.length}`,
+                  name: attrVal,
+                });
+              }
+
+              const vtId = vtEntry.id;
               usedVtIds.add(vtId);
 
               // Extract unit count if stored in variant_name like "M (Pack of 10)"
@@ -777,7 +820,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                 termId: `variant-${v.id}`,
                 backendVariantId: v.id,
                 variantTypeId: vtId,
-                variantTypeName: attrName,
+                variantTypeName: vtEntry.name,
                 name: attrVal,
                 sku: v.sku || '',
                 variantName: v.variant_name || '',
@@ -796,6 +839,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
               });
             });
 
+            setVariantTypesList(Array.from(discoveredTypes.values()));
             const vtIdsArr = Array.from(usedVtIds);
             setSelectedVariantTypeIds(vtIdsArr);
             setActiveVariantTabId(vtIdsArr[0] || '');
@@ -976,11 +1020,52 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
     setTerms((prev) => prev.map((t) => (t.key === key ? { ...t, ...patch } : t)));
   }
 
+  async function handleRemoveTerm(termToRemove: Term) {
+    setError('');
+    const remainingAll = terms.filter((x) => x.key !== termToRemove.key);
+    const remainingForVt = remainingAll.filter(
+      (x) => x.variantTypeId === termToRemove.variantTypeId
+    );
+    setTerms(remainingAll);
+
+    if (remainingForVt.length === 0) {
+      const remainingVtIds = selectedVariantTypeIds.filter(
+        (id) => id !== termToRemove.variantTypeId
+      );
+      setSelectedVariantTypeIds(remainingVtIds);
+      if (activeVariantTabId === termToRemove.variantTypeId) {
+        setActiveVariantTabId(remainingVtIds[0] || '');
+      }
+    } else {
+      setActiveOptionByVariant((prev) => ({
+        ...prev,
+        [termToRemove.variantTypeId]: remainingForVt[0]?.key ?? '',
+      }));
+    }
+
+    if (openTerm === termToRemove.key) {
+      setOpenTerm(remainingAll[0]?.key ?? null);
+    }
+
+    // If editing an existing product and this term exists in the backend DB, delete it immediately
+    if (editId && termToRemove.backendVariantId != null) {
+      try {
+        await deleteAdminProductVariant(editId, termToRemove.backendVariantId);
+        setInitialVariantIds((prev) =>
+          prev.filter((id) => String(id) !== String(termToRemove.backendVariantId))
+        );
+      } catch (err) {
+        console.warn('Could not delete variant from backend:', err);
+      }
+    }
+  }
+
   function toggleVariantType(id: string) {
     if (!id) return;
     setError('');
     const isAlreadySelected = selectedVariantTypeIds.includes(id);
     if (isAlreadySelected) {
+      const removedTerms = terms.filter((t) => t.variantTypeId === id);
       const remainingIds = selectedVariantTypeIds.filter((x) => x !== id);
       setSelectedVariantTypeIds(remainingIds);
       setTerms((prev) => prev.filter((t) => t.variantTypeId !== id));
@@ -991,6 +1076,19 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
       });
       if (activeVariantTabId === id) {
         setActiveVariantTabId(remainingIds[0] || '');
+      }
+      if (editId) {
+        removedTerms.forEach((rt) => {
+          if (rt.backendVariantId != null) {
+            void deleteAdminProductVariant(editId, rt.backendVariantId)
+              .then(() => {
+                setInitialVariantIds((prev) =>
+                  prev.filter((vid) => String(vid) !== String(rt.backendVariantId))
+                );
+              })
+              .catch(() => {});
+          }
+        });
       }
       return;
     }
@@ -1282,6 +1380,24 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
     };
   }
 
+  async function removeAllBackendVariantsBeforeSimple(targetProductId: string | number) {
+    try {
+      const serverVariants = await getAdminProductVariants(targetProductId).catch(() => []);
+      const idsToDelete = new Set<string | number>([
+        ...initialVariantIds,
+        ...serverVariants.map((v) => v.id),
+      ]);
+      for (const vid of idsToDelete) {
+        if (vid != null) {
+          await deleteAdminProductVariant(targetProductId, vid).catch(() => {});
+        }
+      }
+      setInitialVariantIds([]);
+    } catch {
+      // Ignore if already empty
+    }
+  }
+
   async function saveDraft() {
     setSaving(true);
     setError('');
@@ -1293,6 +1409,9 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
 
       let savedId: string | number | null = editId;
       if (editId) {
+        if (payload.product_type === 'simple') {
+          await removeAllBackendVariantsBeforeSimple(editId);
+        }
         await updateAdminProduct(editId, payload);
       } else {
         const created = await createAdminProduct(payload);
@@ -1326,6 +1445,9 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
 
       let savedId: string | number | null = editId;
       if (editId) {
+        if (payload.product_type === 'simple') {
+          await removeAllBackendVariantsBeforeSimple(editId);
+        }
         await updateAdminProduct(editId, payload);
         if (productType === 'VARIABLE') {
           await syncProductVariants(editId);
@@ -2279,29 +2401,14 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                                         >
                                           {t.name}
                                         </button>
-                                        {vtTerms.length > 1 && (
-                                          <button
-                                            type="button"
-                                            title={`Remove ${t.name}`}
-                                            onClick={() => {
-                                              const remainingAll = terms.filter((x) => x.key !== t.key);
-                                              const remainingVt = remainingAll.filter(
-                                                (x) => x.variantTypeId === currentVId
-                                              );
-                                              setTerms(remainingAll);
-                                              setActiveOptionByVariant((prev) => ({
-                                                ...prev,
-                                                [currentVId]: remainingVt[0]?.key ?? '',
-                                              }));
-                                              if (openTerm === t.key) {
-                                                setOpenTerm(remainingAll[0]?.key ?? null);
-                                              }
-                                            }}
-                                            className="mr-1.5 flex h-5 w-5 items-center justify-center rounded text-[#999] hover:bg-black/5 hover:text-[#E14C2A] cursor-pointer"
-                                          >
-                                            ×
-                                          </button>
-                                        )}
+                                        <button
+                                          type="button"
+                                          title={`Remove ${t.name}`}
+                                          onClick={() => void handleRemoveTerm(t)}
+                                          className="mr-1.5 flex h-5 w-5 items-center justify-center rounded text-[#999] hover:bg-black/5 hover:text-[#E14C2A] cursor-pointer"
+                                        >
+                                          ×
+                                        </button>
                                       </div>
                                     );
                                   })}
@@ -2400,11 +2507,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                                   </div>
                                   <button
                                     type="button"
-                                    onClick={() => {
-                                      const remaining = terms.filter((x) => x.key !== t.key);
-                                      setTerms(remaining);
-                                      setOpenTerm(remaining[0]?.key ?? null);
-                                    }}
+                                    onClick={() => void handleRemoveTerm(t)}
                                     className="text-[12px] font-semibold text-[#E14C2A] hover:underline cursor-pointer"
                                   >
                                     Remove Option
