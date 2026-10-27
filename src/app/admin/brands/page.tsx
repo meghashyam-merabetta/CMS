@@ -14,7 +14,7 @@ import {
   Loader2,
 } from 'lucide-react';
 import {
-  getAdminBrands,
+  getAllAdminBrands,
   createAdminBrand,
   updateAdminBrand,
   deleteAdminBrand,
@@ -54,8 +54,7 @@ export default function BrandsPage() {
   const loadBrands = useCallback(async () => {
     setIsLoading(true);
     try {
-      const res = await getAdminBrands({ all: true });
-      setBrands(res.data);
+      setBrands(await getAllAdminBrands());
     } catch (err: any) {
       showToast(err.message || 'Failed to load brands', 'error');
     } finally {

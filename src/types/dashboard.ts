@@ -79,6 +79,9 @@ export interface CustomerUserRecord {
 export interface ProductRecord {
   id: string;
   productCode: string;
+  catalogCode?: string;
+  variantSummary?: string;
+  catalogWarning?: string;
   name: string;
   brand: string;
   category: string;

@@ -1,4 +1,5 @@
 import { apiFetch } from '@/lib/api';
+import { collectAllPages } from '@/lib/pagination';
 import {
   BackendCategory,
   CreateCategoryPayload,
@@ -87,8 +88,9 @@ export async function getAdminCategories(
     params: Object.keys(queryParams).length > 0 ? queryParams : undefined,
   });
 
+  if (!Array.isArray(res?.data)) throw new Error('Unable to read categories from the server. Please refresh.');
   return {
-    data: Array.isArray(res.data) ? res.data : [],
+    data: res.data,
     pagination: res.pagination,
   };
 }
@@ -111,12 +113,10 @@ export async function getAdminCategoriesTree(params?: {
 
 
 export async function getAllAdminCategories(): Promise<BackendCategory[]> {
-  try {
-    const res = await getAdminCategories({ limit: 100, offset: 0 });
-    return res.data;
-  } catch {
-    return [];
-  }
+  return collectAllPages(
+    (offset, limit) => getAdminCategories({ limit, offset }),
+    (category) => category.category_id ?? category.id!
+  );
 }
 
 

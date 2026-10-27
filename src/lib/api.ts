@@ -1,3 +1,5 @@
+import { assertJsonRequestSize } from '@/lib/jsonRequest';
+
 const RAW_BASE_URL = (
   process.env.NEXT_PUBLIC_API_URL || 'http://16.4.61.3:3000'
 ).trim().replace(/\/+$/, '');
@@ -56,6 +58,10 @@ export async function apiFetch<T>(
         ...((headers as Record<string, string>) || {}),
       };
 
+  if (!isFormData && typeof rest.body === 'string' && new Headers(requestHeaders).get('Content-Type')?.includes('application/json')) {
+    assertJsonRequestSize(rest.body);
+  }
+
   const res = await fetch(url, {
     ...rest,
     credentials: 'include',
@@ -63,7 +69,9 @@ export async function apiFetch<T>(
   });
 
   if (!res.ok) {
-    let errorMessage = 'Request failed';
+    let errorMessage = res.status === 413
+      ? 'The server rejected this request because it is too large. Shorten long fields and try again.'
+      : 'Request failed';
     try {
       const errorData = await res.json();
       errorMessage = errorData?.error || errorData?.message || errorMessage;

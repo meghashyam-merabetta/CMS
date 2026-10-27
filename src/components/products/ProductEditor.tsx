@@ -21,7 +21,11 @@ import {
   deleteAdminProductImage,
   setPrimaryProductImage,
   replaceAdminProductImage,
-  getAdminProductVariants,
+  uploadAdminProductImages,
+  validateProductImages,
+  validateAdminProductRequestSize,
+  getAllAdminProductVariants,
+  removeAllAdminProductVariants,
   createAdminProductVariant,
   updateAdminProductVariant,
   deleteAdminProductVariant,
@@ -38,6 +42,7 @@ import {
   updateAdminVariantAttribute,
 } from '@/services/api/adminVariantAttributesApi';
 import { ProductStatus, WeightUnit, DimensionUnit } from '@/types/api';
+import { mergeVariantAttributes } from '@/lib/productCatalog';
 
 /* ------------------------------------------------------------------ */
 /* Option data & types                                                */
@@ -51,7 +56,7 @@ const IMAGE_RULES = {
   maxBytes: MAX_TOTAL_IMAGE_BYTES,
   maxTotalBytes: MAX_TOTAL_IMAGE_BYTES,
   accept: 'image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp',
-  requirements: 'JPG, PNG or WebP · Max 6 images · Max 10 MB total',
+  requirements: 'JPG, PNG or WebP · Max 6 images · Max 5 MiB each · Max 10 MiB total',
 };
 
 const TERM_IMAGE_REQUIREMENTS = IMAGE_RULES.requirements;
@@ -79,7 +84,7 @@ function num(v: string): number | null {
 function salePriceFrom(regular: string, offer: string): string {
   const a = num(regular);
   const r = num(offer);
-  if (a == null || a <= 0 || r == null || r < 0 || r > 99.99) return '';
+  if (a == null || a <= 0 || r == null || r < 0 || r > 100) return '';
   const val = Math.round((a * (1 - r / 100) + Number.EPSILON) * 100) / 100;
   return Number.isInteger(val) ? String(val) : val.toFixed(2);
 }
@@ -289,6 +294,7 @@ interface Term {
   key: string;
   termId: string;
   backendVariantId?: string | number;
+  attributes?: Record<string, string>;
   variantTypeId: string;
   variantTypeName: string;
   name: string;
@@ -299,6 +305,7 @@ interface Term {
   barcode: string;
   regularPrice: string;
   offerPercent: string;
+  pricingMode?: 'manual' | 'percent';
   salePrice: string;
   stockQuantity: string;
   description: string;
@@ -445,7 +452,12 @@ export interface ProductEditorProps {
 function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const editId = searchParams?.get('id') ?? null;
+  const requestedEditId = searchParams?.get('id') ?? null;
+  const [createdProductId, setCreatedProductId] = useState<string | null>(null);
+  const createdProductIdRef = useRef<string | null>(null);
+  const editId = requestedEditId ?? createdProductId;
+  const saveInProgress = useRef(false);
+  const uncertainImageUpload = useRef(false);
   const isEditing = Boolean(editId || initialIsEdit);
   const [isLoadingProduct, setIsLoadingProduct] = useState(Boolean(editId));
 
@@ -457,6 +469,8 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
   const [description, setDescription] = useState('');
   const [detailsText, setDetailsText] = useState('');
   const [details, setDetails] = useState<string[]>([]);
+  const [productLoadError, setProductLoadError] = useState('');
+  const [lookupError, setLookupError] = useState('');
   const [productType, setProductType] = useState<'SIMPLE' | 'VARIABLE'>('VARIABLE');
   const [tab, setTab] = useState<TabId>('inventory');
   const [productCode, setProductCode] = useState('');
@@ -464,6 +478,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
   const [minQty, setMinQty] = useState('1');
   const [maxQty, setMaxQty] = useState('');
   const [offer, setOffer] = useState('');
+  const [pricingMode, setPricingMode] = useState<'manual' | 'percent'>('manual');
   const [regular, setRegular] = useState('');
   const [sale, setSale] = useState('');
   const [specialDiscountEnabled, setSpecialDiscountEnabled] = useState(false);
@@ -502,6 +517,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
   const [replacingImageKey, setReplacingImageKey] = useState<string | null>(null);
   const [deletingImageKey, setDeletingImageKey] = useState<string | null>(null);
   const [settingPrimaryKey, setSettingPrimaryKey] = useState<string | null>(null);
+  const [replacingImage, setReplacingImage] = useState(false);
   const replaceFileInputRef = useRef<HTMLInputElement>(null);
 
   const [brandsList, setBrandsList] = useState<{ id: string; name: string }[]>([]);
@@ -532,8 +548,8 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
       try {
         const [all, liveBrands, liveAttrDefs] = await Promise.all([
           getAllAdminCategories(),
-          getAllAdminBrands().catch(() => []),
-          getAllAdminVariantAttributes().catch(() => []),
+          getAllAdminBrands(),
+          getAllAdminVariantAttributes(),
         ]);
         if (Array.isArray(liveBrands) && liveBrands.length > 0) {
           setBrandsList(
@@ -601,8 +617,10 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
           });
           setCategoriesList(tree);
         }
-      } catch (err) {
-        console.warn('Could not load live categories:', err);
+      } catch {
+        const message = 'Categories, brands or variant options could not be loaded. Refresh before saving.';
+        setError(message);
+        setLookupError(message);
       }
     }
     void fetchCategoriesAndBrands();
@@ -643,13 +661,24 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
 
   // Load existing product if editId is provided
   useEffect(() => {
-    if (!editId) {
+    if (requestedEditId && requestedEditId === createdProductIdRef.current) return;
+    if (!requestedEditId) {
       setIsLoadingProduct(false);
       return;
     }
-    const currentId = editId;
+    const currentId = requestedEditId;
     async function loadProduct(id: string) {
       setIsLoadingProduct(true);
+      setProductLoadError('');
+      setImages([]);
+      setTerms([]);
+      setInitialVariantIds([]);
+      setSelectedVariantTypeIds([]);
+      setActiveVariantTabId('');
+      setOpenTerm(null);
+      setBrand('');
+      setCategoryId('');
+      setSubCategoryId('');
       try {
         const prod = await getAdminProductById(id);
         if (prod) {
@@ -697,6 +726,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
           setRegular(regStr);
           setSale(saleStr);
           setOffer(offerStr);
+          setPricingMode(prod.offer_percent != null ? 'percent' : 'manual');
           setSpecialDiscountEnabled(Boolean(prod.special_discount_enabled));
           setSpecialDiscountPercent(String(prod.special_discount_percent ?? 0));
           setFestivalOfferEnabled(Boolean(prod.festival_offer_enabled));
@@ -753,7 +783,11 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
           let rawImages: any[] = [];
           try {
             rawImages = await getAdminProductImages(id);
-          } catch {}
+          } catch {
+            const message = 'Saved images could not be loaded. Refresh the product before editing its images.';
+            setError(message);
+            setProductLoadError(message);
+          }
           if (!Array.isArray(rawImages) || rawImages.length === 0) {
             rawImages = Array.isArray(prod.images) ? prod.images : [];
           }
@@ -779,10 +813,14 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
 
           // Load existing per-product variants if variable product
           let prodVariants = Array.isArray(prod.variants) ? prod.variants : [];
-          if (prodVariants.length === 0) {
+          {
             try {
-              prodVariants = await getAdminProductVariants(id);
-            } catch {}
+              prodVariants = await getAllAdminProductVariants(id);
+            } catch {
+              const message = 'Saved variants could not be loaded. Refresh the product before changing variants.';
+              setError(message);
+              setProductLoadError(message);
+            }
           }
           const isVarProd = prod.product_type === 'variable' || prodVariants.length > 0;
           setProductType(isVarProd ? 'VARIABLE' : 'SIMPLE');
@@ -804,24 +842,17 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
               .forEach((attr) => {
                 const attrId = String(attr.id);
                 const vals = Array.isArray(attr.values) ? attr.values : [];
-                discoveredTypes.set(attr.name.toLowerCase(), {
+                discoveredTypes.set(attr.name, {
                   id: attrId,
                   name: attr.name,
-                  terms: vals.map((val, i) => ({
-                    id: `${attrId}-opt-${i}`,
-                    name: val,
-                  })),
+                  terms: vals.map((val, i) => ({ id: `${attrId}-opt-${i}`, name: val })),
                 });
               });
 
-            if (!discoveredTypes.has('size')) {
-              discoveredTypes.set('size', {
-                id: 'size',
-                name: 'Size',
-                terms: ['S', 'M', 'L', 'XL', 'XXL'].map((val, i) => ({
-                  id: `size-opt-${i}`,
-                  name: val,
-                })),
+            if (!discoveredTypes.has('Size')) {
+              discoveredTypes.set('Size', {
+                id: 'size', name: 'Size',
+                terms: ['S', 'M', 'L', 'XL', 'XXL'].map((val, i) => ({ id: `size-opt-${i}`, name: val })),
               });
             }
 
@@ -847,19 +878,17 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                   `Size ${idx + 1}`;
               }
 
-              const lowerKey = attrName.toLowerCase();
-              let vtEntry = discoveredTypes.get(lowerKey);
+              let vtEntry = discoveredTypes.get(attrName);
               if (!vtEntry) {
-                const fallbackId = `attr-${lowerKey.replace(/[^a-z0-9]+/g, '-')}`;
+                const fallbackId = `attr-${encodeURIComponent(attrName)}`;
                 vtEntry = {
                   id: fallbackId,
                   name: attrName,
                   terms: [],
                 };
-                discoveredTypes.set(lowerKey, vtEntry);
+                discoveredTypes.set(attrName, vtEntry);
               }
-
-              if (!vtEntry.terms.some((s) => s.name.toLowerCase() === attrVal.toLowerCase())) {
+              if (!vtEntry.terms.some((t) => t.name === attrVal)) {
                 vtEntry.terms.push({
                   id: `${vtEntry.id}-opt-${vtEntry.terms.length}`,
                   name: attrVal,
@@ -880,6 +909,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                 key: `variant-${v.id}`,
                 termId: `variant-${v.id}`,
                 backendVariantId: v.id,
+                attributes: Object.fromEntries(validEntries),
                 variantTypeId: vtEntry.id,
                 variantTypeName: vtEntry.name,
                 name: attrVal,
@@ -911,13 +941,15 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
           }
         }
       } catch (err: any) {
-        console.warn('Could not load product for editing:', err.message);
+        const message = err?.message || 'Unable to load the product. Please refresh and try again.';
+        setError(message);
+        setProductLoadError(message);
       } finally {
         setIsLoadingProduct(false);
       }
     }
     void loadProduct(currentId);
-  }, [editId]);
+  }, [requestedEditId]);
 
   const fileRef = useRef<HTMLInputElement>(null);
   const imagesRef = useRef<GalleryImage[]>([]);
@@ -950,13 +982,22 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
   }, [productType, regular, sale, terms]);
 
   const totalImageBytes = useMemo(
-    () => images.reduce((sum, img) => sum + (img.size || img.file?.size || 0), 0),
+    () => images.filter((image) => image.file && !image.backendImageId)
+      .reduce((sum, img) => sum + (img.file?.size || 0), 0),
     [images]
   );
 
   function validateBasics(): string {
+    if (productLoadError) return productLoadError;
+    if (lookupError) return lookupError;
     if (!name.trim()) return 'Product name is required.';
-    return '';
+    if (uncertainImageUpload.current) {
+      return 'An image upload could not be verified. Reload this product to check its saved images before retrying.';
+    }
+    return validateProductImages(
+      images.flatMap((image) => image.file ? [image.file] : []),
+      images.filter((image) => !image.file).length
+    );
   }
 
   function validateAll(): string {
@@ -965,7 +1006,13 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
 
   function onPickImages(e: React.ChangeEvent<HTMLInputElement>) {
     const files = Array.from(e.target.files ?? []);
+    e.target.value = '';
     if (!files.length) return;
+    const validationError = validateProductImages(files, images.length, totalImageBytes);
+    if (validationError) {
+      setError(validationError);
+      return;
+    }
     setError('');
     setImages((prev) => [
       ...prev,
@@ -977,7 +1024,6 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
         file: f,
       })),
     ]);
-    e.target.value = '';
   }
 
   async function handleDeleteEditorImage(img: GalleryImage) {
@@ -998,7 +1044,9 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
             const currentServerImgs = await getAdminProductImages(editId);
             const matched = currentServerImgs.find((s) => s.image_url === img.src);
             if (matched?.id != null) targetBackendId = String(matched.id);
-          } catch {}
+          } catch {
+            throw new Error('Unable to find this image on the server. Please refresh and try again.');
+          }
         }
 
         if (targetBackendId) {
@@ -1006,11 +1054,11 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
             await deleteAdminProductImage(editId, targetBackendId);
           } catch (apiErr: any) {
             console.warn('Backend image delete returned status:', apiErr?.message);
-            // Note: The backend deletes the DB row before attempting S3 object deletion.
-            // If S3 deletion throws 500, we verify against the DB list below.
+            // A failed response does not establish whether deletion committed.
+            // Verify the database list before changing the gallery.
           }
 
-          const fresh = await getAdminProductImages(editId).catch(() => null);
+          const fresh = await getAdminProductImages(editId);
           if (fresh) {
             const stillExists = fresh.some((s) => String(s.id) === String(targetBackendId));
             if (stillExists) {
@@ -1031,6 +1079,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
             return;
           }
         }
+        throw new Error('Unable to verify image deletion. Please refresh and try again.');
       }
 
       if (img.src.startsWith('blob:')) URL.revokeObjectURL(img.src);
@@ -1197,7 +1246,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
   function handleAddCustomVariantType() {
     const trimmed = customVariantTypeName.trim();
     if (!trimmed) return;
-    const newId = `custom-${trimmed.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${Date.now()}`;
+    const newId = `custom-${encodeURIComponent(trimmed)}-${Date.now()}`;
     const defaultTermKey = `${newId}-opt-1`;
     const newVt: VariantType = {
       id: newId,
@@ -1266,48 +1315,39 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
     if (productType !== 'VARIABLE') return;
 
     // 1. Ensure variant attribute definitions & option values exist on the backend
-    try {
-      const liveAttrs = await getAllAdminVariantAttributes().catch(() => []);
-      const groupedByAttr = new Map<string, Set<string>>();
-      terms.forEach((t) => {
-        const attrName = (t.variantTypeName || 'Size').trim();
-        const optVal = t.name.trim();
-        if (!attrName || !optVal) return;
-        if (!groupedByAttr.has(attrName)) groupedByAttr.set(attrName, new Set());
-        groupedByAttr.get(attrName)!.add(optVal);
-      });
-
-      for (const [attrName, optSet] of groupedByAttr.entries()) {
-        const existingDef = liveAttrs.find(
-          (a) => a.name.toLowerCase() === attrName.toLowerCase()
-        );
-        const neededValues = Array.from(optSet);
-        if (!existingDef) {
-          await createAdminVariantAttribute({
-            name: attrName,
-            values: neededValues,
-          }).catch(() => {});
-        } else {
-          const merged = Array.from(new Set([...(existingDef.values || []), ...neededValues]));
-          if (merged.length > (existingDef.values || []).length) {
-            await updateAdminVariantAttribute(existingDef.id, {
-              name: existingDef.name,
-              values: merged,
-            }).catch(() => {});
-          }
+    const liveAttrs = await getAllAdminVariantAttributes();
+    const groupedByAttr = new Map<string, { name: string; values: Set<string> }>();
+    for (const term of terms) {
+      const attributes = mergeVariantAttributes(term.attributes, (term.variantTypeName || 'Size').trim(), term.name.trim());
+      for (const [name, rawValue] of Object.entries(attributes)) {
+        const attrName = name.trim();
+        const value = rawValue.trim();
+        if (!attrName || !value) throw new Error('Variant attribute names and values cannot be blank.');
+        const key = attrName;
+        if (!groupedByAttr.has(key)) groupedByAttr.set(key, { name: attrName, values: new Set() });
+        groupedByAttr.get(key)!.values.add(value);
+      }
+    }
+    for (const [key, attribute] of groupedByAttr) {
+      const existing = liveAttrs.find((item) => item.name === key);
+      if (!existing) {
+        await createAdminVariantAttribute({ name: attribute.name, values: [...attribute.values] });
+      } else {
+        const values = [...new Set([...(existing.values || []), ...attribute.values])];
+        if (values.length > (existing.values || []).length) {
+          await updateAdminVariantAttribute(existing.id, { name: existing.name, values });
         }
       }
-    } catch {
-      // Non-fatal if attribute sync fails
     }
 
     // 2. Delete variants that were removed in the UI
     const currentVariantIds = new Set(
-      terms.map((t) => t.backendVariantId).filter((id): id is string | number => id != null)
+      terms.flatMap((t) => t.backendVariantId != null ? [String(t.backendVariantId)] : [])
     );
     for (const oldId of initialVariantIds) {
-      if (!currentVariantIds.has(oldId)) {
-        await deleteAdminProductVariant(targetProductId, oldId).catch(() => {});
+      if (!currentVariantIds.has(String(oldId))) {
+        await deleteAdminProductVariant(targetProductId, oldId);
+        setInitialVariantIds((prev) => prev.filter((id) => String(id) !== String(oldId)));
       }
     }
 
@@ -1338,7 +1378,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
 
       const variantPayload = {
         sku: resolvedSku,
-        attributes: { [attrName]: optVal },
+        attributes: mergeVariantAttributes(t.attributes, attrName, optVal),
         variant_name: resolvedVariantName || null,
         barcode: t.barcode.trim() || null,
         weight_grams: num(t.weightGrams),
@@ -1351,7 +1391,10 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
       if (t.backendVariantId != null) {
         await updateAdminProductVariant(targetProductId, t.backendVariantId, variantPayload);
       } else {
-        await createAdminProductVariant(targetProductId, variantPayload);
+        const created = await createAdminProductVariant(targetProductId, variantPayload);
+        if (created?.id == null) throw new Error('The server did not return the saved variant ID.');
+        patchTerm(t.key, { backendVariantId: created.id });
+        setInitialVariantIds((prev) => [...prev, created.id]);
       }
     }
   }
@@ -1404,7 +1447,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
       sku: sku.trim() || null,
       regular_price: num(regular),
       sale_price: num(sale),
-      offer_percent: num(offer),
+      offer_percent: pricingMode === 'percent' ? num(offer) : null,
       special_discount_enabled: specialDiscountEnabled,
       special_discount_percent: num(specialDiscountPercent) ?? 0,
       festival_offer_enabled: festivalOfferEnabled,
@@ -1442,45 +1485,71 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
   }
 
   async function removeAllBackendVariantsBeforeSimple(targetProductId: string | number) {
-    try {
-      const serverVariants = await getAdminProductVariants(targetProductId).catch(() => []);
-      const idsToDelete = new Set<string | number>([
-        ...initialVariantIds,
-        ...serverVariants.map((v) => v.id),
-      ]);
-      for (const vid of idsToDelete) {
-        if (vid != null) {
-          await deleteAdminProductVariant(targetProductId, vid).catch(() => {});
-        }
+    await removeAllAdminProductVariants(targetProductId);
+    setInitialVariantIds([]);
+    // Retain form values, but do not reference records removed by this conversion.
+    setTerms((prev) => prev.map((term) => ({ ...term, backendVariantId: undefined })));
+  }
+
+  async function persistProduct(targetStatus: ProductStatus) {
+    // Save metadata first so a later upload failure cannot create a second product.
+    const { images: _files, ...payload } = buildApiPayload(targetStatus);
+    validateAdminProductRequestSize(payload, editId == null);
+    let savedId: string | number | null = editId;
+    if (savedId != null) {
+      if (payload.product_type === 'simple') {
+        await removeAllBackendVariantsBeforeSimple(savedId);
       }
-      setInitialVariantIds([]);
-    } catch {
-      // Ignore if already empty
+      await updateAdminProduct(savedId, payload);
+    } else {
+      const created = await createAdminProduct(payload);
+      savedId = created?.product_id ?? created?.id ?? null;
+      if (savedId == null) throw new Error('The server did not return the saved product ID.');
+      createdProductIdRef.current = String(savedId);
+      setCreatedProductId(String(savedId));
+      // Preserve the new ID on reload, including after an uncertain upload result.
+      window.history.replaceState(null, '', `/admin/products/edit?id=${encodeURIComponent(savedId)}`);
     }
+
+    // Persist each successful upload immediately, before variants or the next file
+    // can fail. A retry then includes only files that have not been uploaded.
+    for (const image of images.filter((item) => item.file && !item.backendImageId)) {
+      const before = await getAdminProductImages(savedId);
+      const validationError = validateProductImages([image.file!], before.length);
+      if (validationError) throw new Error(validationError);
+      try {
+        await uploadAdminProductImages(savedId, [image.file!]);
+        const after = await getAdminProductImages(savedId);
+        const added = after.filter((item) => !before.some((old) => String(old.id) === String(item.id)));
+        if (added.length !== 1) throw new Error('Unable to identify the uploaded image.');
+        const uploaded = added[0];
+        setImages((prev) => prev.map((item) => item.key === image.key ? {
+          ...item,
+          src: uploaded.image_url,
+          backendImageId: String(uploaded.id),
+          isPrimary: uploaded.is_primary,
+          file: undefined,
+        } : item));
+        if (image.src.startsWith('blob:')) URL.revokeObjectURL(image.src);
+      } catch (err) {
+        uncertainImageUpload.current = true;
+        const reason = err instanceof Error ? err.message : 'Image upload failed.';
+        throw new Error(`Product ${savedId} was saved, but an image upload could not be verified: ${reason} Reload this product to check its images before retrying.`);
+      }
+    }
+    if (productType === 'VARIABLE') await syncProductVariants(savedId);
   }
 
   async function saveDraft() {
+    if (saveInProgress.current || deletingImageKey || settingPrimaryKey || replacingImage) return;
+    saveInProgress.current = true;
     setSaving(true);
     setError('');
     try {
       const msg = validateBasics();
       if (msg) throw new Error(msg);
 
-      const payload = buildApiPayload('draft');
-
-      let savedId: string | number | null = editId;
-      if (editId) {
-        if (payload.product_type === 'simple') {
-          await removeAllBackendVariantsBeforeSimple(editId);
-        }
-        await updateAdminProduct(editId, payload);
-      } else {
-        const created = await createAdminProduct(payload);
-        savedId = created?.product_id ?? created?.id ?? null;
-      }
-      if (savedId != null && productType === 'VARIABLE') {
-        await syncProductVariants(savedId);
-      }
+      await persistProduct('draft');
       setSuccessMessage('Draft saved successfully.');
       setTimeout(() => {
         router.replace('/admin/products');
@@ -1489,11 +1558,14 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to save the product draft.');
     } finally {
+      saveInProgress.current = false;
       setSaving(false);
     }
   }
 
   async function confirmPublish() {
+    if (saveInProgress.current || deletingImageKey || settingPrimaryKey || replacingImage) return;
+    saveInProgress.current = true;
     setSubmitting(true);
     setError('');
     try {
@@ -1502,26 +1574,8 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
         setPreviewOpen(false);
         throw new Error(msg);
       }
-      const payload = buildApiPayload(productStatus);
-
-      let savedId: string | number | null = editId;
-      if (editId) {
-        if (payload.product_type === 'simple') {
-          await removeAllBackendVariantsBeforeSimple(editId);
-        }
-        await updateAdminProduct(editId, payload);
-        if (productType === 'VARIABLE') {
-          await syncProductVariants(editId);
-        }
-        setSuccessMessage('The product has been updated successfully!');
-      } else {
-        const created = await createAdminProduct(payload);
-        savedId = created?.product_id ?? created?.id ?? null;
-        if (savedId != null && productType === 'VARIABLE') {
-          await syncProductVariants(savedId);
-        }
-        setSuccessMessage('The product has been published successfully!');
-      }
+      await persistProduct(productStatus);
+      setSuccessMessage(isEditing ? 'The product has been updated successfully!' : 'The product has been published successfully!');
       setTimeout(() => {
         router.push('/admin/products');
         router.refresh();
@@ -1529,6 +1583,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to publish the product.');
     } finally {
+      saveInProgress.current = false;
       setSubmitting(false);
     }
   }
@@ -1552,6 +1607,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
             setPreviewOpen(true);
           }}
         >
+          <fieldset disabled={saving || submitting || isLoadingProduct || Boolean(deletingImageKey || settingPrimaryKey) || replacingImage} className="contents">
           <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between border-b border-[#F0F0F0] pb-4">
             <div>
               <div className="flex items-center gap-2.5">
@@ -1800,7 +1856,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                             onChange={(e) => {
                               const nextReg = e.target.value;
                               setRegular(nextReg);
-                              if (offer.trim()) {
+                              if (pricingMode === 'percent' && offer.trim()) {
                                 setSale(salePriceFrom(nextReg, offer));
                               } else if (sale.trim()) {
                                 setOffer(offerPercentFrom(nextReg, sale));
@@ -1820,6 +1876,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                             value={sale}
                             onChange={(e) => {
                               const nextSale = e.target.value;
+                              setPricingMode('manual');
                               setSale(nextSale);
                               setOffer(offerPercentFrom(regular, nextSale));
                             }}
@@ -1838,6 +1895,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                             value={offer}
                             onChange={(e) => {
                               const nextOffer = e.target.value;
+                              setPricingMode(nextOffer.trim() ? 'percent' : 'manual');
                               setOffer(nextOffer);
                               setSale(salePriceFrom(regular, nextOffer));
                             }}
@@ -2450,7 +2508,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                                           }}
                                           className="h-full px-3.5 cursor-pointer"
                                         >
-                                          {t.name}
+                                          {t.name}{Object.entries(t.attributes || {}).filter(([attribute]) => attribute !== t.variantTypeName).map(([, value]) => ` / ${value}`).join('')}
                                         </button>
                                         <button
                                           type="button"
@@ -2529,7 +2587,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                                   }`}
                                 >
                                   <span className="text-[11px] opacity-70">#{idx + 1}</span>
-                                  <span>{t.variantTypeName ? `${t.variantTypeName}: ${t.name}` : t.name}</span>
+                                  <span>{t.variantTypeName ? `${t.variantTypeName}: ${t.name}` : t.name}{Object.entries(t.attributes || {}).filter(([attribute]) => attribute !== t.variantTypeName).map(([, value]) => ` / ${value}`).join('')}</span>
                                   {t.unitCount && (
                                     <span className="rounded bg-orange-100 px-1.5 py-0.5 text-[10px] font-bold text-[#F47C35]">
                                       {t.unitCount} pcs
@@ -2564,6 +2622,15 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                                     Remove Option
                                   </button>
                                 </div>
+
+                                {Object.entries(t.attributes || {}).filter(([attribute]) => attribute !== t.variantTypeName).map(([attribute, value]) => (
+                                  <div key={attribute}>
+                                    <Label htmlFor={`attribute-${t.key}-${attribute}`}>{attribute}</Label>
+                                    <input id={`attribute-${t.key}-${attribute}`} value={value}
+                                      onChange={(event) => patchTerm(t.key, { attributes: { ...t.attributes, [attribute]: event.target.value } })}
+                                      className={INPUT_CLASS} />
+                                  </div>
+                                ))}
 
                                 {/* Unit Count (per pack) for this Size/Option */}
                                 <div className="rounded-xl border border-[#EAEAEA] bg-white p-3.5">
@@ -2642,13 +2709,14 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                                     id={`term-offer-${t.key}`}
                                     type="number"
                                     min="0"
-                                    max="99.99"
+                                    max="100"
                                     step="0.01"
                                     value={t.offerPercent}
                                     onChange={(e) => {
                                       const nextOffer = e.target.value;
                                       patchTerm(t.key, {
                                         offerPercent: nextOffer,
+                                        pricingMode: nextOffer.trim() ? 'percent' : 'manual',
                                         salePrice: salePriceFrom(t.regularPrice, nextOffer),
                                       });
                                     }}
@@ -2669,7 +2737,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                                       value={t.regularPrice}
                                       onChange={(e) => {
                                         const nextReg = e.target.value;
-                                        if (t.offerPercent.trim()) {
+                                        if (t.pricingMode === 'percent' && t.offerPercent.trim()) {
                                           patchTerm(t.key, {
                                             regularPrice: nextReg,
                                             salePrice: salePriceFrom(nextReg, t.offerPercent),
@@ -2699,6 +2767,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                                         const nextSale = e.target.value;
                                         patchTerm(t.key, {
                                           salePrice: nextSale,
+                                          pricingMode: 'manual',
                                           offerPercent: offerPercentFrom(t.regularPrice, nextSale),
                                         });
                                       }}
@@ -2778,8 +2847,20 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                     if (!file || !targetKey) return;
                     const targetImg = images.find((x) => x.key === targetKey);
                     if (!targetImg) return;
+                    const validationError = validateProductImages(
+                      [file],
+                      images.length - 1,
+                      editId && targetImg.backendImageId ? 0 : images.filter((image) => image.key !== targetKey && image.file && !image.backendImageId)
+                        .reduce((sum, image) => sum + (image.file?.size || 0), 0),
+                      'replace'
+                    );
+                    if (validationError) {
+                      setError(validationError);
+                      return;
+                    }
 
                     if (editId && targetImg.backendImageId) {
+                      setReplacingImage(true);
                       try {
                         await replaceAdminProductImage(editId, targetImg.backendImageId, file);
                         const newBlobUrl = URL.createObjectURL(file);
@@ -2792,6 +2873,8 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                         );
                       } catch (err: any) {
                         setError(err?.message || 'Failed to replace product image.');
+                      } finally {
+                        setReplacingImage(false);
                       }
                     } else {
                       const newBlobUrl = URL.createObjectURL(file);
@@ -2891,10 +2974,11 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                 )}
                 <div className="mt-2 flex items-center justify-between text-[10px] text-[#888]">
                   <span>
-                    {(totalImageBytes / (1024 * 1024)).toFixed(2)} / 10.00 MB total
+                    {(totalImageBytes / (1024 * 1024)).toFixed(2)} / 10.00 MiB selected
                   </span>
-                  <span>{images.length}/6 images</span>
+                  <span>{images.length > MAX_PRODUCT_IMAGES ? `${images.length} saved images` : `${images.length}/${MAX_PRODUCT_IMAGES} images`}</span>
                 </div>
+                {images.length > MAX_PRODUCT_IMAGES && <p className="mt-2 text-xs text-gray-600">All saved images are retained. You can replace or delete them. Fewer than six must remain before adding another image.</p>}
               </section>
 
               <section className={sectionCard}>
@@ -3030,6 +3114,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
               </section>
             </div>
           </div>
+          </fieldset>
         </form>
       </section>
 

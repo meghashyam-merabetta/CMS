@@ -1,4 +1,5 @@
 import { apiFetch } from '@/lib/api';
+import { collectAllPages } from '@/lib/pagination';
 import {
   BackendBrand,
   CreateBrandPayload,
@@ -46,15 +47,18 @@ export async function getAdminBrands(
     params: Object.keys(queryParams).length > 0 ? queryParams : undefined,
   });
 
+  if (!Array.isArray(res?.data)) throw new Error('Unable to read brands from the server. Please refresh.');
   return {
-    data: Array.isArray(res.data) ? res.data : [],
+    data: res.data,
     pagination: res.pagination,
   };
 }
 
 export async function getAllAdminBrands(isActive?: boolean): Promise<BackendBrand[]> {
-  const res = await getAdminBrands({ all: true, is_active: isActive });
-  return res.data;
+  return collectAllPages(
+    (offset, limit) => getAdminBrands({ limit, offset, is_active: isActive }),
+    (brand) => brand.brand_id ?? brand.id!
+  );
 }
 
 export async function getAdminBrandById(

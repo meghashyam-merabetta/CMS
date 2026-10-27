@@ -30,13 +30,17 @@ import {
   resolvePrimaryProductImage,
   generateProductSlug,
   getAdminProductImages,
+  getAllAdminProductVariants,
   deleteAdminProductImage,
   setPrimaryProductImage,
   uploadAdminProductImages,
   replaceAdminProductImage,
+  validateProductImages,
   BackendProductImageRecord,
 } from '@/services/api/adminProductsApi';
-import { getAdminCategories } from '@/services/api/adminCategoriesApi';
+import { getAdminCategories, getAllAdminCategories } from '@/services/api/adminCategoriesApi';
+import { compareProductRecords, summarizeProductVariants } from '@/lib/productCatalog';
+import { collectAllPages } from '@/lib/pagination';
 import { getAllAdminBrands } from '@/services/api/adminBrandsApi';
 import { BackendProduct, BackendCategory, BackendBrand, ProductStatus } from '@/types/api';
 
@@ -99,6 +103,8 @@ function mapBackendProductToRecord(
   return {
     id: String(prodId),
     productCode: `PRD-${String(prodId).padStart(4, '0')}`,
+    catalogCode: bp.product_code || undefined,
+    variantSummary: summarizeProductVariants(bp.variants || []),
     name,
     brand: brandLabel,
     category: categoryName,
@@ -130,6 +136,8 @@ export default function ProductManagementPage() {
   const selectedCategory = selectedSubCategory || selectedRootCategory;
   const [selectedBrand, setSelectedBrand] = useState<string>('');
   const [selectedStatus, setSelectedStatus] = useState<string>('');
+  const [sortBy, setSortBy] = useState<'product_id' | 'product_name' | 'product_code'>('product_id');
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
   const [pageSize, setPageSize] = useState<number>(10);
   const [currentPage, setCurrentPage] = useState<number>(0);
 
@@ -200,8 +208,8 @@ export default function ProductManagementPage() {
         await deleteAdminProductImage(galleryProduct.id, imageId);
       } catch (apiErr: any) {
         console.warn('Backend image delete returned status:', apiErr?.message);
-        // The backend deletes the database row before attempting S3 deletion.
-        // If S3 deletion throws 500 (due to AWS keys in local dev), the DB row is still deleted.
+        // Verify the current database list after an error; do not assume a
+        // particular storage/database operation committed.
       }
 
       // Re-fetch fresh images from backend database
@@ -261,6 +269,8 @@ export default function ProductManagementPage() {
     setIsUploadingImage(true);
     setGalleryError(null);
     try {
+      const validationError = validateProductImages(files, galleryImages.length);
+      if (validationError) throw new Error(validationError);
       await uploadAdminProductImages(galleryProduct.id, files);
       const fresh = await getAdminProductImages(galleryProduct.id);
       setGalleryImages(fresh);
@@ -321,13 +331,13 @@ export default function ProductManagementPage() {
     async function loadCatsAndBrands() {
       try {
         const [res, brandsList] = await Promise.all([
-          getAdminCategories({ limit: 100 }),
+          getAllAdminCategories(),
           getAllAdminBrands().catch(() => []),
         ]);
         if (Array.isArray(brandsList)) {
           setBrands(brandsList);
         }
-        const catList = Array.isArray(res) ? res : (res?.data ?? []);
+        const catList = res;
         if (Array.isArray(catList)) {
           setCategories(catList);
           if (urlCatId) {
@@ -409,6 +419,25 @@ export default function ProductManagementPage() {
   const requestIdRef = useRef(0);
 
   // Server-side pagination + full ID/Name/Brand/Category search support
+  async function enrichVisibleProducts(records: ProductRecord[], backendItems: BackendProduct[]) {
+    return Promise.all(records.map(async (record) => {
+      const backend = backendItems.find((item) => String(item.product_id ?? item.id) === record.id);
+      const result = { ...record };
+      const warnings: string[] = [];
+      await Promise.all([
+        !result.image ? getAdminProductImages(record.id).then((images) => {
+          result.image = images.find((image) => image.is_primary)?.image_url || images[0]?.image_url;
+        }).catch(() => warnings.push('Images could not be loaded')) : Promise.resolve(),
+        backend?.variants === undefined && backend?.product_type !== 'simple'
+          ? getAllAdminProductVariants(record.id).then((variants) => {
+            result.variantSummary = summarizeProductVariants(variants);
+          }).catch(() => warnings.push('Variants could not be loaded')) : Promise.resolve(),
+      ]);
+      result.catalogWarning = warnings.join('. ');
+      return result;
+    }));
+  }
+
   const loadProducts = React.useCallback(
     async (_forceRecount = false) => {
       const requestId = ++requestIdRef.current;
@@ -436,20 +465,27 @@ export default function ProductManagementPage() {
             ...filterParams,
             limit: pageSize,
             offset: currentPage * pageSize,
-            sort_by: 'product_id',
-            sort_order: 'desc',
+            sort_by: sortBy,
+            sort_order: sortOrder,
           });
           if (requestId !== requestIdRef.current) return;
 
           const items = Array.isArray(res.data) ? res.data : [];
           const total = res.pagination?.total ?? items.length;
+          const lastPage = Math.max(0, Math.ceil(total / pageSize) - 1);
+          if (currentPage > lastPage) {
+            setCurrentPage(lastPage);
+            return;
+          }
 
           const initialMapped = items
             .map((bp, idx) =>
               mapBackendProductToRecord(bp, idx, categoriesRef.current, brandsRef.current)
             )
-            .sort((a, b) => Number(b.id) - Number(a.id));
-          setProducts(initialMapped);
+            .sort((a, b) => compareProductRecords(a, b, sortBy, sortOrder));
+          const enriched = await enrichVisibleProducts(initialMapped, items);
+          if (requestId !== requestIdRef.current) return;
+          setProducts(enriched);
           setTotalCount(total);
           setIsLive(true);
           return;
@@ -464,44 +500,19 @@ export default function ProductManagementPage() {
         const cleanIdLower = cleanIdStr.toLowerCase();
         const isNumericId = /^\d+$/.test(cleanIdStr);
 
-        const [firstBatch, directById] = await Promise.all([
-          getAdminProducts({
+        const [catalog, directById] = await Promise.all([
+          collectAllPages((offset, limit) => getAdminProducts({
             ...filterParams,
-            limit: 100,
-            offset: 0,
-            sort_by: 'product_id',
-            sort_order: 'desc',
-          }),
+            limit,
+            offset,
+            sort_by: sortBy,
+            sort_order: sortOrder,
+          }), (product) => product.product_id ?? product.id!),
           isNumericId ? getAdminProductById(cleanIdStr).catch(() => null) : Promise.resolve(null),
         ]);
         if (requestId !== requestIdRef.current) return;
 
-        let allBackendItems: BackendProduct[] = Array.isArray(firstBatch.data)
-          ? [...firstBatch.data]
-          : [];
-        const totalOnServer = firstBatch.pagination?.total ?? allBackendItems.length;
-
-        if (totalOnServer > 100) {
-          const extraOffsets: number[] = [];
-          for (let off = 100; off < Math.min(totalOnServer, 500); off += 100) {
-            extraOffsets.push(off);
-          }
-          const extraBatches = await Promise.all(
-            extraOffsets.map((off) =>
-              getAdminProducts({
-                ...filterParams,
-                limit: 100,
-                offset: off,
-                sort_by: 'product_id',
-                sort_order: 'desc',
-              }).catch(() => ({ data: [] as BackendProduct[] }))
-            )
-          );
-          if (requestId !== requestIdRef.current) return;
-          for (const b of extraBatches) {
-            if (Array.isArray(b.data)) allBackendItems.push(...b.data);
-          }
-        }
+        const allBackendItems = [...catalog];
 
         if (directById && (directById.product_id ?? directById.id) != null) {
           const directIdStr = String(directById.product_id ?? directById.id);
@@ -536,10 +547,12 @@ export default function ProductManagementPage() {
             );
           })
           .map(({ record }) => record)
-          .sort((a, b) => Number(b.id) - Number(a.id));
+          .sort((a, b) => compareProductRecords(a, b, sortBy, sortOrder));
 
         const startIdx = currentPage * pageSize;
-        setProducts(matchedMapped.slice(startIdx, startIdx + pageSize));
+        const enriched = await enrichVisibleProducts(matchedMapped.slice(startIdx, startIdx + pageSize), allBackendItems);
+        if (requestId !== requestIdRef.current) return;
+        setProducts(enriched);
         setTotalCount(matchedMapped.length);
         setIsLive(true);
       } catch (err: any) {
@@ -551,7 +564,7 @@ export default function ProductManagementPage() {
         if (requestId === requestIdRef.current) setIsLoading(false);
       }
     },
-    [pageSize, currentPage, debouncedSearch, selectedCategory, selectedBrand, selectedStatus]
+    [pageSize, currentPage, debouncedSearch, selectedCategory, selectedBrand, selectedStatus, sortBy, sortOrder]
   );
 
   React.useEffect(() => {
@@ -757,6 +770,14 @@ export default function ProductManagementPage() {
 
       {/* Search & Filters */}
       <div className="mt-5 flex flex-wrap items-center justify-end gap-3">
+        <label className="text-xs text-gray-600">Sort by
+          <select aria-label="Sort products by" value={sortBy} onChange={(event) => { setSortBy(event.target.value as typeof sortBy); setCurrentPage(0); }} className="ml-2 h-11 rounded-lg border border-gray-300 bg-white px-3 text-sm">
+            <option value="product_id">Product ID</option><option value="product_name">Product Name</option><option value="product_code">Product Code</option>
+          </select>
+        </label>
+        <select aria-label="Sort direction" value={sortOrder} onChange={(event) => { setSortOrder(event.target.value as typeof sortOrder); setCurrentPage(0); }} className="h-11 rounded-lg border border-gray-300 bg-white px-3 text-sm">
+          <option value="asc">Ascending</option><option value="desc">Descending</option>
+        </select>
         {/* Search */}
         <label className="relative block w-full max-w-[340px]">
           <span className="sr-only">Search products</span>
@@ -931,6 +952,9 @@ export default function ProductManagementPage() {
                       </td>
                       <td className="px-3 font-medium text-slate-900">
                         {p.name}
+                        {p.catalogCode && <div className="mt-1 text-[11px] font-normal text-gray-500">Code: {p.catalogCode}</div>}
+                        {p.variantSummary && <div className="mt-1 text-[11px] font-normal text-slate-600">{p.variantSummary}</div>}
+                        {p.catalogWarning && <div role="status" className="mt-1 text-[11px] font-normal text-amber-700">{p.catalogWarning}. Refresh to retry.</div>}
                       </td>
                       <td className="px-3 text-[#606060]">{p.category}</td>
                       <td className="px-3 font-medium text-slate-800">{p.brand}</td>

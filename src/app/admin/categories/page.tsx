@@ -755,7 +755,7 @@ export default function CategoryManagementPage() {
                         (typeof rootCat.id === 'number' ? rootCat.id : Number(rootCat.id))
                     );
                     const isSearching = Boolean(searchQuery.trim());
-                    const isExpanded = isSearching || expandedRootIds.has(rootId);
+                    const isExpanded = expandedRootIds.has(rootId);
                     const isLoadingSubs = loadingSubRootIds.has(rootId);
                     const allSubs = getSubCategoriesForRoot(rootId);
                     const q = searchQuery.trim().toLowerCase();
@@ -1006,7 +1006,7 @@ export default function CategoryManagementPage() {
                               </button>
                               <button
                                 type="button"
-                                onClick={() => handleToggleCategoryItems(rootId)}
+                                onClick={() => { setExpandedRootIds((prev) => new Set(prev).add(rootId)); handleToggleCategoryItems(rootId); }}
                                 title={`View items in ${rootCat.category_name}`}
                                 className={`inline-flex h-8 items-center gap-1 rounded-md border px-2 text-[11px] font-semibold transition cursor-pointer ${
                                   isShowingRootItems

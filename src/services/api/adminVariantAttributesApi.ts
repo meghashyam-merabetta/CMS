@@ -1,4 +1,5 @@
 import { apiFetch } from '@/lib/api';
+import { collectAllPages } from '@/lib/pagination';
 import {
   BackendVariantAttribute,
   CreateVariantAttributePayload,
@@ -28,8 +29,9 @@ export async function getAdminVariantAttributes(
     }
   );
 
+  if (!Array.isArray(res?.data)) throw new Error('Unable to read variant attributes from the server. Please refresh.');
   return {
-    data: Array.isArray(res.data) ? res.data : [],
+    data: res.data,
     pagination: res.pagination,
   };
 }
@@ -37,8 +39,10 @@ export async function getAdminVariantAttributes(
 export async function getAllAdminVariantAttributes(): Promise<
   BackendVariantAttribute[]
 > {
-  const res = await getAdminVariantAttributes({ limit: 100, offset: 0 });
-  return res.data;
+  return collectAllPages(
+    (offset, limit) => getAdminVariantAttributes({ limit, offset }),
+    (attribute) => attribute.id
+  );
 }
 
 export async function createAdminVariantAttribute(

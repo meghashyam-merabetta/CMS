@@ -14,7 +14,7 @@ import {
   Loader2,
 } from 'lucide-react';
 import {
-  getAdminVariantAttributes,
+  getAllAdminVariantAttributes,
   createAdminVariantAttribute,
   updateAdminVariantAttribute,
   deleteAdminVariantAttribute,
@@ -58,8 +58,8 @@ export default function ProductVariantsPage() {
   const loadVariantAttributes = useCallback(async () => {
     setIsLoading(true);
     try {
-      const res = await getAdminVariantAttributes({ limit: 100, offset: 0 });
-      setVariants(res.data.filter((v) => (v.name || '').toLowerCase() !== 'hsn'));
+      const attributes = await getAllAdminVariantAttributes();
+      setVariants(attributes.filter((v) => (v.name || '').toLowerCase() !== 'hsn'));
     } catch (err: any) {
       showToast(err.message || 'Failed to load variant attributes', 'error');
     } finally {

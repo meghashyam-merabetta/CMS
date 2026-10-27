@@ -1,4 +1,5 @@
 import { apiFetch } from '@/lib/api';
+import { assertJsonRequestSize } from '@/lib/jsonRequest';
 import {
   BackendProduct,
   CreateProductPayload,
@@ -34,8 +35,30 @@ export const PRODUCT_IMAGE_FIELD_NAME =
   process.env.NEXT_PUBLIC_PRODUCT_IMAGE_FIELD || 'uploadimage';
 
 export const MAX_PRODUCT_IMAGES = 6;
+export const MAX_PRODUCT_IMAGE_BYTES = 5 * 1024 * 1024;
 export const MAX_TOTAL_IMAGE_BYTES = 10 * 1024 * 1024;
 export const ALLOWED_PRODUCT_IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/webp'];
+
+export function validateProductImages(
+  files: File[],
+  existingCount = 0,
+  existingBytes = 0,
+  operation: 'add' | 'replace' = 'add'
+): string {
+  if (files.length > 0 && operation !== 'replace' && existingCount + files.length > MAX_PRODUCT_IMAGES) {
+    return `A product can have a maximum of ${MAX_PRODUCT_IMAGES} images. Remove an image before adding another.`;
+  }
+  if (files.some((file) => !ALLOWED_PRODUCT_IMAGE_TYPES.includes(file.type))) {
+    return 'Product images must be JPG, PNG or WebP.';
+  }
+  if (files.some((file) => file.size > MAX_PRODUCT_IMAGE_BYTES)) {
+    return 'Each product image must be no more than 5 MiB.';
+  }
+  if (existingBytes + files.reduce((sum, file) => sum + file.size, 0) > MAX_TOTAL_IMAGE_BYTES) {
+    return 'Product images must be no more than 10 MB in total.';
+  }
+  return '';
+}
 
 export function generateProductSlug(input: string): string {
   const cleaned = input
@@ -51,7 +74,7 @@ export function resolveProductImageUrls(bp?: BackendProduct | any): string[] {
   const imgs = Array.isArray(bp.images) ? bp.images : [];
   const sorted = [...imgs].sort((a, b) => (b?.is_primary ? 1 : 0) - (a?.is_primary ? 1 : 0));
   const urls = sorted
-    .map((item: any) => (typeof item === 'string' ? item : item?.image_url))
+    .map((item: any) => (typeof item === 'string' ? item : item?.image_url || item?.url || item?.imageUrl))
     .filter((u: any): u is string => typeof u === 'string' && u.trim().length > 0);
 
   if (urls.length === 0 && typeof bp.image_url === 'string' && bp.image_url.trim()) {
@@ -263,7 +286,15 @@ function buildProductRequestBody(
     body.keywords = (payload.keywords || []).map((k) => k.trim()).filter(Boolean);
   }
 
+
   return body;
+}
+
+export function validateAdminProductRequestSize(
+  payload: CreateProductPayload | UpdateProductPayload,
+  isCreate = false
+): void {
+  assertJsonRequestSize(JSON.stringify(buildProductRequestBody(payload, isCreate)));
 }
 
 export async function createAdminProduct(
@@ -348,8 +379,19 @@ export interface BackendProductImageRecord {
 export async function getAdminProductImages(
   productId: number | string
 ): Promise<BackendProductImageRecord[]> {
-  const imgRes = await apiFetch<any>(`/api/admin/products/${productId}/images`);
-  return Array.isArray(imgRes?.data) ? imgRes.data : Array.isArray(imgRes) ? imgRes : [];
+  const imgRes = await apiFetch<any>(`/api/admin/products/${productId}/images`, {
+    cache: 'no-store',
+  });
+  const images = Array.isArray(imgRes?.data) ? imgRes.data : Array.isArray(imgRes) ? imgRes : null;
+  const normalized = images?.map((image: any) => ({
+    ...image,
+    id: image?.id ?? image?.image_id,
+    image_url: image?.image_url || image?.url || image?.imageUrl,
+  }));
+  if (!normalized || normalized.some((image: BackendProductImageRecord) => image.id == null || !image.image_url)) {
+    throw new Error('Unable to read product images from the server. Please refresh and try again.');
+  }
+  return normalized;
 }
 
 export async function uploadAdminProductImages(
@@ -357,6 +399,10 @@ export async function uploadAdminProductImages(
   images: File[]
 ): Promise<BackendProductImageRecord[]> {
   if (!images.length) return [];
+
+  const existing = await getAdminProductImages(productId);
+  const validationError = validateProductImages(images, existing.length);
+  if (validationError) throw new Error(validationError);
 
   const formData = new FormData();
   for (const file of images) {
@@ -375,6 +421,8 @@ export async function replaceAdminProductImage(
   imageId: number | string,
   file: File
 ): Promise<BackendProductImageRecord> {
+  const validationError = validateProductImages([file]);
+  if (validationError) throw new Error(validationError);
   const formData = new FormData();
   formData.append(PRODUCT_IMAGE_FIELD_NAME, file);
 
@@ -427,6 +475,62 @@ export async function getAdminProductVariants(
     }
   );
   return Array.isArray(res?.data) ? res.data : [];
+}
+
+/** Fetch every page before deleting, so offsets do not shift during cleanup. */
+export async function getAllAdminProductVariants(
+  productId: number | string
+): Promise<BackendProductVariant[]> {
+  const variants: BackendProductVariant[] = [];
+  const seenIds = new Set<string>();
+  const limit = 100;
+  let offset = 0;
+
+  while (true) {
+    const res = await apiFetch<ApiResponse<BackendProductVariant[]>>(
+      `/api/admin/products/${productId}/variants`,
+      { params: { limit, offset }, cache: 'no-store' }
+    );
+    if (!Array.isArray(res?.data)) {
+      throw new Error('Unable to read the product variants. Please try again.');
+    }
+
+    for (const variant of res.data) {
+      if (variant.id == null || seenIds.has(String(variant.id))) {
+        throw new Error('Unable to load all product variants. Please try again.');
+      }
+      seenIds.add(String(variant.id));
+      variants.push(variant);
+    }
+
+    offset += res.data.length;
+    const hasMore = res.pagination
+      ? res.pagination.hasMore || offset < res.pagination.total
+      : res.data.length === limit;
+    if (!hasMore) return variants;
+    if (res.data.length === 0) {
+      throw new Error('Unable to load all product variants. Please try again.');
+    }
+  }
+}
+
+export async function removeAllAdminProductVariants(
+  productId: number | string
+): Promise<void> {
+  // Use current server IDs so a retry skips variants already deleted successfully.
+  const variants = await getAllAdminProductVariants(productId);
+  for (const variant of variants) {
+    try {
+      await deleteAdminProductVariant(productId, variant.id);
+    } catch (err) {
+      const reason = err instanceof Error ? ` ${err.message}` : '';
+      throw new Error(`Unable to remove variant ${variant.id}.${reason} The product type has not been changed. Please retry saving.`);
+    }
+  }
+
+  if ((await getAllAdminProductVariants(productId)).length > 0) {
+    throw new Error('Product variants still exist. The product type has not been changed. Please retry saving.');
+  }
 }
 
 export async function getAdminProductVariantById(
