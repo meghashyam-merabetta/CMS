@@ -2,19 +2,42 @@
 
 import React, { Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { ChevronDown, ChevronRight, CheckCircle2, FileUp, Loader2, Trash2, X } from 'lucide-react';
+import {
+  ChevronDown,
+  ChevronRight,
+  CheckCircle2,
+  FileUp,
+  Loader2,
+  Trash2,
+  X,
+  Star,
+  RefreshCw,
+} from 'lucide-react';
 import {
   createAdminProduct,
   updateAdminProduct,
   getAdminProductById,
   getAdminProductImages,
+  deleteAdminProductImage,
+  setPrimaryProductImage,
+  replaceAdminProductImage,
+  getAdminProductVariants,
+  createAdminProductVariant,
+  updateAdminProductVariant,
+  deleteAdminProductVariant,
   resolveProductImageUrls,
   generateProductSlug,
   MAX_PRODUCT_IMAGES,
   MAX_TOTAL_IMAGE_BYTES,
 } from '@/services/api/adminProductsApi';
 import { getAdminCategories, getAllAdminCategories } from '@/services/api/adminCategoriesApi';
-import { ProductStatus } from '@/types/api';
+import { getAllAdminBrands } from '@/services/api/adminBrandsApi';
+import {
+  getAllAdminVariantAttributes,
+  createAdminVariantAttribute,
+  updateAdminVariantAttribute,
+} from '@/services/api/adminVariantAttributesApi';
+import { ProductStatus, WeightUnit, DimensionUnit } from '@/types/api';
 
 /* ------------------------------------------------------------------ */
 /* Option data & types                                                */
@@ -22,95 +45,6 @@ import { ProductStatus } from '@/types/api';
 interface Subcategory { id: string; name: string; active?: boolean }
 interface Category { id: string; name: string; active?: boolean; subs: Subcategory[] }
 interface VariantType { id: string; name: string; terms: { id: string; name: string }[] }
-
-const BRANDS = [
-  { id: '15', name: 'Arrex' },
-  { id: '16', name: 'Dr. Morepen' },
-  { id: '1', name: 'Eldiaper' },
-  { id: '17', name: 'Flamingo' },
-  { id: '2', name: 'Friends' },
-  { id: '18', name: 'Happy Cotton' },
-  { id: '3', name: 'Joylife' },
-  { id: '4', name: 'Lifree' },
-  { id: '19', name: 'Merabetta Care' },
-  { id: '5', name: 'Nuvy' },
-];
-
-const FALLBACK_CATEGORIES: Category[] = [
-  { id: '1', name: 'Child Care', subs: [] },
-  { id: '2', name: 'Daily Living', subs: [] },
-  { id: '30', name: 'Mobility & Assistive', subs: [{ id: '31', name: 'Assistive Device' }] },
-];
-
-const VARIANT_TYPES: VariantType[] = [
-  {
-    id: 'count',
-    name: 'Count',
-    terms: [
-      { id: 'count-10', name: '10 Count' },
-      { id: 'count-30', name: '30 Count' },
-      { id: 'count-60', name: '60 Count' },
-    ],
-  },
-  {
-    id: 'specs-new-var',
-    name: 'specs new var',
-    terms: [
-      { id: 'specs-a', name: 'Spec A' },
-      { id: 'specs-b', name: 'Spec B' },
-    ],
-  },
-  {
-    id: 'support',
-    name: 'SUPPORT',
-    terms: [
-      { id: 'support-light', name: 'Light' },
-      { id: 'support-medium', name: 'Medium' },
-      { id: 'support-firm', name: 'Firm' },
-    ],
-  },
-  {
-    id: 'size',
-    name: 'Size',
-    terms: [
-      { id: 'size-s', name: 'S' },
-      { id: 'size-m', name: 'M' },
-      { id: 'size-l', name: 'L' },
-      { id: 'size-xl', name: 'XL' },
-      { id: 'size-xxl', name: 'XXL' },
-    ],
-  },
-  {
-    id: 'color',
-    name: 'Color',
-    terms: [
-      { id: 'color-black', name: 'Black' },
-      { id: 'color-blue', name: 'Blue' },
-      { id: 'color-white', name: 'White' },
-      { id: 'color-grey', name: 'Grey' },
-      { id: 'color-green', name: 'Green' },
-      { id: 'color-red', name: 'Red' },
-    ],
-  },
-  {
-    id: 'pack-size',
-    name: 'Pack Size',
-    terms: [
-      { id: 'pack-1', name: 'Pack of 1' },
-      { id: 'pack-2', name: 'Pack of 2' },
-      { id: 'pack-5', name: 'Pack of 5' },
-    ],
-  },
-  {
-    id: 'ayurveda',
-    name: 'Ayurveda',
-    terms: [
-      { id: 'ayurveda-powder', name: 'Powder' },
-      { id: 'ayurveda-tablet', name: 'Tablet' },
-      { id: 'ayurveda-oil', name: 'Oil' },
-    ],
-  },
-];
 
 const IMAGE_RULES = {
   maxFiles: MAX_PRODUCT_IMAGES,
@@ -127,8 +61,8 @@ const INPUT_CLASS =
   'h-12 w-full rounded-lg border border-[#D7D7D7] bg-white px-4 text-[14px] outline-none placeholder:text-[#A6A6A6] focus:border-[#F47C35] focus:ring-2 focus:ring-[#F47C35]/10';
 
 const TABS = [
-  { id: 'inventory', label: 'Inventory' },
-  { id: 'shipping', label: 'Shipping' },
+  { id: 'inventory', label: 'Inventory & Pricing' },
+  { id: 'shipping', label: 'Specifications' },
   { id: 'variants', label: 'Variants' },
   { id: 'terms', label: 'Terms' },
 ] as const;
@@ -348,19 +282,159 @@ interface GalleryImage {
   name: string;
   size: number;
   file?: File;
+  backendImageId?: string;
+  isPrimary?: boolean;
 }
 interface Term {
   key: string;
   termId: string;
+  backendVariantId?: string | number;
   variantTypeId: string;
   variantTypeName: string;
   name: string;
+  sku: string;
+  variantName: string;
+  unitCount: string;
+  weightGrams: string;
+  barcode: string;
   regularPrice: string;
   offerPercent: string;
   salePrice: string;
   stockQuantity: string;
   description: string;
   image: GalleryImage | null;
+}
+
+const GST_PRESETS = ['0', '5', '12', '18', '28'];
+const HSN_PRESETS = [
+  { value: '961900', label: '961900 · Diapers & Sanitary' },
+  { value: '902110', label: '902110 · Orthopedic Supports' },
+  { value: '901890', label: '901890 · Medical Instruments' },
+  { value: '300590', label: '300590 · Bandages & Dressings' },
+  { value: '871310', label: '871310 · Wheelchairs & Mobility' },
+];
+const AUDIENCE_PRESETS = [
+  'Adults',
+  'Seniors / Elderly',
+  'Unisex Adults',
+  'Men',
+  'Women',
+  'Children / Infants',
+  'Patients / Post-Surgery',
+];
+const PACKAGE_TYPE_PRESETS = [
+  'Pouch / Pack',
+  'Box',
+  'Bottle',
+  'Strip',
+  'Tube',
+  'Canister',
+  'Carton',
+];
+const SHELF_LIFE_PRESETS = [
+  '6 Months',
+  '12 Months',
+  '18 Months',
+  '24 Months',
+  '36 Months',
+  '60 Months',
+  'No Expiry',
+];
+const MATERIAL_PRESETS = [
+  'Non-woven Cotton',
+  'Breathable PE Film',
+  'Pure Cotton',
+  'Medical Grade Silicone',
+  'Neoprene & Nylon',
+  'Aluminium Alloy',
+  'ABS Plastic',
+];
+const COLOUR_PRESETS = ['White', 'Blue', 'Black', 'Grey', 'Beige', 'Green'];
+const HAZARDOUS_PRESETS = [
+  'Non-Hazardous',
+  'For External Use Only',
+  'Keep out of reach of children',
+  'Flammable — Keep away from heat',
+];
+const ORIGIN_PRESETS = ['India', 'China', 'Germany', 'USA', 'Japan', 'Taiwan'];
+const UNIT_COUNT_PRESETS = ['1', '2', '5', '10', '15', '20', '30', '60'];
+
+function PresetChipsWithCustom({
+  id,
+  value,
+  onChange,
+  presets,
+  placeholder,
+  type = 'text',
+  suffix = '',
+}: {
+  id: string;
+  value: string;
+  onChange: (v: string) => void;
+  presets: (string | { value: string; label: string })[];
+  placeholder?: string;
+  type?: 'text' | 'number';
+  suffix?: string;
+}) {
+  const normalizedPresets = presets.map((p) =>
+    typeof p === 'string' ? { value: p, label: `${p}${suffix}` } : p
+  );
+  const isPresetMatch = normalizedPresets.some((p) => p.value === value);
+  const [customMode, setCustomMode] = useState(false);
+  const showCustomInput = customMode || (Boolean(value) && !isPresetMatch);
+
+  return (
+    <div className="space-y-2">
+      <div className="flex flex-wrap gap-1.5">
+        {normalizedPresets.map((p) => {
+          const active = !customMode && value === p.value;
+          return (
+            <button
+              key={p.value}
+              type="button"
+              onClick={() => {
+                setCustomMode(false);
+                onChange(value === p.value ? '' : p.value);
+              }}
+              className={`rounded-lg border px-2.5 py-1.5 text-[12px] font-medium transition cursor-pointer ${
+                active
+                  ? 'border-[#F47C35] bg-[#FFF4EE] text-[#F47C35] font-semibold'
+                  : 'border-[#E2E8F0] bg-white text-[#475569] hover:bg-slate-50'
+              }`}
+            >
+              {p.label}
+            </button>
+          );
+        })}
+        <button
+          type="button"
+          onClick={() => {
+            setCustomMode(true);
+            if (isPresetMatch) onChange('');
+          }}
+          className={`rounded-lg border px-2.5 py-1.5 text-[12px] font-semibold transition cursor-pointer ${
+            showCustomInput
+              ? 'border-[#F47C35] bg-[#FFF4EE] text-[#F47C35]'
+              : 'border-dashed border-[#CBD5E1] bg-slate-50 text-[#64748B] hover:border-[#F47C35] hover:text-[#F47C35]'
+          }`}
+        >
+          + Custom
+        </button>
+      </div>
+      {showCustomInput && (
+        <input
+          id={id}
+          type={type}
+          step={type === 'number' ? '0.01' : undefined}
+          min={type === 'number' ? '0' : undefined}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={placeholder || 'Enter custom value...'}
+          className={INPUT_CLASS}
+        />
+      )}
+    </div>
+  );
 }
 
 export interface ProductEditorProps {
@@ -385,20 +459,57 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
   const [details, setDetails] = useState<string[]>([]);
   const [productType, setProductType] = useState<'SIMPLE' | 'VARIABLE'>('SIMPLE');
   const [tab, setTab] = useState<TabId>('inventory');
+  const [productCode, setProductCode] = useState('');
   const [sku, setSku] = useState('');
   const [minQty, setMinQty] = useState('1');
-  const [maxQty, setMaxQty] = useState('10');
+  const [maxQty, setMaxQty] = useState('');
   const [offer, setOffer] = useState('');
   const [regular, setRegular] = useState('');
   const [sale, setSale] = useState('');
-  const [stock, setStock] = useState('');
-  const [returnAvail, setReturnAvail] = useState('Yes');
-  const [returnDays, setReturnDays] = useState('7');
+  const [specialDiscountEnabled, setSpecialDiscountEnabled] = useState(false);
+  const [specialDiscountPercent, setSpecialDiscountPercent] = useState('0');
+  const [festivalOfferEnabled, setFestivalOfferEnabled] = useState(false);
+  const [festivalOfferPercent, setFestivalOfferPercent] = useState('0');
+  const [serverEffectivePrice, setServerEffectivePrice] = useState<string>('');
+  const [stock, setStock] = useState('0');
+
+  // Specifications state (Page 7 of Handoff)
+  const [targetAudience, setTargetAudience] = useState('');
+  const [hsnCode, setHsnCode] = useState('');
+  const [gstRate, setGstRate] = useState('');
+  const [weight, setWeight] = useState('');
+  const [weightUnit, setWeightUnit] = useState<WeightUnit>('g');
+  const [unitCount, setUnitCount] = useState('');
+  const [packageLength, setPackageLength] = useState('');
+  const [packageBreadth, setPackageBreadth] = useState('');
+  const [packageHeight, setPackageHeight] = useState('');
+  const [dimensionUnit, setDimensionUnit] = useState<DimensionUnit>('cm');
+  const [material, setMaterial] = useState('');
+  const [colour, setColour] = useState('');
+  const [packageType, setPackageType] = useState('');
+  const [shelfLife, setShelfLife] = useState('');
+  const [waterResistant, setWaterResistant] = useState<string>(''); // '' | 'true' | 'false'
+  const [hazardousClause, setHazardousClause] = useState('');
+  const [manufacturedIn, setManufacturedIn] = useState('');
+  const [companyName, setCompanyName] = useState('');
+  const [companyAddress, setCompanyAddress] = useState('');
+  const [packerName, setPackerName] = useState('');
+  const [packerAddress, setPackerAddress] = useState('');
+  const [sameAsManufacturer, setSameAsManufacturer] = useState(false);
+  const [keywordsText, setKeywordsText] = useState('');
+  const [keywordDraft, setKeywordDraft] = useState('');
+  const [initialVariantIds, setInitialVariantIds] = useState<(string | number)[]>([]);
+  const [replacingImageKey, setReplacingImageKey] = useState<string | null>(null);
+  const [deletingImageKey, setDeletingImageKey] = useState<string | null>(null);
+  const [settingPrimaryKey, setSettingPrimaryKey] = useState<string | null>(null);
+  const replaceFileInputRef = useRef<HTMLInputElement>(null);
+
+  const [brandsList, setBrandsList] = useState<{ id: string; name: string }[]>([]);
   const [brand, setBrand] = useState('');
-  const [categoriesList, setCategoriesList] = useState<Category[]>(FALLBACK_CATEGORIES);
+  const [categoriesList, setCategoriesList] = useState<Category[]>([]);
   const [categoryId, setCategoryId] = useState('');
   const [subCategoryId, setSubCategoryId] = useState('');
-  const [variantTypesList, setVariantTypesList] = useState<VariantType[]>(VARIANT_TYPES);
+  const [variantTypesList, setVariantTypesList] = useState<VariantType[]>([]);
   const [selectedVariantTypeIds, setSelectedVariantTypeIds] = useState<string[]>([]);
   const [activeVariantTabId, setActiveVariantTabId] = useState<string>('');
   const [customVariantTypeName, setCustomVariantTypeName] = useState('');
@@ -415,11 +526,39 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
   const [error, setError] = useState('');
   const [termError, setTermError] = useState('');
 
-  // Load live categories from backend
+  // Load live categories, brands, and variant attribute definitions from backend
   useEffect(() => {
-    async function fetchCategories() {
+    async function fetchCategoriesAndBrands() {
       try {
-        const all = await getAllAdminCategories();
+        const [all, liveBrands, liveAttrDefs] = await Promise.all([
+          getAllAdminCategories(),
+          getAllAdminBrands().catch(() => []),
+          getAllAdminVariantAttributes().catch(() => []),
+        ]);
+        if (Array.isArray(liveBrands) && liveBrands.length > 0) {
+          setBrandsList(
+            liveBrands.map((b) => ({
+              id: String(b.brand_id ?? b.id),
+              name: b.brand_name,
+            }))
+          );
+        }
+        if (Array.isArray(liveAttrDefs) && liveAttrDefs.length > 0) {
+          setVariantTypesList(
+            liveAttrDefs.map((attr) => {
+              const attrId = String(attr.id);
+              const vals = Array.isArray(attr.values) ? attr.values : [];
+              return {
+                id: attrId,
+                name: attr.name,
+                terms: vals.map((val, i) => ({
+                  id: `${attrId}-opt-${i}`,
+                  name: val,
+                })),
+              };
+            })
+          );
+        }
         if (Array.isArray(all) && all.length > 0) {
           const roots = all.filter((c) => c.parent_category_id == null);
           const children = all.filter((c) => c.parent_category_id != null);
@@ -445,7 +584,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
         console.warn('Could not load live categories:', err);
       }
     }
-    void fetchCategories();
+    void fetchCategoriesAndBrands();
   }, []);
 
   // When a root category is selected, fetch its sub-categories from backend (?parent_category_id=...)
@@ -517,30 +656,153 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
               setSubCategoryId('');
             }
           }
-          setSku(prod.slug || `PRD-${editId}`);
-          setMinQty('1');
-          setMaxQty('10');
-          setStock(String(prod.stock ?? 10));
-          setRegular(String(prod.price ?? 999));
+          setProductType(prod.product_type === 'variable' ? 'VARIABLE' : 'SIMPLE');
+          setProductCode(prod.product_code || '');
+          setSku(prod.sku || '');
+          setMinQty(String(prod.min_order_quantity ?? 1));
+          setMaxQty(prod.max_order_quantity != null ? String(prod.max_order_quantity) : '');
+          setStock(String(prod.stock_quantity ?? prod.stock ?? 0));
+
+          const regVal = prod.regular_price ?? prod.mrp ?? prod.price;
+          const saleVal = prod.sale_price ?? prod.offer_price;
+          const regStr = regVal != null ? String(regVal) : '';
+          const saleStr = saleVal != null ? String(saleVal) : '';
+          const offerStr =
+            prod.offer_percent != null
+              ? String(prod.offer_percent)
+              : regStr && saleStr
+              ? offerPercentFrom(regStr, saleStr)
+              : '';
+          setRegular(regStr);
+          setSale(saleStr);
+          setOffer(offerStr);
+          setSpecialDiscountEnabled(Boolean(prod.special_discount_enabled));
+          setSpecialDiscountPercent(String(prod.special_discount_percent ?? 0));
+          setFestivalOfferEnabled(Boolean(prod.festival_offer_enabled));
+          setFestivalOfferPercent(String(prod.festival_offer_percent ?? 0));
+          setServerEffectivePrice(
+            prod.effective_price != null ? String(prod.effective_price) : ''
+          );
+
+          // Specifications
+          setTargetAudience(prod.target_audience || '');
+          setHsnCode(prod.hsn_code || '');
+          setGstRate(prod.gst_rate != null ? String(prod.gst_rate) : '');
+          setWeight(prod.weight != null ? String(prod.weight) : '');
+          setWeightUnit(prod.weight_unit || 'g');
+          setUnitCount(prod.unit_count != null ? String(prod.unit_count) : '');
+          setPackageLength(prod.package_length != null ? String(prod.package_length) : '');
+          setPackageBreadth(prod.package_breadth != null ? String(prod.package_breadth) : '');
+          setPackageHeight(prod.package_height != null ? String(prod.package_height) : '');
+          setDimensionUnit(prod.dimension_unit || 'cm');
+          setMaterial(prod.material || '');
+          setColour(prod.colour || '');
+          setPackageType(prod.package_type || '');
+          setShelfLife(prod.shelf_life || '');
+          setWaterResistant(
+            prod.water_resistant === true
+              ? 'true'
+              : prod.water_resistant === false
+              ? 'false'
+              : ''
+          );
+          setHazardousClause(prod.hazardous_clause || '');
+          setManufacturedIn(prod.manufactured_in || '');
+          setCompanyName(prod.company_name || '');
+          setCompanyAddress(prod.company_address || '');
+          setPackerName(prod.packer_name || '');
+          setPackerAddress(prod.packer_address || '');
+          setKeywordsText(Array.isArray(prod.keywords) ? prod.keywords.join(', ') : '');
+
           const descBullets = prod.description ? parseDetails(prod.description) : [];
           setDetails(descBullets);
           setDetailsText(prod.description || '');
-          let existingUrls = resolveProductImageUrls(prod);
-          if (existingUrls.length === 0) {
+
+          // Load existing images from /api/admin/products/:id/images so every image has its exact DB id
+          let rawImages: any[] = [];
+          try {
+            rawImages = await getAdminProductImages(id);
+          } catch {}
+          if (!Array.isArray(rawImages) || rawImages.length === 0) {
+            rawImages = Array.isArray(prod.images) ? prod.images : [];
+          }
+          if (rawImages.length > 0) {
+            setImages(
+              rawImages
+                .map((item, idx) => {
+                  const url = typeof item === 'string' ? item : item?.image_url || item?.url;
+                  if (!url) return null;
+                  const resolvedImgId = item?.id ?? item?.image_id;
+                  return {
+                    key: `existing-${resolvedImgId ?? idx}-${uid()}`,
+                    src: url,
+                    name: `Image ${idx + 1}`,
+                    size: 0,
+                    backendImageId: resolvedImgId != null ? String(resolvedImgId) : undefined,
+                    isPrimary: Boolean(item?.is_primary ?? idx === 0),
+                  } as GalleryImage;
+                })
+                .filter((x): x is GalleryImage => x !== null)
+            );
+          }
+
+          // Load existing per-product variants if variable product
+          let prodVariants = Array.isArray(prod.variants) ? prod.variants : [];
+          if (prodVariants.length === 0 && prod.product_type === 'variable') {
             try {
-              const apiImgs = await getAdminProductImages(id);
-              existingUrls = apiImgs.map((i) => i.image_url).filter(Boolean);
+              prodVariants = await getAdminProductVariants(id);
             } catch {}
           }
-          if (existingUrls.length > 0) {
-            setImages(
-              existingUrls.map((url, idx) => ({
-                key: `existing-${idx}-${uid()}`,
-                src: url,
-                name: `Image ${idx + 1}`,
-                size: 0,
-              }))
-            );
+          if (prodVariants.length > 0) {
+            setInitialVariantIds(prodVariants.map((v) => v.id));
+            const loadedTerms: Term[] = [];
+            const usedVtIds = new Set<string>();
+
+            prodVariants.forEach((v, idx) => {
+              const attrEntries = Object.entries(v.attributes || {});
+              const [attrName, attrVal] = attrEntries[0] || ['Size', v.display_name || `Variant ${idx + 1}`];
+              const vtId = `attr-${attrName.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
+              usedVtIds.add(vtId);
+
+              // Extract unit count if stored in variant_name like "M (Pack of 10)"
+              const packMatch = (v.variant_name || '').match(/Pack of (\d+)/i);
+              const extractedUnitCount = packMatch
+                ? packMatch[1]
+                : prod.unit_count != null
+                ? String(prod.unit_count)
+                : '';
+
+              loadedTerms.push({
+                key: `variant-${v.id}`,
+                termId: `variant-${v.id}`,
+                backendVariantId: v.id,
+                variantTypeId: vtId,
+                variantTypeName: attrName,
+                name: attrVal,
+                sku: v.sku || '',
+                variantName: v.variant_name || '',
+                unitCount: extractedUnitCount,
+                weightGrams: v.weight_grams != null ? String(v.weight_grams) : '',
+                barcode: v.barcode || '',
+                regularPrice: v.regular_price != null ? String(v.regular_price) : '',
+                offerPercent:
+                  v.regular_price != null && v.sale_price != null
+                    ? offerPercentFrom(String(v.regular_price), String(v.sale_price))
+                    : '',
+                salePrice: v.sale_price != null ? String(v.sale_price) : '',
+                stockQuantity: String(v.stock_quantity ?? 0),
+                description: '',
+                image: null,
+              });
+            });
+
+            const vtIdsArr = Array.from(usedVtIds);
+            setSelectedVariantTypeIds(vtIdsArr);
+            setActiveVariantTabId(vtIdsArr[0] || '');
+            setTerms(loadedTerms);
+            if (loadedTerms[0]) {
+              setOpenTerm(loadedTerms[0].key);
+            }
           }
         }
       } catch (err: any) {
@@ -570,7 +832,8 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
   );
 
   const category = categoriesList.find((c) => c.id === categoryId);
-  const brandName = BRANDS.find((b) => b.id === brand)?.name ?? (brand ? `Brand #${brand}` : 'Unbranded');
+  const brandName =
+    brandsList.find((b) => b.id === brand)?.name ?? (brand ? `Brand #${brand}` : 'Unbranded');
 
   const priceSummary = useMemo(() => {
     if (productType === 'SIMPLE') return `₹${sale || regular || '—'}`;
@@ -612,6 +875,103 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
     e.target.value = '';
   }
 
+  async function handleDeleteEditorImage(img: GalleryImage) {
+    setDeletingImageKey(img.key);
+    setError('');
+    try {
+      // If this is a local unsaved file selection, just remove it from state
+      if (img.file && !img.backendImageId) {
+        if (img.src.startsWith('blob:')) URL.revokeObjectURL(img.src);
+        setImages((prev) => prev.filter((x) => x.key !== img.key));
+        return;
+      }
+
+      if (editId) {
+        let targetBackendId = img.backendImageId;
+        if (!targetBackendId) {
+          try {
+            const currentServerImgs = await getAdminProductImages(editId);
+            const matched = currentServerImgs.find((s) => s.image_url === img.src);
+            if (matched?.id != null) targetBackendId = String(matched.id);
+          } catch {}
+        }
+
+        if (targetBackendId) {
+          try {
+            await deleteAdminProductImage(editId, targetBackendId);
+          } catch (apiErr: any) {
+            console.warn('Backend image delete returned status:', apiErr?.message);
+            // Note: The backend deletes the DB row before attempting S3 object deletion.
+            // If S3 deletion throws 500, we verify against the DB list below.
+          }
+
+          const fresh = await getAdminProductImages(editId).catch(() => null);
+          if (fresh) {
+            const stillExists = fresh.some((s) => String(s.id) === String(targetBackendId));
+            if (stillExists) {
+              throw new Error('Image could not be deleted from the server.');
+            }
+            setImages((prev) => {
+              const unsavedLocal = prev.filter((x) => x.file && !x.backendImageId && x.key !== img.key);
+              const mappedServer: GalleryImage[] = fresh.map((item, idx) => ({
+                key: `existing-${item.id}-${uid()}`,
+                src: item.image_url,
+                name: `Image ${idx + 1}`,
+                size: 0,
+                backendImageId: String(item.id),
+                isPrimary: Boolean(item.is_primary ?? idx === 0),
+              }));
+              return [...mappedServer, ...unsavedLocal];
+            });
+            return;
+          }
+        }
+      }
+
+      if (img.src.startsWith('blob:')) URL.revokeObjectURL(img.src);
+      setImages((prev) => prev.filter((x) => x.key !== img.key));
+    } catch (err: any) {
+      setError(err?.message || 'Failed to delete image.');
+    } finally {
+      setDeletingImageKey(null);
+    }
+  }
+
+  async function handleSetPrimaryEditorImage(img: GalleryImage) {
+    if (!editId || !img.backendImageId) return;
+    setSettingPrimaryKey(img.key);
+    setError('');
+    try {
+      await setPrimaryProductImage(editId, img.backendImageId);
+      const fresh = await getAdminProductImages(editId).catch(() => null);
+      if (fresh && fresh.length > 0) {
+        setImages((prev) => {
+          const unsavedLocal = prev.filter((x) => x.file && !x.backendImageId);
+          const mappedServer: GalleryImage[] = fresh.map((item, idx) => ({
+            key: `existing-${item.id}-${uid()}`,
+            src: item.image_url,
+            name: `Image ${idx + 1}`,
+            size: 0,
+            backendImageId: String(item.id),
+            isPrimary: Boolean(item.is_primary ?? idx === 0),
+          }));
+          return [...mappedServer, ...unsavedLocal];
+        });
+      } else {
+        setImages((prev) =>
+          prev.map((x) => ({
+            ...x,
+            isPrimary: x.key === img.key,
+          }))
+        );
+      }
+    } catch (err: any) {
+      setError(err?.message || 'Failed to set primary image.');
+    } finally {
+      setSettingPrimaryKey(null);
+    }
+  }
+
   function patchTerm(key: string, patch: Partial<Term>) {
     setTerms((prev) => prev.map((t) => (t.key === key ? { ...t, ...patch } : t)));
   }
@@ -644,6 +1004,11 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
       variantTypeId: vt.id,
       variantTypeName: vt.name,
       name: t.name,
+      sku: '',
+      variantName: '',
+      unitCount: unitCount || '',
+      weightGrams: '',
+      barcode: '',
       regularPrice: '',
       offerPercent: '',
       salePrice: '',
@@ -686,6 +1051,11 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
       variantTypeId: newId,
       variantTypeName: trimmed,
       name: 'Option 1',
+      sku: '',
+      variantName: '',
+      unitCount: unitCount || '',
+      weightGrams: '',
+      barcode: '',
       regularPrice: '',
       offerPercent: '',
       salePrice: '',
@@ -714,6 +1084,11 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
       variantTypeId: variantId,
       variantTypeName: vt.name,
       name: optionName,
+      sku: '',
+      variantName: '',
+      unitCount: unitCount || '',
+      weightGrams: '',
+      barcode: '',
       regularPrice: '',
       offerPercent: '',
       salePrice: '',
@@ -725,6 +1100,101 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
     setActiveOptionByVariant((prev) => ({ ...prev, [variantId]: newKey }));
     setOpenTerm(newKey);
     setCustomOptionInputByVariant((prev) => ({ ...prev, [variantId]: '' }));
+  }
+
+  /** Syncs per-product variants with /api/admin/products/:productId/variants */
+  async function syncProductVariants(targetProductId: string | number) {
+    if (productType !== 'VARIABLE') return;
+
+    // 1. Ensure variant attribute definitions & option values exist on the backend
+    try {
+      const liveAttrs = await getAllAdminVariantAttributes().catch(() => []);
+      const groupedByAttr = new Map<string, Set<string>>();
+      terms.forEach((t) => {
+        const attrName = (t.variantTypeName || 'Size').trim();
+        const optVal = t.name.trim();
+        if (!attrName || !optVal) return;
+        if (!groupedByAttr.has(attrName)) groupedByAttr.set(attrName, new Set());
+        groupedByAttr.get(attrName)!.add(optVal);
+      });
+
+      for (const [attrName, optSet] of groupedByAttr.entries()) {
+        const existingDef = liveAttrs.find(
+          (a) => a.name.toLowerCase() === attrName.toLowerCase()
+        );
+        const neededValues = Array.from(optSet);
+        if (!existingDef) {
+          await createAdminVariantAttribute({
+            name: attrName,
+            values: neededValues,
+          }).catch(() => {});
+        } else {
+          const merged = Array.from(new Set([...(existingDef.values || []), ...neededValues]));
+          if (merged.length > (existingDef.values || []).length) {
+            await updateAdminVariantAttribute(existingDef.id, {
+              name: existingDef.name,
+              values: merged,
+            }).catch(() => {});
+          }
+        }
+      }
+    } catch {
+      // Non-fatal if attribute sync fails
+    }
+
+    // 2. Delete variants that were removed in the UI
+    const currentVariantIds = new Set(
+      terms.map((t) => t.backendVariantId).filter((id): id is string | number => id != null)
+    );
+    for (const oldId of initialVariantIds) {
+      if (!currentVariantIds.has(oldId)) {
+        await deleteAdminProductVariant(targetProductId, oldId).catch(() => {});
+      }
+    }
+
+    // 3. Create or update each term variant
+    const baseSkuPrefix = (
+      sku.trim() ||
+      productCode.trim() ||
+      generateProductSlug(name.trim()) ||
+      `PRD-${targetProductId}`
+    ).toUpperCase();
+
+    for (let idx = 0; idx < terms.length; idx++) {
+      const t = terms[idx];
+      const attrName = (t.variantTypeName || 'Size').trim();
+      const optVal = t.name.trim();
+      if (!optVal) continue;
+
+      const resolvedSku =
+        t.sku.trim() ||
+        `${baseSkuPrefix}-${optVal.replace(/[^a-zA-Z0-9]+/g, '-').toUpperCase()}-${idx + 1}`;
+
+      // Embed Unit Count (per pack) into variant_name so each size stores its pack count
+      const packCount = t.unitCount.trim();
+      let resolvedVariantName = t.variantName.trim() || optVal;
+      if (packCount && !/pack\s+of\s+\d+/i.test(resolvedVariantName)) {
+        resolvedVariantName = `${resolvedVariantName} (Pack of ${packCount})`;
+      }
+
+      const variantPayload = {
+        sku: resolvedSku,
+        attributes: { [attrName]: optVal },
+        variant_name: resolvedVariantName || null,
+        barcode: t.barcode.trim() || null,
+        weight_grams: num(t.weightGrams),
+        regular_price: num(t.regularPrice) ?? num(regular) ?? 0,
+        sale_price: num(t.salePrice),
+        stock_quantity: Math.max(0, Math.floor(num(t.stockQuantity) ?? 0)),
+        is_active: true,
+      };
+
+      if (t.backendVariantId != null) {
+        await updateAdminProductVariant(targetProductId, t.backendVariantId, variantPayload);
+      } else {
+        await createAdminProductVariant(targetProductId, variantPayload);
+      }
+    }
   }
 
   /** Builds the payload sent to the backend products API. */
@@ -754,6 +1224,15 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
       .map((i) => i.file)
       .filter((f): f is File => f instanceof File);
 
+    const parsedKeywords = keywordsText
+      .split(',')
+      .map((k) => k.trim())
+      .filter(Boolean);
+
+    // If variable product has unitCount set on its first term, fallback parent unit_count to it
+    const effectiveUnitCountStr =
+      unitCount.trim() || (productType === 'VARIABLE' ? terms[0]?.unitCount?.trim() || '' : '');
+
     return {
       product_name: name.trim(),
       slug: generateProductSlug(slug.trim() || name.trim()),
@@ -761,8 +1240,44 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
       short_description: resolvedShortDesc,
       description: combinedDescription,
       product_status: targetStatus,
-      ...(categoryIds.length > 0 ? { category_ids: categoryIds } : {}),
-      ...(primaryCategoryId != null ? { primary_category_id: primaryCategoryId } : {}),
+      product_type: (productType === 'VARIABLE' ? 'variable' : 'simple') as 'simple' | 'variable',
+      product_code: productCode.trim() || null,
+      sku: sku.trim() || null,
+      regular_price: num(regular),
+      sale_price: num(sale),
+      offer_percent: num(offer),
+      special_discount_enabled: specialDiscountEnabled,
+      special_discount_percent: num(specialDiscountPercent) ?? 0,
+      festival_offer_enabled: festivalOfferEnabled,
+      festival_offer_percent: num(festivalOfferPercent) ?? 0,
+      stock_quantity: Math.max(0, Math.floor(num(stock) ?? 0)),
+      min_order_quantity: Math.max(1, Math.floor(num(minQty) ?? 1)),
+      max_order_quantity: num(maxQty) != null ? Math.floor(num(maxQty)!) : null,
+      category_ids: categoryIds,
+      primary_category_id: primaryCategoryId,
+      target_audience: targetAudience.trim() || null,
+      hsn_code: hsnCode.trim() || null,
+      gst_rate: num(gstRate),
+      weight: num(weight),
+      weight_unit: weightUnit,
+      unit_count: num(effectiveUnitCountStr) != null ? Math.floor(num(effectiveUnitCountStr)!) : null,
+      package_length: num(packageLength),
+      package_breadth: num(packageBreadth),
+      package_height: num(packageHeight),
+      dimension_unit: dimensionUnit,
+      material: material.trim() || null,
+      colour: colour.trim() || null,
+      package_type: packageType.trim() || null,
+      shelf_life: shelfLife.trim() || null,
+      water_resistant:
+        waterResistant === 'true' ? true : waterResistant === 'false' ? false : null,
+      hazardous_clause: hazardousClause.trim() || null,
+      manufactured_in: manufacturedIn.trim() || null,
+      company_name: companyName.trim() || null,
+      company_address: companyAddress.trim() || null,
+      packer_name: (sameAsManufacturer ? companyName : packerName).trim() || null,
+      packer_address: (sameAsManufacturer ? companyAddress : packerAddress).trim() || null,
+      keywords: parsedKeywords,
       ...(imageFiles.length > 0 ? { images: imageFiles } : {}),
     };
   }
@@ -776,10 +1291,15 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
 
       const payload = buildApiPayload('draft');
 
+      let savedId: string | number | null = editId;
       if (editId) {
         await updateAdminProduct(editId, payload);
       } else {
-        await createAdminProduct(payload);
+        const created = await createAdminProduct(payload);
+        savedId = created?.product_id ?? created?.id ?? null;
+      }
+      if (savedId != null && productType === 'VARIABLE') {
+        await syncProductVariants(savedId);
       }
       setSuccessMessage('Draft saved successfully.');
       setTimeout(() => {
@@ -804,11 +1324,19 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
       }
       const payload = buildApiPayload(productStatus);
 
+      let savedId: string | number | null = editId;
       if (editId) {
         await updateAdminProduct(editId, payload);
+        if (productType === 'VARIABLE') {
+          await syncProductVariants(editId);
+        }
         setSuccessMessage('The product has been updated successfully!');
       } else {
-        await createAdminProduct(payload);
+        const created = await createAdminProduct(payload);
+        savedId = created?.product_id ?? created?.id ?? null;
+        if (savedId != null && productType === 'VARIABLE') {
+          await syncProductVariants(savedId);
+        }
         setSuccessMessage('The product has been published successfully!');
       }
       setTimeout(() => {
@@ -1021,25 +1549,39 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                 <div className="mt-5 border border-[#E6E6E6] bg-white p-4">
                   {tab === 'inventory' && (
                     <div>
-                      <h4 className="text-[15px] font-semibold">Inventory</h4>
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <h4 className="text-[15px] font-semibold">Inventory & Pricing</h4>
+                        {serverEffectivePrice && (
+                          <span className="rounded-lg bg-emerald-50 border border-emerald-200 px-3 py-1 text-[12px] font-semibold text-emerald-700">
+                            Server Effective Price: ₹{serverEffectivePrice}
+                          </span>
+                        )}
+                      </div>
                       <div className="mt-5 grid gap-5 md:grid-cols-2">
-                        <div className="md:col-span-2">
-                          <Label htmlFor="sku" required>
-                            SKU
-                          </Label>
+                        <div>
+                          <Label htmlFor="product-code">Product Code</Label>
                           <input
-                            id="sku"
-                            value={sku}
-                            onChange={(e) => setSku(e.target.value)}
-                            maxLength={255}
-                            placeholder="Eg: 1565"
+                            id="product-code"
+                            value={productCode}
+                            onChange={(e) => setProductCode(e.target.value)}
+                            maxLength={100}
+                            placeholder="Eg: JOY-01"
                             className={INPUT_CLASS}
                           />
                         </div>
                         <div>
-                          <Label htmlFor="minimum-quantity" required>
-                            Min Order Quantity
-                          </Label>
+                          <Label htmlFor="sku">SKU</Label>
+                          <input
+                            id="sku"
+                            value={sku}
+                            onChange={(e) => setSku(e.target.value)}
+                            maxLength={100}
+                            placeholder="Eg: JOY-SIMPLE"
+                            className={INPUT_CLASS}
+                          />
+                        </div>
+                        <div>
+                          <Label htmlFor="minimum-quantity">Min Order Quantity</Label>
                           <input
                             id="minimum-quantity"
                             type="number"
@@ -1051,139 +1593,562 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                           />
                         </div>
                         <div>
-                          <Label htmlFor="maximum-quantity" required>
-                            Max Order Quantity
-                          </Label>
+                          <Label htmlFor="maximum-quantity">Max Order Quantity (blank = no max)</Label>
                           <input
                             id="maximum-quantity"
                             type="number"
                             min="1"
                             step="1"
+                            placeholder="No limit"
                             value={maxQty}
                             onChange={(e) => setMaxQty(e.target.value)}
                             className={INPUT_CLASS}
                           />
                         </div>
-                        {productType === 'SIMPLE' && (
-                          <>
-                            <div className="md:col-span-2">
-                              <Label htmlFor="offer-percent">Offer availability (In%)</Label>
-                              <input
-                                id="offer-percent"
-                                type="number"
-                                min="0"
-                                max="99.99"
-                                step="0.01"
-                                value={offer}
-                                onChange={(e) => {
-                                  const nextOffer = e.target.value;
-                                  setOffer(nextOffer);
-                                  setSale(salePriceFrom(regular, nextOffer));
-                                }}
-                                placeholder="Eg: 10% (or enter Sale Price below to auto-calculate)"
-                                className={INPUT_CLASS}
-                              />
-                            </div>
-                            <div>
-                              <Label htmlFor="regular-price" required>
-                                Regular Price
-                              </Label>
-                              <input
-                                id="regular-price"
-                                type="number"
-                                min="0.01"
-                                step="0.01"
-                                value={regular}
-                                onChange={(e) => {
-                                  const nextReg = e.target.value;
-                                  setRegular(nextReg);
-                                  if (offer.trim()) {
-                                    setSale(salePriceFrom(nextReg, offer));
-                                  } else if (sale.trim()) {
-                                    setOffer(offerPercentFrom(nextReg, sale));
-                                  }
-                                }}
-                                placeholder="Eg: 1000"
-                                className={INPUT_CLASS}
-                              />
-                            </div>
-                            <div>
-                              <Label htmlFor="sale-price">Sale Price</Label>
-                              <input
-                                id="sale-price"
-                                type="number"
-                                min="0"
-                                step="0.01"
-                                value={sale}
-                                onChange={(e) => {
-                                  const nextSale = e.target.value;
-                                  setSale(nextSale);
-                                  setOffer(offerPercentFrom(regular, nextSale));
-                                }}
-                                placeholder="Eg: 900 (auto-calculates Offer %)"
-                                className={INPUT_CLASS}
-                              />
-                            </div>
-                            <div className="md:col-span-2">
-                              <Label htmlFor="stock-quantity" required>
-                                Stock Quantity
-                              </Label>
-                              <input
-                                id="stock-quantity"
-                                type="number"
-                                min="0"
-                                step="1"
-                                value={stock}
-                                onChange={(e) => setStock(e.target.value)}
-                                placeholder="Eg: 25"
-                                className={INPUT_CLASS}
-                              />
-                              <p className="mt-1 text-[10px] text-[#888]">Stock status is calculated by the backend.</p>
-                            </div>
-                          </>
-                        )}
+
+                        <div>
+                          <Label htmlFor="regular-price">Regular Price (MRP)</Label>
+                          <input
+                            id="regular-price"
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            value={regular}
+                            onChange={(e) => {
+                              const nextReg = e.target.value;
+                              setRegular(nextReg);
+                              if (offer.trim()) {
+                                setSale(salePriceFrom(nextReg, offer));
+                              } else if (sale.trim()) {
+                                setOffer(offerPercentFrom(nextReg, sale));
+                              }
+                            }}
+                            placeholder="Eg: 1000"
+                            className={INPUT_CLASS}
+                          />
+                        </div>
+                        <div>
+                          <Label htmlFor="sale-price">Sale Price (Offer Price)</Label>
+                          <input
+                            id="sale-price"
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            value={sale}
+                            onChange={(e) => {
+                              const nextSale = e.target.value;
+                              setSale(nextSale);
+                              setOffer(offerPercentFrom(regular, nextSale));
+                            }}
+                            placeholder="Eg: 900"
+                            className={INPUT_CLASS}
+                          />
+                        </div>
+                        <div>
+                          <Label htmlFor="offer-percent">Offer Percent (%)</Label>
+                          <input
+                            id="offer-percent"
+                            type="number"
+                            min="0"
+                            max="100"
+                            step="0.01"
+                            value={offer}
+                            onChange={(e) => {
+                              const nextOffer = e.target.value;
+                              setOffer(nextOffer);
+                              setSale(salePriceFrom(regular, nextOffer));
+                            }}
+                            placeholder="Eg: 10"
+                            className={INPUT_CLASS}
+                          />
+                        </div>
+                        <div>
+                          <Label htmlFor="stock-quantity">Stock Quantity</Label>
+                          <input
+                            id="stock-quantity"
+                            type="number"
+                            min="0"
+                            step="1"
+                            value={stock}
+                            onChange={(e) => setStock(e.target.value)}
+                            placeholder="Eg: 25"
+                            className={INPUT_CLASS}
+                          />
+                        </div>
+
+                        {/* Special & Festival Discounts */}
+                        <div className="rounded-xl border border-gray-200 bg-gray-50 p-3.5 space-y-2">
+                          <label className="flex items-center gap-2 text-[13px] font-semibold text-gray-800 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={specialDiscountEnabled}
+                              onChange={(e) => setSpecialDiscountEnabled(e.target.checked)}
+                              className="h-4 w-4 accent-[#F47C35]"
+                            />
+                            <span>Enable Special Discount</span>
+                          </label>
+                          <input
+                            type="number"
+                            min="0"
+                            max="100"
+                            step="0.01"
+                            disabled={!specialDiscountEnabled}
+                            value={specialDiscountPercent}
+                            onChange={(e) => setSpecialDiscountPercent(e.target.value)}
+                            placeholder="Special Discount %"
+                            className={INPUT_CLASS}
+                          />
+                        </div>
+
+                        <div className="rounded-xl border border-gray-200 bg-gray-50 p-3.5 space-y-2">
+                          <label className="flex items-center gap-2 text-[13px] font-semibold text-gray-800 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={festivalOfferEnabled}
+                              onChange={(e) => setFestivalOfferEnabled(e.target.checked)}
+                              className="h-4 w-4 accent-[#F47C35]"
+                            />
+                            <span>Enable Festival Offer</span>
+                          </label>
+                          <input
+                            type="number"
+                            min="0"
+                            max="100"
+                            step="0.01"
+                            disabled={!festivalOfferEnabled}
+                            value={festivalOfferPercent}
+                            onChange={(e) => setFestivalOfferPercent(e.target.value)}
+                            placeholder="Festival Offer %"
+                            className={INPUT_CLASS}
+                          />
+                        </div>
                       </div>
                     </div>
                   )}
 
                   {tab === 'shipping' && (
-                    <div>
-                      <h4 className="text-[15px] font-semibold">Shipping</h4>
-                      <div className="mt-5 space-y-5">
+                    <div className="space-y-5">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
                         <div>
-                          <Label htmlFor="return-available" required>
-                            Return / Replacement Availability
-                          </Label>
-                          <Select
-                            id="return-available"
-                            value={returnAvail}
-                            placeholder="Yes / No"
-                            options={[
-                              { value: 'Yes', label: 'Yes' },
-                              { value: 'No', label: 'No' },
-                            ]}
-                            onChange={(v) => {
-                              setReturnAvail(v);
-                              if (v === 'No') setReturnDays('');
-                            }}
-                          />
+                          <h4 className="text-[15px] font-semibold text-gray-900">
+                            Product Specifications
+                          </h4>
+                          <p className="text-[12px] text-gray-500">
+                            Click a standard preset chip or choose <span className="font-semibold text-[#F47C35]">+ Custom</span> to type your own value.
+                          </p>
                         </div>
-                        {returnAvail === 'Yes' && (
+                      </div>
+
+                      {/* 1. Tax & Compliance */}
+                      <div className="rounded-xl border border-[#EAEAEA] bg-[#FAFAFA] p-4 space-y-4">
+                        <h5 className="text-[13px] font-bold uppercase tracking-wider text-[#0D2B53]">
+                          1. Tax & Compliance
+                        </h5>
+                        <div className="grid gap-4 md:grid-cols-2">
                           <div>
-                            <Label htmlFor="return-days" required>
-                              Return Availability (In days)
-                            </Label>
-                            <input
-                              id="return-days"
+                            <Label htmlFor="spec-gst">GST Rate (%)</Label>
+                            <PresetChipsWithCustom
+                              id="spec-gst"
+                              value={gstRate}
+                              onChange={setGstRate}
+                              presets={GST_PRESETS}
+                              suffix="%"
                               type="number"
-                              min="1"
-                              step="1"
-                              value={returnDays}
-                              onChange={(e) => setReturnDays(e.target.value)}
+                              placeholder="Enter custom GST % (e.g. 12)"
+                            />
+                          </div>
+                          <div>
+                            <Label htmlFor="spec-hsn">HSN Code</Label>
+                            <PresetChipsWithCustom
+                              id="spec-hsn"
+                              value={hsnCode}
+                              onChange={setHsnCode}
+                              presets={HSN_PRESETS}
+                              placeholder="Enter 4 to 8 digit HSN code (e.g. 961900)"
+                            />
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* 2. Product Attributes & Packaging */}
+                      <div className="rounded-xl border border-[#EAEAEA] bg-[#FAFAFA] p-4 space-y-4">
+                        <h5 className="text-[13px] font-bold uppercase tracking-wider text-[#0D2B53]">
+                          2. Product Attributes & Packaging
+                        </h5>
+                        <div className="grid gap-4 md:grid-cols-2">
+                          <div>
+                            <Label htmlFor="spec-target-audience">Target Audience</Label>
+                            <PresetChipsWithCustom
+                              id="spec-target-audience"
+                              value={targetAudience}
+                              onChange={setTargetAudience}
+                              presets={AUDIENCE_PRESETS}
+                              placeholder="Enter custom target audience"
+                            />
+                          </div>
+                          <div>
+                            <Label htmlFor="spec-package-type">Package Type</Label>
+                            <PresetChipsWithCustom
+                              id="spec-package-type"
+                              value={packageType}
+                              onChange={setPackageType}
+                              presets={PACKAGE_TYPE_PRESETS}
+                              placeholder="Enter custom package type"
+                            />
+                          </div>
+                          <div>
+                            <Label htmlFor="spec-shelf-life">Shelf Life</Label>
+                            <PresetChipsWithCustom
+                              id="spec-shelf-life"
+                              value={shelfLife}
+                              onChange={setShelfLife}
+                              presets={SHELF_LIFE_PRESETS}
+                              placeholder="Enter custom shelf life (e.g. 24 Months)"
+                            />
+                          </div>
+                          <div>
+                            <Label htmlFor="spec-material">Material</Label>
+                            <PresetChipsWithCustom
+                              id="spec-material"
+                              value={material}
+                              onChange={setMaterial}
+                              presets={MATERIAL_PRESETS}
+                              placeholder="Enter custom material"
+                            />
+                          </div>
+                          <div>
+                            <Label htmlFor="spec-colour">Colour</Label>
+                            <PresetChipsWithCustom
+                              id="spec-colour"
+                              value={colour}
+                              onChange={setColour}
+                              presets={COLOUR_PRESETS}
+                              placeholder="Enter custom colour"
+                            />
+                          </div>
+                          <div>
+                            <Label htmlFor="spec-water-resistant">Water Resistant</Label>
+                            <div className="flex flex-wrap gap-2">
+                              {[
+                                { value: 'true', label: 'Yes (Water Resistant)' },
+                                { value: 'false', label: 'No' },
+                                { value: '', label: 'Not Specified' },
+                              ].map((opt) => {
+                                const active = waterResistant === opt.value;
+                                return (
+                                  <button
+                                    key={opt.label}
+                                    type="button"
+                                    onClick={() => setWaterResistant(opt.value)}
+                                    className={`rounded-lg border px-3 py-2 text-[12px] font-medium transition cursor-pointer ${
+                                      active
+                                        ? 'border-[#F47C35] bg-[#FFF4EE] text-[#F47C35] font-semibold'
+                                        : 'border-[#E2E8F0] bg-white text-[#475569] hover:bg-slate-50'
+                                    }`}
+                                  >
+                                    {opt.label}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+                          <div className="md:col-span-2">
+                            <Label htmlFor="spec-hazardous">Hazardous / Safety Clause</Label>
+                            <PresetChipsWithCustom
+                              id="spec-hazardous"
+                              value={hazardousClause}
+                              onChange={setHazardousClause}
+                              presets={HAZARDOUS_PRESETS}
+                              placeholder="Enter custom safety or hazardous clause"
+                            />
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* 3. Package Dimensions, Weight & Default Pack Count */}
+                      <div className="rounded-xl border border-[#EAEAEA] bg-[#FAFAFA] p-4 space-y-4">
+                        <h5 className="text-[13px] font-bold uppercase tracking-wider text-[#0D2B53]">
+                          3. Package Dimensions, Weight & Pack Count
+                        </h5>
+                        <div className="grid gap-4 md:grid-cols-2">
+                          <div>
+                            <Label htmlFor="spec-unit-count">
+                              Unit Count (per pack)
+                              {productType === 'VARIABLE' && (
+                                <span className="ml-1.5 text-[11px] font-normal text-[#F47C35]">
+                                  (Also configurable per size in Terms tab)
+                                </span>
+                              )}
+                            </Label>
+                            <PresetChipsWithCustom
+                              id="spec-unit-count"
+                              value={unitCount}
+                              onChange={setUnitCount}
+                              presets={UNIT_COUNT_PRESETS}
+                              suffix=" pcs"
+                              type="number"
+                              placeholder="Enter custom unit count per pack (e.g. 10)"
+                            />
+                          </div>
+                          <div>
+                            <Label htmlFor="spec-weight">Package Weight</Label>
+                            <div className="flex gap-2">
+                              <input
+                                id="spec-weight"
+                                type="number"
+                                min="0"
+                                step="0.01"
+                                value={weight}
+                                onChange={(e) => setWeight(e.target.value)}
+                                placeholder="Eg: 500"
+                                className={INPUT_CLASS}
+                              />
+                              <div className="inline-flex rounded-lg border border-[#D7D7D7] bg-white p-1">
+                                {(['g', 'kg'] as WeightUnit[]).map((u) => (
+                                  <button
+                                    key={u}
+                                    type="button"
+                                    onClick={() => setWeightUnit(u)}
+                                    className={`px-3 text-[13px] font-semibold rounded-md transition cursor-pointer ${
+                                      weightUnit === u
+                                        ? 'bg-[#F47C35] text-white'
+                                        : 'text-gray-600 hover:bg-gray-50'
+                                    }`}
+                                  >
+                                    {u}
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="grid gap-3 sm:grid-cols-4">
+                          <div>
+                            <Label htmlFor="spec-len">Length</Label>
+                            <input
+                              id="spec-len"
+                              type="number"
+                              min="0"
+                              step="0.01"
+                              placeholder="L"
+                              value={packageLength}
+                              onChange={(e) => setPackageLength(e.target.value)}
                               className={INPUT_CLASS}
                             />
                           </div>
+                          <div>
+                            <Label htmlFor="spec-breadth">Breadth</Label>
+                            <input
+                              id="spec-breadth"
+                              type="number"
+                              min="0"
+                              step="0.01"
+                              placeholder="B"
+                              value={packageBreadth}
+                              onChange={(e) => setPackageBreadth(e.target.value)}
+                              className={INPUT_CLASS}
+                            />
+                          </div>
+                          <div>
+                            <Label htmlFor="spec-height">Height</Label>
+                            <input
+                              id="spec-height"
+                              type="number"
+                              min="0"
+                              step="0.01"
+                              placeholder="H"
+                              value={packageHeight}
+                              onChange={(e) => setPackageHeight(e.target.value)}
+                              className={INPUT_CLASS}
+                            />
+                          </div>
+                          <div>
+                            <Label htmlFor="spec-dim-unit">Dimension Unit</Label>
+                            <div className="flex h-12 rounded-lg border border-[#D7D7D7] bg-white p-1">
+                              {(['cm', 'mm', 'in'] as DimensionUnit[]).map((u) => (
+                                <button
+                                  key={u}
+                                  type="button"
+                                  onClick={() => setDimensionUnit(u)}
+                                  className={`flex-1 text-[13px] font-semibold rounded-md transition cursor-pointer ${
+                                    dimensionUnit === u
+                                      ? 'bg-[#F47C35] text-white'
+                                      : 'text-gray-600 hover:bg-gray-50'
+                                  }`}
+                                >
+                                  {u}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* 4. Manufacturer, Packer & Search Keywords */}
+                      <div className="rounded-xl border border-[#EAEAEA] bg-[#FAFAFA] p-4 space-y-4">
+                        <h5 className="text-[13px] font-bold uppercase tracking-wider text-[#0D2B53]">
+                          4. Origin, Manufacturer, Packer & Search Keywords
+                        </h5>
+                        <div>
+                          <Label htmlFor="spec-manufactured-in">Country of Origin (Manufactured In)</Label>
+                          <PresetChipsWithCustom
+                            id="spec-manufactured-in"
+                            value={manufacturedIn}
+                            onChange={setManufacturedIn}
+                            presets={ORIGIN_PRESETS}
+                            placeholder="Enter country of origin"
+                          />
+                        </div>
+
+                        <div className="grid gap-4 md:grid-cols-2">
+                          <div>
+                            <Label htmlFor="spec-company-name">Manufacturer / Company Name</Label>
+                            <input
+                              id="spec-company-name"
+                              value={companyName}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                setCompanyName(val);
+                                if (sameAsManufacturer) setPackerName(val);
+                              }}
+                              placeholder="Eg: Merabetta Healthcare Pvt. Ltd."
+                              className={INPUT_CLASS}
+                            />
+                          </div>
+                          <div>
+                            <Label htmlFor="spec-company-address">Manufacturer Address</Label>
+                            <input
+                              id="spec-company-address"
+                              value={companyAddress}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                setCompanyAddress(val);
+                                if (sameAsManufacturer) setPackerAddress(val);
+                              }}
+                              placeholder="Eg: Plot 14, Industrial Area, Pune"
+                              className={INPUT_CLASS}
+                            />
+                          </div>
+                        </div>
+
+                        <div className="pt-1">
+                          <label className="inline-flex items-center gap-2 text-[13px] font-semibold text-[#0D2B53] cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={sameAsManufacturer}
+                              onChange={(e) => {
+                                const checked = e.target.checked;
+                                setSameAsManufacturer(checked);
+                                if (checked) {
+                                  setPackerName(companyName);
+                                  setPackerAddress(companyAddress);
+                                }
+                              }}
+                              className="h-4 w-4 accent-[#F47C35]"
+                            />
+                            <span>Packer details are same as Manufacturer</span>
+                          </label>
+                        </div>
+
+                        {!sameAsManufacturer && (
+                          <div className="grid gap-4 md:grid-cols-2">
+                            <div>
+                              <Label htmlFor="spec-packer-name">Packer Name</Label>
+                              <input
+                                id="spec-packer-name"
+                                value={packerName}
+                                onChange={(e) => setPackerName(e.target.value)}
+                                placeholder="Enter packer company name"
+                                className={INPUT_CLASS}
+                              />
+                            </div>
+                            <div>
+                              <Label htmlFor="spec-packer-address">Packer Address</Label>
+                              <input
+                                id="spec-packer-address"
+                                value={packerAddress}
+                                onChange={(e) => setPackerAddress(e.target.value)}
+                                placeholder="Enter packer full address"
+                                className={INPUT_CLASS}
+                              />
+                            </div>
+                          </div>
                         )}
+
+                        <div>
+                          <Label htmlFor="spec-keywords">Search Keywords</Label>
+                          <div className="flex flex-wrap gap-1.5 mb-2">
+                            {keywordsText
+                              .split(',')
+                              .map((k) => k.trim())
+                              .filter(Boolean)
+                              .map((kw) => (
+                                <span
+                                  key={kw}
+                                  className="inline-flex items-center gap-1.5 rounded-full bg-[#FFF4EE] border border-[#F47C35]/40 px-3 py-1 text-[12px] font-medium text-[#F47C35]"
+                                >
+                                  {kw}
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      const next = keywordsText
+                                        .split(',')
+                                        .map((k) => k.trim())
+                                        .filter((k) => k && k !== kw)
+                                        .join(', ');
+                                      setKeywordsText(next);
+                                    }}
+                                    className="hover:text-[#C23D22] cursor-pointer"
+                                  >
+                                    ×
+                                  </button>
+                                </span>
+                              ))}
+                          </div>
+                          <div className="flex gap-2">
+                            <input
+                              id="spec-keywords"
+                              value={keywordDraft}
+                              onChange={(e) => setKeywordDraft(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter' || e.key === ',') {
+                                  e.preventDefault();
+                                  const clean = keywordDraft.replace(/,/g, '').trim();
+                                  if (!clean) return;
+                                  const existing = keywordsText
+                                    .split(',')
+                                    .map((k) => k.trim())
+                                    .filter(Boolean);
+                                  if (!existing.includes(clean)) {
+                                    setKeywordsText([...existing, clean].join(', '));
+                                  }
+                                  setKeywordDraft('');
+                                }
+                              }}
+                              placeholder="Type a keyword and press Enter (or comma) to add tag..."
+                              className={INPUT_CLASS}
+                            />
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const clean = keywordDraft.replace(/,/g, '').trim();
+                                if (!clean) return;
+                                const existing = keywordsText
+                                  .split(',')
+                                  .map((k) => k.trim())
+                                  .filter(Boolean);
+                                if (!existing.includes(clean)) {
+                                  setKeywordsText([...existing, clean].join(', '));
+                                }
+                                setKeywordDraft('');
+                              }}
+                              className="h-12 shrink-0 rounded-lg bg-[#0D2B53] px-4 text-[13px] font-semibold text-white hover:bg-[#163C70] cursor-pointer"
+                            >
+                              + Add Keyword
+                            </button>
+                          </div>
+                        </div>
                       </div>
                     </div>
                   )}
@@ -1380,7 +2345,14 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
 
                   {tab === 'terms' && (
                     <div>
-                      <h4 className="text-[15px] font-semibold">Terms</h4>
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div>
+                          <h4 className="text-[15px] font-semibold">Terms & Per-Size Pack Configuration</h4>
+                          <p className="text-[12px] text-gray-500">
+                            Configure Unit Count (per pack), SKU, price, weight, and stock for each size/option tab.
+                          </p>
+                        </div>
+                      </div>
                       {terms.length > 0 ? (
                         <div className="mt-4">
                           {/* Separate Option Tabs Bar */}
@@ -1400,6 +2372,11 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                                 >
                                   <span className="text-[11px] opacity-70">#{idx + 1}</span>
                                   <span>{t.variantTypeName ? `${t.variantTypeName}: ${t.name}` : t.name}</span>
+                                  {t.unitCount && (
+                                    <span className="rounded bg-orange-100 px-1.5 py-0.5 text-[10px] font-bold text-[#F47C35]">
+                                      {t.unitCount} pcs
+                                    </span>
+                                  )}
                                 </button>
                               );
                             })}
@@ -1408,7 +2385,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                           {terms.map((t) => {
                             if (openTerm !== t.key) return null;
                             return (
-                              <div key={t.key} className="mt-4 rounded-lg border border-[#E7E7E7] p-4">
+                              <div key={t.key} className="mt-4 rounded-xl border border-[#E7E7E7] bg-[#FAFAFA] p-4 space-y-4">
                                 <div className="flex items-center justify-between border-b border-[#EEE] pb-3">
                                   <div className="flex items-center gap-2">
                                     <span className="text-[12px] font-medium text-[#666]">
@@ -1418,7 +2395,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                                       type="text"
                                       value={t.name}
                                       onChange={(e) => patchTerm(t.key, { name: e.target.value })}
-                                      className="h-8 rounded-md border border-[#D7D7D7] px-2.5 text-[13px] font-semibold text-[#F47C35] outline-none focus:border-[#F47C35]"
+                                      className="h-8 rounded-md border border-[#D7D7D7] bg-white px-2.5 text-[13px] font-semibold text-[#F47C35] outline-none focus:border-[#F47C35]"
                                     />
                                   </div>
                                   <button
@@ -1428,14 +2405,85 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                                       setTerms(remaining);
                                       setOpenTerm(remaining[0]?.key ?? null);
                                     }}
-                                    className="text-[11px] text-[#E14C2A] cursor-pointer"
+                                    className="text-[12px] font-semibold text-[#E14C2A] hover:underline cursor-pointer"
                                   >
-                                    Remove
+                                    Remove Option
                                   </button>
                                 </div>
 
-                                <div className="mt-4">
-                                  <Label htmlFor={`term-offer-${t.key}`}>Offer availability (In%)</Label>
+                                {/* Unit Count (per pack) for this Size/Option */}
+                                <div className="rounded-xl border border-[#EAEAEA] bg-white p-3.5">
+                                  <Label htmlFor={`term-unit-count-${t.key}`}>
+                                    Unit Count (per pack) for <span className="text-[#F47C35] font-semibold">{t.name}</span>
+                                  </Label>
+                                  <PresetChipsWithCustom
+                                    id={`term-unit-count-${t.key}`}
+                                    value={t.unitCount}
+                                    onChange={(val) => patchTerm(t.key, { unitCount: val })}
+                                    presets={UNIT_COUNT_PRESETS}
+                                    suffix=" pcs"
+                                    type="number"
+                                    placeholder="Enter custom unit count for this size (e.g. 10)"
+                                  />
+                                </div>
+
+                                {/* Variant SKU, Display Name, Weight (grams), Barcode */}
+                                <div className="grid gap-4 md:grid-cols-2">
+                                  <div>
+                                    <Label htmlFor={`term-sku-${t.key}`}>
+                                      Variant SKU (auto-generated if blank)
+                                    </Label>
+                                    <input
+                                      id={`term-sku-${t.key}`}
+                                      value={t.sku}
+                                      onChange={(e) => patchTerm(t.key, { sku: e.target.value })}
+                                      placeholder={`Eg: ${(sku || productCode || 'SKU').toUpperCase()}-${t.name.toUpperCase()}`}
+                                      className={termInputBase}
+                                    />
+                                  </div>
+                                  <div>
+                                    <Label htmlFor={`term-vname-${t.key}`}>
+                                      Variant Display Name (optional)
+                                    </Label>
+                                    <input
+                                      id={`term-vname-${t.key}`}
+                                      value={t.variantName}
+                                      onChange={(e) => patchTerm(t.key, { variantName: e.target.value })}
+                                      placeholder={
+                                        t.unitCount
+                                          ? `${t.name} (Pack of ${t.unitCount})`
+                                          : `Eg: ${t.name} Size`
+                                      }
+                                      className={termInputBase}
+                                    />
+                                  </div>
+                                  <div>
+                                    <Label htmlFor={`term-weight-${t.key}`}>Weight (in grams)</Label>
+                                    <input
+                                      id={`term-weight-${t.key}`}
+                                      type="number"
+                                      min="0"
+                                      step="0.01"
+                                      value={t.weightGrams}
+                                      onChange={(e) => patchTerm(t.key, { weightGrams: e.target.value })}
+                                      placeholder="Eg: 450"
+                                      className={termInputBase}
+                                    />
+                                  </div>
+                                  <div>
+                                    <Label htmlFor={`term-barcode-${t.key}`}>Barcode / EAN (optional)</Label>
+                                    <input
+                                      id={`term-barcode-${t.key}`}
+                                      value={t.barcode}
+                                      onChange={(e) => patchTerm(t.key, { barcode: e.target.value })}
+                                      placeholder="Eg: 8901234567890"
+                                      className={termInputBase}
+                                    />
+                                  </div>
+                                </div>
+
+                                <div>
+                                  <Label htmlFor={`term-offer-${t.key}`}>Offer Percent (%)</Label>
                                   <input
                                     id={`term-offer-${t.key}`}
                                     type="number"
@@ -1450,14 +2498,14 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                                         salePrice: salePriceFrom(t.regularPrice, nextOffer),
                                       });
                                     }}
-                                    placeholder="Eg: 10% (or enter Sale Price below to auto-calculate)"
+                                    placeholder="Eg: 10"
                                     className={termInputBase}
                                   />
                                 </div>
-                                <div className="mt-4 grid gap-4 md:grid-cols-2">
+                                <div className="grid gap-4 md:grid-cols-2">
                                   <div>
                                     <Label htmlFor={`term-regular-${t.key}`} required>
-                                      Regular Price
+                                      Regular Price (MRP)
                                     </Label>
                                     <input
                                       id={`term-regular-${t.key}`}
@@ -1486,7 +2534,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                                     />
                                   </div>
                                   <div>
-                                    <Label htmlFor={`term-sale-${t.key}`}>Sale Price</Label>
+                                    <Label htmlFor={`term-sale-${t.key}`}>Sale Price (Offer Price)</Label>
                                     <input
                                       id={`term-sale-${t.key}`}
                                       type="number"
@@ -1500,12 +2548,12 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                                           offerPercent: offerPercentFrom(t.regularPrice, nextSale),
                                         });
                                       }}
-                                      placeholder="Eg: 900 (auto-calculates Offer %)"
+                                      placeholder="Eg: 900"
                                       className={termInputBase}
                                     />
                                   </div>
                                 </div>
-                                <div className="mt-4">
+                                <div>
                                   <Label htmlFor={`term-stock-${t.key}`} required>
                                     Stock Quantity
                                   </Label>
@@ -1519,23 +2567,23 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                                     className={termInputBase}
                                   />
                                 </div>
-                                <div className="mt-4">
-                                  <Label htmlFor={`term-description-${t.key}`} required>
-                                    Product Description
+                                <div>
+                                  <Label htmlFor={`term-description-${t.key}`}>
+                                    Option Notes / Description (optional)
                                   </Label>
                                   <textarea
                                     id={`term-description-${t.key}`}
                                     value={t.description}
                                     onChange={(e) => patchTerm(t.key, { description: e.target.value })}
-                                    className="min-h-[110px] w-full rounded-lg border border-[#D7D7D7] p-4 text-[14px] outline-none focus:border-[#F47C35]"
+                                    className="min-h-[90px] w-full rounded-lg border border-[#D7D7D7] bg-white p-4 text-[14px] outline-none focus:border-[#F47C35]"
                                   />
                                 </div>
                                 <button
                                   type="button"
                                   onClick={() => setOpenTerm(null)}
-                                  className="mt-5 h-10 rounded-lg bg-[#F47C35] px-6 text-[13px] font-semibold text-white cursor-pointer"
+                                  className="h-10 rounded-lg bg-[#F47C35] px-6 text-[13px] font-semibold text-white cursor-pointer"
                                 >
-                                  Save
+                                  Done
                                 </button>
                               </div>
                             );
@@ -1564,6 +2612,46 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                   onChange={(e) => void onPickImages(e)}
                   className="sr-only"
                 />
+                <input
+                  ref={replaceFileInputRef}
+                  type="file"
+                  accept={IMAGE_RULES.accept}
+                  onChange={async (e) => {
+                    const file = e.target.files?.[0];
+                    e.target.value = '';
+                    const targetKey = replacingImageKey;
+                    setReplacingImageKey(null);
+                    if (!file || !targetKey) return;
+                    const targetImg = images.find((x) => x.key === targetKey);
+                    if (!targetImg) return;
+
+                    if (editId && targetImg.backendImageId) {
+                      try {
+                        await replaceAdminProductImage(editId, targetImg.backendImageId, file);
+                        const newBlobUrl = URL.createObjectURL(file);
+                        setImages((prev) =>
+                          prev.map((x) =>
+                            x.key === targetKey
+                              ? { ...x, src: newBlobUrl, name: file.name, size: file.size }
+                              : x
+                          )
+                        );
+                      } catch (err: any) {
+                        setError(err?.message || 'Failed to replace product image.');
+                      }
+                    } else {
+                      const newBlobUrl = URL.createObjectURL(file);
+                      setImages((prev) =>
+                        prev.map((x) =>
+                          x.key === targetKey
+                            ? { ...x, src: newBlobUrl, name: file.name, size: file.size, file }
+                            : x
+                        )
+                      );
+                    }
+                  }}
+                  className="sr-only"
+                />
                 <button
                   type="button"
                   onClick={() => fileRef.current?.click()}
@@ -1577,27 +2665,74 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                 </button>
                 {images.length > 0 && (
                   <div className="mt-4 grid grid-cols-3 gap-2">
-                    {images.map((img, i) => (
-                      <div key={img.key} className="relative aspect-square overflow-hidden rounded-lg border bg-white">
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img src={img.src} alt={`Product upload ${i + 1}`} className="h-full w-full object-contain" />
-                        <button
-                          type="button"
-                          onClick={() => {
-                            if (img.src.startsWith('blob:')) URL.revokeObjectURL(img.src);
-                            setImages((prev) => prev.filter((x) => x.key !== img.key));
-                          }}
-                          className="absolute top-1 right-1 flex h-6 w-6 items-center justify-center rounded bg-white text-[#D43B28] cursor-pointer"
-                        >
-                          <Trash2 size={13} />
-                        </button>
-                        {i === 0 && (
-                          <span className="absolute bottom-1 left-1 rounded bg-[#17375F] px-1.5 py-0.5 text-[8px] text-white">
-                            Primary
-                          </span>
-                        )}
-                      </div>
-                    ))}
+                    {images.map((img, i) => {
+                      const isPrimary = img.isPrimary ?? i === 0;
+                      const isDeletingThis = deletingImageKey === img.key;
+                      const isSettingPrimaryThis = settingPrimaryKey === img.key;
+                      return (
+                        <div key={img.key} className="group relative aspect-square overflow-hidden rounded-lg border bg-white">
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img src={img.src} alt={`Product upload ${i + 1}`} className="h-full w-full object-contain" />
+                          <div className="absolute top-1 right-1 z-10 flex items-center gap-1">
+                            <button
+                              type="button"
+                              title="Replace this image"
+                              disabled={isDeletingThis}
+                              onClick={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                setReplacingImageKey(img.key);
+                                replaceFileInputRef.current?.click();
+                              }}
+                              className="flex h-6 w-6 items-center justify-center rounded bg-white/95 text-[#0D2B53] shadow-2xs hover:bg-orange-50 hover:text-[#F47C35] cursor-pointer disabled:opacity-50"
+                            >
+                              <RefreshCw size={12} />
+                            </button>
+                            {editId && img.backendImageId && !isPrimary && (
+                              <button
+                                type="button"
+                                title="Set as Primary Image"
+                                disabled={isSettingPrimaryThis || isDeletingThis}
+                                onClick={(e) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  void handleSetPrimaryEditorImage(img);
+                                }}
+                                className="flex h-6 w-6 items-center justify-center rounded bg-white/95 text-amber-500 shadow-2xs hover:bg-amber-50 cursor-pointer disabled:opacity-50"
+                              >
+                                {isSettingPrimaryThis ? (
+                                  <Loader2 size={12} className="animate-spin text-amber-500" />
+                                ) : (
+                                  <Star size={12} />
+                                )}
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              title="Delete image"
+                              disabled={isDeletingThis}
+                              onClick={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                void handleDeleteEditorImage(img);
+                              }}
+                              className="flex h-6 w-6 items-center justify-center rounded bg-white/95 text-[#D43B28] shadow-2xs hover:bg-red-50 cursor-pointer disabled:opacity-50"
+                            >
+                              {isDeletingThis ? (
+                                <Loader2 size={12} className="animate-spin text-[#D43B28]" />
+                              ) : (
+                                <Trash2 size={13} />
+                              )}
+                            </button>
+                          </div>
+                          {isPrimary && (
+                            <span className="absolute bottom-1 left-1 rounded bg-[#17375F] px-1.5 py-0.5 text-[8px] text-white">
+                              Primary
+                            </span>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
                 <div className="mt-2 flex items-center justify-between text-[10px] text-[#888]">
@@ -1720,7 +2855,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                     className="h-12 min-w-0 flex-1 rounded-md border border-gray-300 bg-white px-3 text-base"
                   >
                     <option value="">Unbranded</option>
-                    {BRANDS.map((b) => (
+                    {brandsList.map((b) => (
                       <option key={b.id} value={b.id}>
                         {b.name}
                       </option>

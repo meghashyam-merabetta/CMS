@@ -242,7 +242,7 @@ export default function CategoryManagementPage() {
 
       setCategories(fetchedRoots);
       setAllCategories(allList.length > 0 ? allList : fetchedRoots);
-      setTotalCount(rootsRes.pagination?.total ?? (allList.length || fetchedRoots.length));
+      setTotalCount(allList.length || rootsRes.pagination?.total || fetchedRoots.length);
       setHasMore(rootsRes.pagination?.hasMore ?? false);
       setIsLive(true);
 
@@ -283,16 +283,38 @@ export default function CategoryManagementPage() {
       const fromAll = allCategories.filter(
         (c) => c.parent_category_id != null && Number(c.parent_category_id) === rootId
       );
-      const merged = new Map<number, BackendCategory>();
+      const directMerged = new Map<number, BackendCategory>();
       for (const item of fromAll) {
         const id = Number(item.category_id ?? item.id);
-        if (id) merged.set(id, item);
+        if (id) directMerged.set(id, item);
       }
       for (const item of fromApi) {
         const id = Number(item.category_id ?? item.id);
-        if (id) merged.set(id, item);
+        if (id) directMerged.set(id, item);
       }
-      return Array.from(merged.values());
+
+      // Also include any nested child categories created under these sub-categories
+      // (e.g. a category whose parent is #47 Gauge Pads Plain under #41 Healthcare Products)
+      const result: BackendCategory[] = [];
+      const visited = new Set<number>();
+      const appendWithChildren = (cat: BackendCategory) => {
+        const catId = Number(cat.category_id ?? cat.id);
+        if (!catId || visited.has(catId)) return;
+        visited.add(catId);
+        result.push(cat);
+
+        const nestedChildren = allCategories.filter(
+          (c) => c.parent_category_id != null && Number(c.parent_category_id) === catId
+        );
+        for (const child of nestedChildren) {
+          appendWithChildren(child);
+        }
+      };
+
+      for (const sub of directMerged.values()) {
+        appendWithChildren(sub);
+      }
+      return result;
     },
     [subCategoriesMap, allCategories]
   );
@@ -320,7 +342,7 @@ export default function CategoryManagementPage() {
         const sId = String(s.category_id ?? s.id ?? '');
         const sName = (s.category_name || '').toLowerCase();
         const sDesc = (s.description || '').toLowerCase();
-        return sId.includes(q) || sName.includes(sName) && (sId.includes(q) || sName.includes(q) || sDesc.includes(q));
+        return sId.includes(q) || sName.includes(q) || sDesc.includes(q);
       });
     });
   }, [rootCategories, parentFilter, searchQuery, getSubCategoriesForRoot]);
@@ -1111,7 +1133,13 @@ export default function CategoryManagementPage() {
 
                                       {/* Branched Sub-category Name */}
                                       <td className="px-4 font-medium text-slate-800">
-                                        <div className="flex items-center gap-2 pl-6">
+                                        <div
+                                          className={`flex items-center gap-2 ${
+                                            Number(subCat.parent_category_id) !== rootId
+                                              ? 'pl-11'
+                                              : 'pl-6'
+                                          }`}
+                                        >
                                           <span
                                             aria-hidden="true"
                                             className="font-mono text-[14px] font-bold text-[#F47C35]"
@@ -1132,7 +1160,10 @@ export default function CategoryManagementPage() {
                                       <td className="px-4">
                                         <div className="flex flex-col">
                                           <span className="inline-flex w-fit items-center rounded-md border border-blue-200 bg-blue-50 px-2 py-0.5 text-[10px] font-medium text-blue-700">
-                                            ↳ Sub-category of {rootCat.category_name}
+                                            ↳ Sub-category of{' '}
+                                            {Number(subCat.parent_category_id) !== rootId
+                                              ? getParentName(subCat.parent_category_id)
+                                              : rootCat.category_name}
                                           </span>
                                         </div>
                                       </td>
@@ -1308,9 +1339,6 @@ export default function CategoryManagementPage() {
             <div className="flex items-center justify-between border-b border-gray-100 pb-4">
               <div>
                 <h2 className="text-[16px] font-bold text-gray-900">Add New Category</h2>
-                <p className="text-[12px] text-gray-500">
-                  Create a new root or subcategory in the PostgreSQL database.
-                </p>
               </div>
               <button
                 type="button"
@@ -1374,13 +1402,12 @@ export default function CategoryManagementPage() {
                     onChange={(e) => setAddForm({ ...addForm, parent_category_id: e.target.value })}
                     className="h-10 w-full appearance-none rounded-lg border border-[#D6DCE5] bg-white pr-8 pl-3 text-[13px] outline-none focus:border-[#F47C35] cursor-pointer"
                   >
-                    <option value="">None / Root Category (Top-level)</option>
-                    {allCategories.map((cat) => {
+                    <option value="">None (Root Category)</option>
+                    {rootCategories.map((cat) => {
                       const id = cat.category_id ?? cat.id;
                       return (
                         <option key={String(id)} value={String(id)}>
-                          {cat.category_name} (ID: #{id})
-                          {cat.parent_category_id ? ` [Child of #${cat.parent_category_id}]` : ' [Root]'}
+                          {cat.category_name}
                         </option>
                       );
                     })}
@@ -1390,9 +1417,6 @@ export default function CategoryManagementPage() {
                     className="pointer-events-none absolute top-1/2 right-3 -translate-y-1/2 text-[#9AA7BA]"
                   />
                 </div>
-                <p className="mt-1 text-[11px] text-gray-400">
-                  Leave empty for a primary category, or select an existing parent category.
-                </p>
               </div>
 
               {/* Category Image URL & Sort Order */}
@@ -1538,28 +1562,17 @@ export default function CategoryManagementPage() {
                         editFormErrors.parent_category_id ? 'border-rose-400 bg-rose-50/30' : 'border-[#D6DCE5]'
                       }`}
                     >
-                      <option value="">None / Root Category (Top-level)</option>
-                      {allCategories.map((cat) => {
-                        const id = Number(cat.category_id ?? cat.id);
-                        const isDisabled = disabledParentIdsForEdit.has(id);
-
-                        return (
-                          <option
-                            key={String(id)}
-                            value={String(id)}
-                            disabled={isDisabled}
-                          >
-                            {cat.category_name} (ID: #{id})
-                            {id === editingCategoryId
-                              ? ' (Self — Cannot assign)'
-                              : isDisabled
-                              ? ' (Descendant — Avoids cycle)'
-                              : cat.parent_category_id
-                              ? ` [Child of #${cat.parent_category_id}]`
-                              : ' [Root]'}
-                          </option>
-                        );
-                      })}
+                      <option value="">None (Root Category)</option>
+                      {rootCategories
+                        .filter((cat) => !disabledParentIdsForEdit.has(Number(cat.category_id ?? cat.id)))
+                        .map((cat) => {
+                          const id = Number(cat.category_id ?? cat.id);
+                          return (
+                            <option key={String(id)} value={String(id)}>
+                              {cat.category_name}
+                            </option>
+                          );
+                        })}
                     </select>
                     <ChevronDown
                       size={14}
@@ -1569,9 +1582,6 @@ export default function CategoryManagementPage() {
                   {editFormErrors.parent_category_id && (
                     <p className="mt-1 text-[11px] text-rose-600">{editFormErrors.parent_category_id}</p>
                   )}
-                  <p className="mt-1 text-[11px] text-gray-400">
-                    Self and descendants are disabled to prevent circular hierarchy loops.
-                  </p>
                 </div>
 
                 {/* Category Image URL & Sort Order */}
@@ -1654,11 +1664,8 @@ export default function CategoryManagementPage() {
 
             <h2 className="mt-4 text-[16px] font-bold text-gray-900">Delete Category?</h2>
             <p className="mt-2 text-[13px] text-gray-600 leading-relaxed">
-              Are you sure you want to delete category{' '}
-              <strong className="text-gray-900">{categoryToDelete.category_name}</strong> (ID: #{categoryToDelete.category_id ?? categoryToDelete.id})?
-            </p>
-            <p className="mt-2 text-[11px] text-gray-500 bg-gray-50 p-2.5 rounded-lg border border-gray-200">
-              Note: The database protects categories from deletion if active catalog products or subcategories depend on them.
+              Are you sure you want to delete{' '}
+              <strong className="text-gray-900">{categoryToDelete.category_name}</strong>?
             </p>
 
             <div className="mt-6 flex items-center justify-end gap-2">

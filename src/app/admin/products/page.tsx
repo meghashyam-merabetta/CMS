@@ -33,38 +33,41 @@ import {
   deleteAdminProductImage,
   setPrimaryProductImage,
   uploadAdminProductImages,
+  replaceAdminProductImage,
   BackendProductImageRecord,
 } from '@/services/api/adminProductsApi';
 import { getAdminCategories } from '@/services/api/adminCategoriesApi';
-import { BackendProduct, BackendCategory, ProductStatus } from '@/types/api';
-
-const BRAND_LOOKUP: Record<string, string> = {
-  '1': 'Eldiaper',
-  '2': 'Friends',
-  '3': 'Joylife',
-  '4': 'Lifree',
-  '5': 'Nuvy',
-  '15': 'Arrex',
-  '16': 'Dr. Morepen',
-  '17': 'Flamingo',
-  '18': 'Happy Cotton',
-  '19': 'Merabetta',
-};
+import { getAllAdminBrands } from '@/services/api/adminBrandsApi';
+import { BackendProduct, BackendCategory, BackendBrand, ProductStatus } from '@/types/api';
 
 function mapBackendProductToRecord(
   bp: BackendProduct,
   idx: number,
-  cats: BackendCategory[] = []
+  cats: BackendCategory[] = [],
+  brands: BackendBrand[] = []
 ): ProductRecord {
   const prodId = bp.product_id ?? bp.id ?? idx + 1;
   const name = bp.product_name || bp.name || 'Product';
-  const price = bp.price ?? 999;
-  const stock = bp.stock ?? 15;
+  const rawPrice =
+    bp.effective_price ??
+    bp.sale_price ??
+    bp.offer_price ??
+    bp.regular_price ??
+    bp.mrp ??
+    bp.price ??
+    0;
+  const price = Number(rawPrice) || 0;
+  const regularPrice = Number(bp.regular_price ?? bp.mrp ?? price) || price;
+  const stock = Number(bp.stock_quantity ?? bp.stock ?? 0) || 0;
 
   const prodCats = Array.isArray(bp.categories) ? bp.categories : [];
   const primaryCat =
     prodCats.find((c) => c.ProductCategory?.is_primary) || prodCats[0] || null;
-  const primaryCatId = primaryCat ? String(primaryCat.category_id ?? primaryCat.id ?? '') : undefined;
+  const primaryCatId = primaryCat
+    ? String(primaryCat.category_id ?? primaryCat.id ?? '')
+    : bp.primary_category_id != null
+    ? String(bp.primary_category_id)
+    : undefined;
 
   const matchedCatFromList =
     primaryCatId != null
@@ -77,9 +80,13 @@ function mapBackendProductToRecord(
       : matchedCatFromList?.category_name || 'Uncategorized';
 
   const brandIdStr = bp.brand_id != null ? String(bp.brand_id) : '';
-  const brandLabel = brandIdStr
-    ? BRAND_LOOKUP[brandIdStr] || `Brand #${brandIdStr}`
-    : 'Merabetta';
+  const matchedBrand = brandIdStr
+    ? brands.find((b) => String(b.brand_id ?? b.id) === brandIdStr)
+    : null;
+  const brandLabel =
+    bp.brand?.brand_name ||
+    matchedBrand?.brand_name ||
+    (brandIdStr ? `Brand #${brandIdStr}` : 'Unbranded');
 
   const rawStatus = (bp.product_status || 'active').toLowerCase();
   const statusCode: ProductRecord['statusCode'] =
@@ -97,7 +104,7 @@ function mapBackendProductToRecord(
     category: categoryName,
     categoryId: primaryCatId,
     price,
-    originalPrice: Math.round(price * 1.2),
+    originalPrice: regularPrice,
     stock,
     statusCode,
     image: resolvePrimaryProductImage(bp),
@@ -109,6 +116,7 @@ export default function ProductManagementPage() {
   const router = useRouter();
   const [products, setProducts] = useState<ProductRecord[]>([]);
   const [categories, setCategories] = useState<BackendCategory[]>([]);
+  const [brands, setBrands] = useState<BackendBrand[]>([]);
   const [totalCount, setTotalCount] = useState<number>(0);
   const [isLoading, setIsLoading] = useState(true);
   const [isLive, setIsLive] = useState(false);
@@ -153,10 +161,12 @@ export default function ProductManagementPage() {
   const [isUploadingImage, setIsUploadingImage] = useState(false);
   const [deletingImageId, setDeletingImageId] = useState<string | null>(null);
   const [settingPrimaryId, setSettingPrimaryId] = useState<string | null>(null);
+  const [replacingImageId, setReplacingImageId] = useState<string | null>(null);
   const [imageToDelete, setImageToDelete] = useState<{ id: string; url: string } | null>(null);
   const [galleryError, setGalleryError] = useState<string | null>(null);
   const [selectedPreviewImage, setSelectedPreviewImage] = useState<string | null>(null);
   const galleryFileInputRef = useRef<HTMLInputElement>(null);
+  const galleryReplaceInputRef = useRef<HTMLInputElement>(null);
 
   const handleOpenGallery = async (p: ProductRecord) => {
     setGalleryProduct(p);
@@ -269,6 +279,38 @@ export default function ProductManagementPage() {
     }
   };
 
+  const handleReplaceGalleryImage = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    const targetImgId = replacingImageId;
+    if (!file || !galleryProduct || !targetImgId) {
+      setReplacingImageId(null);
+      return;
+    }
+
+    setGalleryError(null);
+    try {
+      await replaceAdminProductImage(galleryProduct.id, targetImgId, file);
+      const fresh = await getAdminProductImages(galleryProduct.id);
+      setGalleryImages(fresh);
+      const replaced = fresh.find((i) => String(i.id) === String(targetImgId));
+      const primaryImg = fresh.find((i) => i.is_primary)?.image_url || fresh[0]?.image_url;
+      if (replaced?.image_url) {
+        setSelectedPreviewImage(replaced.image_url);
+      }
+      if (primaryImg) {
+        setProducts((prev) =>
+          prev.map((item) => (item.id === galleryProduct.id ? { ...item, image: primaryImg } : item))
+        );
+      }
+      showToast('Image replaced successfully');
+    } catch (err: any) {
+      setGalleryError(err?.message || 'Failed to replace image');
+    } finally {
+      setReplacingImageId(null);
+    }
+  };
+
   const [subCategoriesByRoot, setSubCategoriesByRoot] = useState<Record<string, BackendCategory[]>>({});
 
   // Load categories for dropdown and mapping + read optional ?category_id= from URL
@@ -276,9 +318,15 @@ export default function ProductManagementPage() {
     const params = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null;
     const urlCatId = params?.get('category_id') || '';
 
-    async function loadCats() {
+    async function loadCatsAndBrands() {
       try {
-        const res = await getAdminCategories({ limit: 100 });
+        const [res, brandsList] = await Promise.all([
+          getAdminCategories({ limit: 100 }),
+          getAllAdminBrands().catch(() => []),
+        ]);
+        if (Array.isArray(brandsList)) {
+          setBrands(brandsList);
+        }
         const catList = Array.isArray(res) ? res : (res?.data ?? []);
         if (Array.isArray(catList)) {
           setCategories(catList);
@@ -297,7 +345,7 @@ export default function ProductManagementPage() {
         console.warn('Categories API note:', e);
       }
     }
-    loadCats();
+    loadCatsAndBrands();
   }, []);
 
   // Fetch sub-categories via backend parent_category_id query whenever a Root Category is selected
@@ -340,11 +388,15 @@ export default function ProductManagementPage() {
     return merged;
   }, [selectedRootCategory, subCategoriesByRoot, categories]);
 
-  // Keep latest categories in a ref so loading categories does NOT trigger a products re-fetch.
+  // Keep latest categories and brands in refs so loading them does NOT trigger a products re-fetch.
   const categoriesRef = useRef<BackendCategory[]>([]);
+  const brandsRef = useRef<BackendBrand[]>([]);
   useEffect(() => {
     categoriesRef.current = categories;
   }, [categories]);
+  useEffect(() => {
+    brandsRef.current = brands;
+  }, [brands]);
 
   // Debounced search so typing doesn't fire a request per keystroke.
   const [debouncedSearch, setDebouncedSearch] = useState('');
@@ -356,65 +408,140 @@ export default function ProductManagementPage() {
   // Guards against out-of-order responses.
   const requestIdRef = useRef(0);
 
-  // Backend returns products ordered by product_id ASC (oldest first) and has no sort option.
-  // To show the newest products first we paginate from the END of the list and reverse each page.
-  const totalCacheRef = useRef<{ key: string; total: number } | null>(null);
-
-  // Server-side pagination: fetch ONLY the current page (never the whole catalogue).
+  // Server-side pagination + full ID/Name/Brand/Category search support
   const loadProducts = React.useCallback(
-    async (forceRecount = false) => {
+    async (_forceRecount = false) => {
       const requestId = ++requestIdRef.current;
       setIsLoading(true);
       setFetchError(null);
       try {
         const catNum = selectedCategory ? Number(selectedCategory) : NaN;
-        const baseParams = {
-          search: debouncedSearch || undefined,
+        const brandNum = selectedBrand ? Number(selectedBrand) : NaN;
+        const filterParams = {
           category_id: !isNaN(catNum) && catNum > 0 ? catNum : undefined,
+          brand_id: !isNaN(brandNum) && brandNum > 0 ? brandNum : undefined,
           product_status:
             selectedStatus === 'PUBLISHED'
               ? ('active' as const)
               : selectedStatus === 'DRAFT'
               ? ('draft' as const)
+              : selectedStatus === 'ARCHIVED'
+              ? ('archived' as const)
               : undefined,
         };
-        const res = await getAdminProducts({
-          ...baseParams,
-          limit: pageSize,
-          offset: currentPage * pageSize,
-        });
-        if (requestId !== requestIdRef.current) return; // stale response
 
-        const items = Array.isArray(res.data) ? res.data : [];
-        const total = res.pagination?.total ?? items.length;
+        // 1. Standard paginated fetch when search bar is empty
+        if (!debouncedSearch) {
+          const res = await getAdminProducts({
+            ...filterParams,
+            limit: pageSize,
+            offset: currentPage * pageSize,
+            sort_by: 'product_id',
+            sort_order: 'desc',
+          });
+          if (requestId !== requestIdRef.current) return;
 
-        const initialMapped = items.map((bp, idx) =>
-          mapBackendProductToRecord(bp, idx, categoriesRef.current)
-        );
-        setProducts(initialMapped);
-        setTotalCount(total);
-        setIsLive(true);
+          const items = Array.isArray(res.data) ? res.data : [];
+          const total = res.pagination?.total ?? items.length;
 
-        // Populate S3 thumbnails for the visible page items
-        void Promise.all(
-          items.map(async (bp) => {
-            const pId = bp.product_id ?? bp.id;
-            if (!pId || (Array.isArray(bp.images) && bp.images.length > 0)) return;
-            try {
-              const imgs = await getAdminProductImages(pId);
-              const primaryImg = imgs.find((i) => i.is_primary)?.image_url || imgs[0]?.image_url;
-              if (primaryImg && requestId === requestIdRef.current) {
-                setProducts((prev) =>
-                  prev.map((row) =>
-                    row.id === String(pId) ? { ...row, image: primaryImg } : row
-                  )
-                );
-              }
-            } catch {
-              // ignore individual image fetch error
-            }
+          const initialMapped = items
+            .map((bp, idx) =>
+              mapBackendProductToRecord(bp, idx, categoriesRef.current, brandsRef.current)
+            )
+            .sort((a, b) => Number(b.id) - Number(a.id));
+          setProducts(initialMapped);
+          setTotalCount(total);
+          setIsLive(true);
+          return;
+        }
+
+        // 2. When searching: backend ?search= only matches text columns (name/code/sku),
+        // NOT numeric product_id (e.g. "685683" or "PRD-685683") or brand/category names.
+        // We fetch the catalog batches + direct ID lookup (if numeric) so searching by ID, Name, or Brand always works.
+        const rawQ = debouncedSearch.trim();
+        const qLower = rawQ.toLowerCase();
+        const cleanIdStr = rawQ.replace(/^(?:prd[-_\s]*|#)/i, '').trim();
+        const cleanIdLower = cleanIdStr.toLowerCase();
+        const isNumericId = /^\d+$/.test(cleanIdStr);
+
+        const [firstBatch, directById] = await Promise.all([
+          getAdminProducts({
+            ...filterParams,
+            limit: 100,
+            offset: 0,
+            sort_by: 'product_id',
+            sort_order: 'desc',
+          }),
+          isNumericId ? getAdminProductById(cleanIdStr).catch(() => null) : Promise.resolve(null),
+        ]);
+        if (requestId !== requestIdRef.current) return;
+
+        let allBackendItems: BackendProduct[] = Array.isArray(firstBatch.data)
+          ? [...firstBatch.data]
+          : [];
+        const totalOnServer = firstBatch.pagination?.total ?? allBackendItems.length;
+
+        if (totalOnServer > 100) {
+          const extraOffsets: number[] = [];
+          for (let off = 100; off < Math.min(totalOnServer, 500); off += 100) {
+            extraOffsets.push(off);
+          }
+          const extraBatches = await Promise.all(
+            extraOffsets.map((off) =>
+              getAdminProducts({
+                ...filterParams,
+                limit: 100,
+                offset: off,
+                sort_by: 'product_id',
+                sort_order: 'desc',
+              }).catch(() => ({ data: [] as BackendProduct[] }))
+            )
+          );
+          if (requestId !== requestIdRef.current) return;
+          for (const b of extraBatches) {
+            if (Array.isArray(b.data)) allBackendItems.push(...b.data);
+          }
+        }
+
+        if (directById && (directById.product_id ?? directById.id) != null) {
+          const directIdStr = String(directById.product_id ?? directById.id);
+          if (!allBackendItems.some((x) => String(x.product_id ?? x.id) === directIdStr)) {
+            allBackendItems.unshift(directById);
+          }
+        }
+
+        const matchedMapped = allBackendItems
+          .map((bp, idx) => ({
+            bp,
+            record: mapBackendProductToRecord(bp, idx, categoriesRef.current, brandsRef.current),
+          }))
+          .filter(({ bp, record }) => {
+            const idMatch =
+              record.id.toLowerCase().includes(qLower) ||
+              (cleanIdLower.length > 0 && record.id.toLowerCase().includes(cleanIdLower));
+            const prdCodeDisplayMatch = record.productCode.toLowerCase().includes(qLower);
+            const rawCodeMatch = (bp.product_code || '').toLowerCase().includes(qLower);
+            const skuMatch = (bp.sku || '').toLowerCase().includes(qLower);
+            const nameMatch = record.name.toLowerCase().includes(qLower);
+            const brandMatch = record.brand.toLowerCase().includes(qLower);
+            const catMatch = record.category.toLowerCase().includes(qLower);
+            return (
+              idMatch ||
+              prdCodeDisplayMatch ||
+              rawCodeMatch ||
+              skuMatch ||
+              nameMatch ||
+              brandMatch ||
+              catMatch
+            );
           })
-        );
+          .map(({ record }) => record)
+          .sort((a, b) => Number(b.id) - Number(a.id));
+
+        const startIdx = currentPage * pageSize;
+        setProducts(matchedMapped.slice(startIdx, startIdx + pageSize));
+        setTotalCount(matchedMapped.length);
+        setIsLive(true);
       } catch (err: any) {
         if (requestId !== requestIdRef.current) return;
         console.warn('Backend products error:', err.message);
@@ -424,7 +551,7 @@ export default function ProductManagementPage() {
         if (requestId === requestIdRef.current) setIsLoading(false);
       }
     },
-    [pageSize, currentPage, debouncedSearch, selectedCategory, selectedStatus]
+    [pageSize, currentPage, debouncedSearch, selectedCategory, selectedBrand, selectedStatus]
   );
 
   React.useEffect(() => {
@@ -541,17 +668,8 @@ export default function ProductManagementPage() {
     }
   };
 
-  // Search / category / published / draft filters are applied by the server.
-  // Brand (and the "Archived" bucket) are not supported server-side, so filter the current page here.
-  const filteredProducts = useMemo(() => {
-    return products.filter((p) => {
-      const matchesBrand =
-        !selectedBrand || p.brand.toLowerCase() === selectedBrand.toLowerCase();
-      const matchesStatus =
-        !selectedStatus || p.statusCode.toLowerCase() === selectedStatus.toLowerCase();
-      return matchesBrand && matchesStatus;
-    });
-  }, [products, selectedBrand, selectedStatus]);
+  // Filters are applied server-side via GET /api/admin/products query params.
+  const filteredProducts = products;
 
   // Pagination is server-side: `products` already holds just the current page.
   const totalPages = Math.max(Math.ceil((totalCount || products.length) / pageSize), 1);
@@ -717,15 +835,15 @@ export default function ProductManagementPage() {
             }}
             className="h-11 appearance-none rounded-lg border border-[#D6DCE5] bg-white pr-8 pl-3 text-[13px] font-normal text-[#505050] outline-none cursor-pointer focus:border-[#F47C35]"
           >
-            <option value="">Company: All Companies</option>
-            {Object.values(BRAND_LOOKUP)
-              .slice()
-              .sort((a, b) => a.localeCompare(b))
-              .map((companyName) => (
-                <option key={companyName} value={companyName}>
-                  {companyName}
+            <option value="">Brand: All Brands</option>
+            {brands.map((b) => {
+              const bId = String(b.brand_id ?? b.id);
+              return (
+                <option key={bId} value={bId}>
+                  {b.brand_name}
                 </option>
-              ))}
+              );
+            })}
           </select>
           <ChevronDown
             size={14}
@@ -1064,11 +1182,14 @@ export default function ProductManagementPage() {
                     className="mt-1 h-10 w-full rounded-lg border border-[#D6DCE5] px-3 text-[13px] outline-none focus:border-[#F47C35]"
                   >
                     <option value="">None / Unbranded</option>
-                    {Object.entries(BRAND_LOOKUP).map(([id, label]) => (
-                      <option key={id} value={id}>
-                        {label} (#{id})
-                      </option>
-                    ))}
+                    {brands.map((b) => {
+                      const bId = String(b.brand_id ?? b.id);
+                      return (
+                        <option key={bId} value={bId}>
+                          {b.brand_name} (#{bId})
+                        </option>
+                      );
+                    })}
                   </select>
                 </div>
               </div>
@@ -1357,23 +1478,42 @@ export default function ProductManagementPage() {
                               </button>
                             )}
 
-                            {/* Delete Button */}
-                            <button
-                              type="button"
-                              title="Delete image"
-                              disabled={isDeleting}
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setImageToDelete({ id: String(img.id), url: img.image_url });
-                              }}
-                              className="absolute top-1 right-1 flex h-6 w-6 items-center justify-center rounded-md bg-white/90 text-gray-500 hover:bg-rose-600 hover:text-white shadow-xs transition-colors cursor-pointer disabled:opacity-50"
-                            >
-                              {isDeleting ? (
-                                <Loader2 size={12} className="animate-spin text-rose-600" />
-                              ) : (
-                                <Trash2 size={12} />
-                              )}
-                            </button>
+                            {/* Replace & Delete Buttons */}
+                            <div className="absolute top-1 right-1 flex items-center gap-1">
+                              <button
+                                type="button"
+                                title="Replace image"
+                                disabled={replacingImageId === String(img.id)}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setReplacingImageId(String(img.id));
+                                  galleryReplaceInputRef.current?.click();
+                                }}
+                                className="flex h-6 w-6 items-center justify-center rounded-md bg-white/90 text-gray-600 hover:bg-[#0D2B53] hover:text-white shadow-xs transition-colors cursor-pointer disabled:opacity-50"
+                              >
+                                {replacingImageId === String(img.id) ? (
+                                  <Loader2 size={12} className="animate-spin text-[#F47C35]" />
+                                ) : (
+                                  <RefreshCw size={11} />
+                                )}
+                              </button>
+                              <button
+                                type="button"
+                                title="Delete image"
+                                disabled={isDeleting}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setImageToDelete({ id: String(img.id), url: img.image_url });
+                                }}
+                                className="flex h-6 w-6 items-center justify-center rounded-md bg-white/90 text-gray-500 hover:bg-rose-600 hover:text-white shadow-xs transition-colors cursor-pointer disabled:opacity-50"
+                              >
+                                {isDeleting ? (
+                                  <Loader2 size={12} className="animate-spin text-rose-600" />
+                                ) : (
+                                  <Trash2 size={12} />
+                                )}
+                              </button>
+                            </div>
                           </div>
                         );
                       })}
@@ -1390,6 +1530,14 @@ export default function ProductManagementPage() {
                 accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp"
                 className="hidden"
                 onChange={handleUploadGalleryImages}
+              />
+              {/* Hidden file input for single-file replacement */}
+              <input
+                ref={galleryReplaceInputRef}
+                type="file"
+                accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp"
+                className="hidden"
+                onChange={handleReplaceGalleryImage}
               />
             </div>
 
