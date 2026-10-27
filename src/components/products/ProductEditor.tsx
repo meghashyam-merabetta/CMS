@@ -699,9 +699,19 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
           );
 
           // Specifications
+          const firstVarAttrs: Record<string, any> =
+            Array.isArray(prod.variants) && prod.variants[0]?.attributes
+              ? (prod.variants[0].attributes as Record<string, any>)
+              : {};
           setTargetAudience(prod.target_audience || '');
-          setHsnCode(prod.hsn_code || '');
-          setGstRate(prod.gst_rate != null ? String(prod.gst_rate) : '');
+          setHsnCode(prod.hsn_code || (firstVarAttrs.hsn ? String(firstVarAttrs.hsn) : ''));
+          setGstRate(
+            prod.gst_rate != null
+              ? String(prod.gst_rate)
+              : firstVarAttrs.gst_percent != null
+              ? String(firstVarAttrs.gst_percent)
+              : ''
+          );
           setWeight(prod.weight != null ? String(prod.weight) : '');
           setWeightUnit(prod.weight_unit || 'g');
           setUnitCount(prod.unit_count != null ? String(prod.unit_count) : '');
@@ -1861,19 +1871,31 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                       {/* 1. Tax & Compliance */}
                       <div className="rounded-xl border border-[#EAEAEA] bg-[#FAFAFA] p-4 space-y-4">
                         <h5 className="text-[13px] font-bold uppercase tracking-wider text-[#0D2B53]">
-                          1. Tax & Compliance
+                          1. Tax & Compliance (GST & HSN)
                         </h5>
-                        <div>
-                          <Label htmlFor="spec-gst">GST Rate (%)</Label>
-                          <PresetChipsWithCustom
-                            id="spec-gst"
-                            value={gstRate}
-                            onChange={setGstRate}
-                            presets={GST_PRESETS}
-                            suffix="%"
-                            type="number"
-                            placeholder="Enter custom GST % (e.g. 12)"
-                          />
+                        <div className="grid gap-4 md:grid-cols-2">
+                          <div>
+                            <Label htmlFor="spec-gst">GST Rate (%)</Label>
+                            <PresetChipsWithCustom
+                              id="spec-gst"
+                              value={gstRate}
+                              onChange={setGstRate}
+                              presets={GST_PRESETS}
+                              suffix="%"
+                              type="number"
+                              placeholder="Enter custom GST % (e.g. 12)"
+                            />
+                          </div>
+                          <div>
+                            <Label htmlFor="spec-hsn">HSN Code</Label>
+                            <PresetChipsWithCustom
+                              id="spec-hsn"
+                              value={hsnCode}
+                              onChange={setHsnCode}
+                              presets={HSN_PRESETS}
+                              placeholder="Enter 4 to 8 digit HSN code (e.g. 961900)"
+                            />
+                          </div>
                         </div>
                       </div>
 
