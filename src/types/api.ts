@@ -179,6 +179,62 @@ export interface UpdateCategoryPayload {
   is_active?: boolean;
 }
 
+export interface BackendBrand {
+  brand_id: number | string;
+  id?: number | string;
+  brand_name: string;
+  slug: string;
+  description?: string | null;
+  image_url?: string | null;
+  is_active?: boolean;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface CreateBrandPayload {
+  brand_name: string;
+  slug?: string;
+  description?: string | null;
+  image_url?: string | null;
+  is_active?: boolean;
+}
+
+export interface UpdateBrandPayload {
+  brand_name?: string;
+  slug?: string;
+  description?: string | null;
+  image_url?: string | null;
+  is_active?: boolean;
+}
+
+export interface AdminBrandsResponse {
+  data: BackendBrand[];
+  pagination?: PaginationMeta;
+}
+
+export interface BackendVariantAttribute {
+  id: number | string;
+  name: string;
+  values: string[];
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface CreateVariantAttributePayload {
+  name: string;
+  values: string[];
+}
+
+export interface UpdateVariantAttributePayload {
+  name?: string;
+  values?: string[];
+}
+
+export interface AdminVariantAttributesResponse {
+  data: BackendVariantAttribute[];
+  pagination?: PaginationMeta;
+}
+
 export interface PaginationMeta {
   total: number;
   limit: number;

@@ -227,20 +227,23 @@ export default function CategoryManagementPage() {
   }, []);
 
   /**
-   * Loads categories from GET /api/admin/categories.
+   * Loads root categories from GET /api/admin/categories?roots_only=true
    */
   const loadCategories = useCallback(async () => {
     setIsLoading(true);
     setFetchError(null);
 
     try {
-      const res = await getAdminCategories({ limit: 100, offset: 0 });
-      const fetchedData = Array.isArray(res.data) ? res.data : [];
+      const [rootsRes, allList] = await Promise.all([
+        getAdminCategories({ roots_only: true, limit: 100, offset: 0 }),
+        getAllAdminCategories(),
+      ]);
+      const fetchedRoots = Array.isArray(rootsRes.data) ? rootsRes.data : [];
 
-      setCategories(fetchedData);
-      setAllCategories(fetchedData);
-      setTotalCount(res.pagination?.total ?? fetchedData.length);
-      setHasMore(res.pagination?.hasMore ?? false);
+      setCategories(fetchedRoots);
+      setAllCategories(allList.length > 0 ? allList : fetchedRoots);
+      setTotalCount(rootsRes.pagination?.total ?? (allList.length || fetchedRoots.length));
+      setHasMore(rootsRes.pagination?.hasMore ?? false);
       setIsLive(true);
 
       // If a specific root category filter is selected, auto-expand that root category
@@ -360,27 +363,9 @@ export default function CategoryManagementPage() {
     refreshAllCategories();
   };
 
-  const validateAddForm = (): boolean => {
-    const errors: Record<string, string> = {};
-    const name = addForm.category_name.trim();
-
-    if (!name) {
-      errors.category_name = 'Category name is required';
-    } else if (name.length > 150) {
-      errors.category_name = 'Category name cannot exceed 150 characters';
-    }
-
-    if (addForm.category_image.trim().length > 2048) {
-      errors.category_image = 'Image URL cannot exceed 2048 characters';
-    }
-
-    setAddFormErrors(errors);
-    return Object.keys(errors).length === 0;
-  };
-
   const handleAddSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!validateAddForm() || isSubmitting) return;
+    if (!addForm.category_name.trim() || isSubmitting) return;
 
     setIsSubmitting(true);
     try {
@@ -450,31 +435,9 @@ export default function CategoryManagementPage() {
     }
   };
 
-  const validateEditForm = (): boolean => {
-    const errors: Record<string, string> = {};
-    const name = editForm.category_name.trim();
-
-    if (!name) {
-      errors.category_name = 'Category name is required';
-    } else if (name.length > 150) {
-      errors.category_name = 'Category name cannot exceed 150 characters';
-    }
-
-    if (editForm.category_image.trim().length > 2048) {
-      errors.category_image = 'Image URL cannot exceed 2048 characters';
-    }
-
-    if (editingCategoryId && editForm.parent_category_id === String(editingCategoryId)) {
-      errors.parent_category_id = 'A category cannot be its own parent';
-    }
-
-    setEditFormErrors(errors);
-    return Object.keys(errors).length === 0;
-  };
-
   const handleEditSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!editingCategoryId || !validateEditForm() || isSubmitting) return;
+    if (!editingCategoryId || !editForm.category_name.trim() || isSubmitting) return;
 
     setIsSubmitting(true);
     try {

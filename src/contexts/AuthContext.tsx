@@ -1,7 +1,7 @@
 'use client';
 
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import { loginAdmin, logoutAdmin } from '@/services/api/adminAuthApi';
+import { loginAdmin, logoutAdmin, getMe } from '@/services/api/adminAuthApi';
 
 export type UserRole = 'ADMIN' | 'SUPER_ADMIN';
 
@@ -49,18 +49,36 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   // Check active session on mount
   useEffect(() => {
-    try {
-      const savedUser =
-        localStorage.getItem(STORAGE_KEY) ||
-        sessionStorage.getItem(STORAGE_KEY);
-      if (savedUser) {
-        setUser(JSON.parse(savedUser));
+    async function restoreSession() {
+      try {
+        const savedUser =
+          localStorage.getItem(STORAGE_KEY) ||
+          sessionStorage.getItem(STORAGE_KEY);
+        if (savedUser) {
+          setUser(JSON.parse(savedUser));
+        }
+        const res = await getMe();
+        if (res?.user) {
+          const verifiedUser: User = {
+            id: res.user.id,
+            email: res.user.email,
+            name: res.user.name || 'Admin User',
+            role: res.user.email.toLowerCase().includes('super')
+              ? 'SUPER_ADMIN'
+              : 'ADMIN',
+          };
+          setUser(verifiedUser);
+        }
+      } catch {
+        // If cookie is expired or missing, clear stale local user
+        setUser(null);
+        localStorage.removeItem(STORAGE_KEY);
+        sessionStorage.removeItem(STORAGE_KEY);
+      } finally {
+        setIsLoading(false);
       }
-    } catch (e) {
-      console.warn('Error loading session from storage:', e);
-    } finally {
-      setIsLoading(false);
     }
+    restoreSession();
   }, []);
 
   const login = async (email: string, password: string, keepMeSignedIn: boolean) => {

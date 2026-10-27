@@ -1,5 +1,11 @@
-import path from "path";
 import type { NextConfig } from "next";
+
+const BACKEND_ORIGIN = (
+  process.env.NEXT_PUBLIC_API_URL || "http://16.4.61.3:3000"
+)
+  .trim()
+  .replace(/\/+$/, "")
+  .replace(/\/api$/, "");
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
@@ -10,7 +16,15 @@ const nextConfig: NextConfig = {
     "*.local",
   ],
   turbopack: {
-    root: path.resolve(__dirname),
+    root: process.cwd(),
+  },
+  async rewrites() {
+    return [
+      {
+        source: "/api/:path*",
+        destination: `${BACKEND_ORIGIN}/api/:path*`,
+      },
+    ];
   },
 };
 

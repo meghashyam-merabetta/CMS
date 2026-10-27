@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   Search,
   Plus,
@@ -9,111 +9,170 @@ import {
   Trash2,
   X,
   CheckCircle2,
-  AlertTriangle
+  AlertTriangle,
+  RefreshCw,
+  Loader2,
 } from 'lucide-react';
-
-interface Brand {
-  id: string;
-  name: string;
-  code: string;
-  productCount: number;
-  status: 'ACTIVE' | 'INACTIVE';
-  establishedYear: number;
-}
-
-const initialBrandsData: Brand[] = [
-  { id: 'b1', name: 'Merabetta Care', code: 'BRD-001', productCount: 42, status: 'ACTIVE', establishedYear: 2024 },
-  { id: 'b2', name: 'Omron Healthcare', code: 'BRD-002', productCount: 18, status: 'ACTIVE', establishedYear: 1933 },
-  { id: 'b3', name: 'Vissco Rehabilitation', code: 'BRD-003', productCount: 35, status: 'ACTIVE', establishedYear: 1963 },
-  { id: 'b4', name: 'Karma Mobility', code: 'BRD-004', productCount: 14, status: 'ACTIVE', establishedYear: 1987 },
-  { id: 'b5', name: 'Friends Adult Care', code: 'BRD-005', productCount: 22, status: 'ACTIVE', establishedYear: 2000 },
-  { id: 'b6', name: 'Tynor Orthotics', code: 'BRD-006', productCount: 29, status: 'ACTIVE', establishedYear: 1993 },
-  { id: 'b7', name: 'Dr. Morepen', code: 'BRD-007', productCount: 16, status: 'ACTIVE', establishedYear: 2001 },
-];
+import {
+  getAdminBrands,
+  createAdminBrand,
+  updateAdminBrand,
+  deleteAdminBrand,
+  generateBrandSlug,
+} from '@/services/api/adminBrandsApi';
+import { BackendBrand } from '@/types/api';
 
 export default function BrandsPage() {
-  const [brands, setBrands] = useState<Brand[]>(initialBrandsData);
+  const [brands, setBrands] = useState<BackendBrand[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [search, setSearch] = useState('');
-  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [toastMessage, setToastMessage] = useState<{
+    text: string;
+    type: 'success' | 'error';
+  } | null>(null);
 
   // Modals state
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
-  const [editingBrand, setEditingBrand] = useState<Brand | null>(null);
-  const [brandToDelete, setBrandToDelete] = useState<Brand | null>(null);
+  const [editingBrand, setEditingBrand] = useState<BackendBrand | null>(null);
+  const [brandToDelete, setBrandToDelete] = useState<BackendBrand | null>(null);
 
   // Form State for Add
   const [newBrand, setNewBrand] = useState({
-    name: '',
-    code: '',
-    establishedYear: new Date().getFullYear(),
-    status: 'ACTIVE' as 'ACTIVE' | 'INACTIVE',
+    brand_name: '',
+    slug: '',
+    description: '',
+    image_url: '',
+    is_active: true,
   });
 
-  const showToast = (msg: string) => {
-    setToastMessage(msg);
+  const showToast = (text: string, type: 'success' | 'error' = 'success') => {
+    setToastMessage({ text, type });
     setTimeout(() => setToastMessage(null), 3500);
   };
 
+  const loadBrands = useCallback(async () => {
+    setIsLoading(true);
+    try {
+      const res = await getAdminBrands({ all: true });
+      setBrands(res.data);
+    } catch (err: any) {
+      showToast(err.message || 'Failed to load brands', 'error');
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadBrands();
+  }, [loadBrands]);
+
   const filtered = brands.filter(
     (b) =>
-      b.name.toLowerCase().includes(search.toLowerCase()) ||
-      b.code.toLowerCase().includes(search.toLowerCase())
+      (b.brand_name || '').toLowerCase().includes(search.toLowerCase()) ||
+      (b.slug || '').toLowerCase().includes(search.toLowerCase())
   );
 
   // Handle Add
-  const handleAddBrand = (e: React.FormEvent) => {
+  const handleAddBrand = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newBrand.name.trim() || !newBrand.code.trim()) return;
+    if (!newBrand.brand_name.trim() || isSubmitting) return;
 
-    const brandItem: Brand = {
-      id: `b-${Date.now()}`,
-      name: newBrand.name,
-      code: newBrand.code.toUpperCase(),
-      productCount: 0,
-      status: newBrand.status,
-      establishedYear: Number(newBrand.establishedYear) || 2024,
-    };
+    setIsSubmitting(true);
+    try {
+      const created = await createAdminBrand({
+        brand_name: newBrand.brand_name.trim(),
+        slug: generateBrandSlug(newBrand.slug.trim() || newBrand.brand_name),
+        description: newBrand.description.trim() || null,
+        image_url: newBrand.image_url.trim() || null,
+        is_active: newBrand.is_active,
+      });
 
-    setBrands([brandItem, ...brands]);
-    setIsAddModalOpen(false);
-    setNewBrand({
-      name: '',
-      code: '',
-      establishedYear: new Date().getFullYear(),
-      status: 'ACTIVE',
-    });
-    showToast(`Brand "${brandItem.name}" created successfully.`);
+      setIsAddModalOpen(false);
+      setNewBrand({
+        brand_name: '',
+        slug: '',
+        description: '',
+        image_url: '',
+        is_active: true,
+      });
+      showToast(`Brand "${created.brand_name}" created successfully.`);
+      await loadBrands();
+    } catch (err: any) {
+      showToast(err.message || 'Failed to create brand', 'error');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
-  // Handle Edit Save
-  const handleSaveEdit = (e: React.FormEvent) => {
+  // Handle Edit Save (PATCH only supported fields)
+  const handleSaveEdit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!editingBrand) return;
+    if (!editingBrand || isSubmitting) return;
 
-    setBrands((prev) =>
-      prev.map((b) => (b.id === editingBrand.id ? editingBrand : b))
-    );
-    showToast(`Brand "${editingBrand.name}" updated successfully.`);
-    setEditingBrand(null);
+    const brandId = editingBrand.brand_id ?? editingBrand.id;
+    if (!brandId) return;
+
+    setIsSubmitting(true);
+    try {
+      const updated = await updateAdminBrand(brandId, {
+        brand_name: editingBrand.brand_name.trim(),
+        slug: generateBrandSlug(editingBrand.slug || editingBrand.brand_name),
+        description: editingBrand.description?.trim() || null,
+        image_url: editingBrand.image_url?.trim() || null,
+        is_active: editingBrand.is_active !== false,
+      });
+      showToast(`Brand "${updated.brand_name}" updated successfully.`);
+      setEditingBrand(null);
+      await loadBrands();
+    } catch (err: any) {
+      showToast(err.message || 'Failed to update brand', 'error');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   // Handle Delete Confirm
-  const handleConfirmDelete = () => {
-    if (!brandToDelete) return;
-    setBrands((prev) => prev.filter((b) => b.id !== brandToDelete.id));
-    showToast(`Brand "${brandToDelete.name}" removed successfully.`);
-    setBrandToDelete(null);
+  const handleConfirmDelete = async () => {
+    if (!brandToDelete || isSubmitting) return;
+    const brandId = brandToDelete.brand_id ?? brandToDelete.id;
+    if (!brandId) return;
+
+    setIsSubmitting(true);
+    try {
+      await deleteAdminBrand(brandId);
+      showToast(`Brand "${brandToDelete.brand_name}" removed successfully.`);
+      setBrandToDelete(null);
+      await loadBrands();
+    } catch (err: any) {
+      showToast(err.message || 'Failed to delete brand', 'error');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
     <div className="space-y-4">
       {toastMessage && (
-        <div className="flex items-center justify-between rounded-lg border border-emerald-200 bg-[#E8F8EE] px-4 py-3 text-[13px] font-medium text-[#1E7F3D]">
+        <div
+          className={`flex items-center justify-between rounded-lg border px-4 py-3 text-[13px] font-medium ${
+            toastMessage.type === 'success'
+              ? 'border-emerald-200 bg-[#E8F8EE] text-[#1E7F3D]'
+              : 'border-rose-200 bg-rose-50 text-rose-700'
+          }`}
+        >
           <div className="flex items-center gap-2">
-            <CheckCircle2 size={16} />
-            <span>{toastMessage}</span>
+            {toastMessage.type === 'success' ? (
+              <CheckCircle2 size={16} />
+            ) : (
+              <AlertTriangle size={16} />
+            )}
+            <span>{toastMessage.text}</span>
           </div>
-          <button onClick={() => setToastMessage(null)} className="text-emerald-700 hover:text-emerald-900 cursor-pointer">
+          <button
+            onClick={() => setToastMessage(null)}
+            className="cursor-pointer opacity-75 hover:opacity-100"
+          >
             <X size={14} />
           </button>
         </div>
@@ -128,14 +187,25 @@ export default function BrandsPage() {
             </p>
           </div>
 
-          <button
-            type="button"
-            onClick={() => setIsAddModalOpen(true)}
-            className="inline-flex h-11 items-center gap-2 rounded-lg bg-[#F47C35] px-5 text-[13px] font-semibold text-white shadow-xs transition hover:bg-[#E96F29] cursor-pointer"
-          >
-            <Plus size={16} />
-            <span>Add New Brand</span>
-          </button>
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={loadBrands}
+              disabled={isLoading}
+              className="inline-flex h-11 items-center gap-2 rounded-lg border border-slate-300 bg-white px-3.5 text-[13px] font-semibold text-slate-700 hover:bg-slate-50 transition cursor-pointer disabled:opacity-50"
+            >
+              <RefreshCw size={14} className={isLoading ? 'animate-spin' : ''} />
+              <span>Refresh</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setIsAddModalOpen(true)}
+              className="inline-flex h-11 items-center gap-2 rounded-lg bg-[#F47C35] px-5 text-[13px] font-semibold text-white shadow-xs transition hover:bg-[#E96F29] cursor-pointer"
+            >
+              <Plus size={16} />
+              <span>Add New Brand</span>
+            </button>
+          </div>
         </div>
 
         <div className="mt-5 flex justify-end">
@@ -145,7 +215,7 @@ export default function BrandsPage() {
               type="search"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search brands by name or code..."
+              placeholder="Search brands by name or slug..."
               className="h-11 w-full rounded-lg border border-[#D6DCE5] pr-4 pl-10 text-[13px] outline-none transition focus:border-[#F47C35]"
             />
           </label>
@@ -156,71 +226,92 @@ export default function BrandsPage() {
             <table className="w-full min-w-[800px] border-collapse text-left">
               <thead className="bg-[#E4E4E4] text-[12px] font-medium text-[#292929]">
                 <tr className="h-[46px]">
-                  <th className="w-[120px] border-r border-white px-4 font-medium">Brand Code</th>
+                  <th className="w-[80px] border-r border-white px-4 font-medium">ID</th>
                   <th className="min-w-[200px] border-r border-white px-4 font-medium">Brand Name</th>
-                  <th className="w-[150px] border-r border-white px-4 font-medium">Active Products</th>
-                  <th className="w-[140px] border-r border-white px-4 font-medium">Est. Year</th>
+                  <th className="min-w-[160px] border-r border-white px-4 font-medium">Slug</th>
+                  <th className="min-w-[220px] border-r border-white px-4 font-medium">Description</th>
                   <th className="w-[120px] border-r border-white px-4 font-medium">Status</th>
                   <th className="w-[110px] px-4 font-medium text-center">Action</th>
                 </tr>
               </thead>
               <tbody className="text-[12px] text-[#505050]">
-                {filtered.length === 0 ? (
+                {isLoading ? (
+                  <tr>
+                    <td colSpan={6} className="py-10 text-center text-gray-500">
+                      <div className="inline-flex items-center gap-2">
+                        <Loader2 size={18} className="animate-spin text-[#F47C35]" />
+                        <span>Loading brands...</span>
+                      </div>
+                    </td>
+                  </tr>
+                ) : filtered.length === 0 ? (
                   <tr>
                     <td colSpan={6} className="py-8 text-center text-gray-500">
-                      No brands found matching your search.
+                      No brands found.
                     </td>
                   </tr>
                 ) : (
-                  filtered.map((b) => (
-                    <tr
-                      key={b.id}
-                      className="h-[52px] border-b border-[#ECECEC] last:border-b-0 hover:bg-[#FAFAFA] transition-colors"
-                    >
-                      <td className="px-4 font-mono font-medium text-slate-800">{b.code}</td>
-                      <td className="px-4 font-medium text-slate-900">
-                        <div className="flex items-center gap-2">
-                          <Award size={16} className="text-[#F47C35] shrink-0" />
-                          <span>{b.name}</span>
-                        </div>
-                      </td>
-                      <td className="px-4 font-semibold text-slate-900">{b.productCount} items listed</td>
-                      <td className="px-4 text-[#606060]">{b.establishedYear}</td>
-                      <td className="px-4">
-                        <span
-                          className={`inline-block px-2.5 py-0.5 rounded text-[10px] font-semibold border ${
-                            b.status === 'ACTIVE'
-                              ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                              : 'bg-gray-100 text-gray-600 border-gray-200'
-                          }`}
-                        >
-                          {b.status}
-                        </span>
-                      </td>
-                      <td className="px-4 text-center">
-                        <div className="inline-flex items-center justify-center gap-1.5">
-                          <button
-                            type="button"
-                            onClick={() => setEditingBrand({ ...b })}
-                            title="Edit brand"
-                            aria-label={`Edit ${b.name}`}
-                            className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-gray-200 bg-white text-blue-600 hover:bg-blue-50 hover:border-blue-300 transition cursor-pointer"
+                  filtered.map((b) => {
+                    const id = b.brand_id ?? b.id;
+                    const isActive = b.is_active !== false;
+                    return (
+                      <tr
+                        key={String(id)}
+                        className="h-[52px] border-b border-[#ECECEC] last:border-b-0 hover:bg-[#FAFAFA] transition-colors"
+                      >
+                        <td className="px-4 font-mono font-medium text-slate-800">#{id}</td>
+                        <td className="px-4 font-medium text-slate-900">
+                          <div className="flex items-center gap-2">
+                            {b.image_url ? (
+                              <img
+                                src={b.image_url}
+                                alt={b.brand_name}
+                                className="h-6 w-6 rounded object-contain border border-gray-200"
+                              />
+                            ) : (
+                              <Award size={16} className="text-[#F47C35] shrink-0" />
+                            )}
+                            <span>{b.brand_name}</span>
+                          </div>
+                        </td>
+                        <td className="px-4 font-mono text-slate-600">{b.slug}</td>
+                        <td className="px-4 text-[#606060] truncate max-w-[260px]">
+                          {b.description || '—'}
+                        </td>
+                        <td className="px-4">
+                          <span
+                            className={`inline-block px-2.5 py-0.5 rounded text-[10px] font-semibold border ${
+                              isActive
+                                ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                : 'bg-gray-100 text-gray-600 border-gray-200'
+                            }`}
                           >
-                            <Edit2 size={14} />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setBrandToDelete(b)}
-                            title="Delete brand"
-                            aria-label={`Delete ${b.name}`}
-                            className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-gray-200 bg-white text-rose-600 hover:bg-rose-50 hover:border-rose-300 transition cursor-pointer"
-                          >
-                            <Trash2 size={14} />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))
+                            {isActive ? 'ACTIVE' : 'INACTIVE'}
+                          </span>
+                        </td>
+                        <td className="px-4 text-center">
+                          <div className="inline-flex items-center justify-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => setEditingBrand({ ...b })}
+                              title="Edit brand"
+                              className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-gray-200 bg-white text-blue-600 hover:bg-blue-50 hover:border-blue-300 transition cursor-pointer"
+                            >
+                              <Edit2 size={14} />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setBrandToDelete(b)}
+                              title="Delete brand"
+                              className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-gray-200 bg-white text-rose-600 hover:bg-rose-50 hover:border-rose-300 transition cursor-pointer"
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })
                 )}
               </tbody>
             </table>
@@ -248,49 +339,68 @@ export default function BrandsPage() {
 
             <div className="mt-4 space-y-4 text-[13px]">
               <div>
-                <label className="block font-medium text-gray-700">Brand Name</label>
+                <label className="block font-medium text-gray-700">Brand Name *</label>
                 <input
                   type="text"
                   required
-                  placeholder="e.g. Philips Healthcare"
-                  value={newBrand.name}
-                  onChange={(e) => setNewBrand({ ...newBrand, name: e.target.value })}
+                  placeholder="e.g. Joylife"
+                  value={newBrand.brand_name}
+                  onChange={(e) =>
+                    setNewBrand({
+                      ...newBrand,
+                      brand_name: e.target.value,
+                      slug: generateBrandSlug(e.target.value),
+                    })
+                  }
                   className="mt-1 h-10 w-full rounded-lg border border-[#D6DCE5] px-3 text-[13px] outline-none focus:border-[#F47C35]"
                 />
               </div>
 
               <div>
-                <label className="block font-medium text-gray-700">Brand Code</label>
+                <label className="block font-medium text-gray-700">Slug *</label>
                 <input
                   type="text"
                   required
-                  placeholder="e.g. BRD-008"
-                  value={newBrand.code}
-                  onChange={(e) => setNewBrand({ ...newBrand, code: e.target.value })}
+                  placeholder="e.g. joylife"
+                  value={newBrand.slug}
+                  onChange={(e) => setNewBrand({ ...newBrand, slug: e.target.value })}
                   className="mt-1 h-10 w-full rounded-lg border border-[#D6DCE5] px-3 text-[13px] outline-none focus:border-[#F47C35]"
                 />
               </div>
 
               <div>
-                <label className="block font-medium text-gray-700">Established Year</label>
+                <label className="block font-medium text-gray-700">Logo Image URL</label>
                 <input
-                  type="number"
-                  required
-                  value={newBrand.establishedYear}
-                  onChange={(e) => setNewBrand({ ...newBrand, establishedYear: Number(e.target.value) })}
+                  type="url"
+                  placeholder="https://cdn.example.com/joylife.png"
+                  value={newBrand.image_url}
+                  onChange={(e) => setNewBrand({ ...newBrand, image_url: e.target.value })}
                   className="mt-1 h-10 w-full rounded-lg border border-[#D6DCE5] px-3 text-[13px] outline-none focus:border-[#F47C35]"
+                />
+              </div>
+
+              <div>
+                <label className="block font-medium text-gray-700">Description</label>
+                <textarea
+                  rows={2}
+                  placeholder="Optional brand description..."
+                  value={newBrand.description}
+                  onChange={(e) => setNewBrand({ ...newBrand, description: e.target.value })}
+                  className="mt-1 w-full rounded-lg border border-[#D6DCE5] p-3 text-[13px] outline-none focus:border-[#F47C35]"
                 />
               </div>
 
               <div>
                 <label className="block font-medium text-gray-700">Status</label>
                 <select
-                  value={newBrand.status}
-                  onChange={(e) => setNewBrand({ ...newBrand, status: e.target.value as 'ACTIVE' | 'INACTIVE' })}
+                  value={newBrand.is_active ? 'true' : 'false'}
+                  onChange={(e) =>
+                    setNewBrand({ ...newBrand, is_active: e.target.value === 'true' })
+                  }
                   className="mt-1 h-10 w-full rounded-lg border border-[#D6DCE5] px-3 text-[13px] outline-none focus:border-[#F47C35]"
                 >
-                  <option value="ACTIVE">ACTIVE</option>
-                  <option value="INACTIVE">INACTIVE</option>
+                  <option value="true">ACTIVE</option>
+                  <option value="false">INACTIVE</option>
                 </select>
               </div>
             </div>
@@ -305,9 +415,10 @@ export default function BrandsPage() {
               </button>
               <button
                 type="submit"
-                className="h-10 rounded-lg bg-[#F47C35] px-5 text-[13px] font-semibold text-white hover:bg-[#E96F29] cursor-pointer"
+                disabled={isSubmitting}
+                className="h-10 rounded-lg bg-[#F47C35] px-5 text-[13px] font-semibold text-white hover:bg-[#E96F29] cursor-pointer disabled:opacity-50"
               >
-                Create Brand
+                {isSubmitting ? 'Creating...' : 'Create Brand'}
               </button>
             </div>
           </form>
@@ -324,7 +435,9 @@ export default function BrandsPage() {
             <div className="flex items-center justify-between border-b border-gray-100 pb-4">
               <div>
                 <h3 className="text-[16px] font-bold text-gray-900">Edit Brand</h3>
-                <span className="text-[12px] text-gray-500">{editingBrand.code}</span>
+                <span className="text-[12px] text-gray-500">
+                  #{editingBrand.brand_id ?? editingBrand.id}
+                </span>
               </div>
               <button
                 type="button"
@@ -337,47 +450,67 @@ export default function BrandsPage() {
 
             <div className="mt-4 space-y-4 text-[13px]">
               <div>
-                <label className="block font-medium text-gray-700">Brand Name</label>
+                <label className="block font-medium text-gray-700">Brand Name *</label>
                 <input
                   type="text"
                   required
-                  value={editingBrand.name}
-                  onChange={(e) => setEditingBrand({ ...editingBrand, name: e.target.value })}
+                  value={editingBrand.brand_name}
+                  onChange={(e) =>
+                    setEditingBrand({ ...editingBrand, brand_name: e.target.value })
+                  }
                   className="mt-1 h-10 w-full rounded-lg border border-[#D6DCE5] px-3 text-[13px] outline-none focus:border-[#F47C35]"
                 />
               </div>
 
               <div>
-                <label className="block font-medium text-gray-700">Brand Code</label>
+                <label className="block font-medium text-gray-700">Slug *</label>
                 <input
                   type="text"
                   required
-                  value={editingBrand.code}
-                  onChange={(e) => setEditingBrand({ ...editingBrand, code: e.target.value.toUpperCase() })}
+                  value={editingBrand.slug}
+                  onChange={(e) => setEditingBrand({ ...editingBrand, slug: e.target.value })}
                   className="mt-1 h-10 w-full rounded-lg border border-[#D6DCE5] px-3 text-[13px] outline-none focus:border-[#F47C35]"
                 />
               </div>
 
               <div>
-                <label className="block font-medium text-gray-700">Established Year</label>
+                <label className="block font-medium text-gray-700">Logo Image URL</label>
                 <input
-                  type="number"
-                  required
-                  value={editingBrand.establishedYear}
-                  onChange={(e) => setEditingBrand({ ...editingBrand, establishedYear: Number(e.target.value) })}
+                  type="url"
+                  value={editingBrand.image_url || ''}
+                  onChange={(e) =>
+                    setEditingBrand({ ...editingBrand, image_url: e.target.value })
+                  }
                   className="mt-1 h-10 w-full rounded-lg border border-[#D6DCE5] px-3 text-[13px] outline-none focus:border-[#F47C35]"
+                />
+              </div>
+
+              <div>
+                <label className="block font-medium text-gray-700">Description</label>
+                <textarea
+                  rows={2}
+                  value={editingBrand.description || ''}
+                  onChange={(e) =>
+                    setEditingBrand({ ...editingBrand, description: e.target.value })
+                  }
+                  className="mt-1 w-full rounded-lg border border-[#D6DCE5] p-3 text-[13px] outline-none focus:border-[#F47C35]"
                 />
               </div>
 
               <div>
                 <label className="block font-medium text-gray-700">Status</label>
                 <select
-                  value={editingBrand.status}
-                  onChange={(e) => setEditingBrand({ ...editingBrand, status: e.target.value as 'ACTIVE' | 'INACTIVE' })}
+                  value={editingBrand.is_active !== false ? 'true' : 'false'}
+                  onChange={(e) =>
+                    setEditingBrand({
+                      ...editingBrand,
+                      is_active: e.target.value === 'true',
+                    })
+                  }
                   className="mt-1 h-10 w-full rounded-lg border border-[#D6DCE5] px-3 text-[13px] outline-none focus:border-[#F47C35]"
                 >
-                  <option value="ACTIVE">ACTIVE</option>
-                  <option value="INACTIVE">INACTIVE</option>
+                  <option value="true">ACTIVE</option>
+                  <option value="false">INACTIVE</option>
                 </select>
               </div>
             </div>
@@ -392,9 +525,10 @@ export default function BrandsPage() {
               </button>
               <button
                 type="submit"
-                className="h-10 rounded-lg bg-[#F47C35] px-5 text-[13px] font-semibold text-white hover:bg-[#E96F29] cursor-pointer"
+                disabled={isSubmitting}
+                className="h-10 rounded-lg bg-[#F47C35] px-5 text-[13px] font-semibold text-white hover:bg-[#E96F29] cursor-pointer disabled:opacity-50"
               >
-                Save Changes
+                {isSubmitting ? 'Saving...' : 'Save Changes'}
               </button>
             </div>
           </form>
@@ -411,8 +545,8 @@ export default function BrandsPage() {
 
             <h3 className="mt-4 text-[16px] font-bold text-gray-900">Delete Brand?</h3>
             <p className="mt-2 text-[13px] text-gray-600">
-              Are you sure you want to delete <strong className="text-gray-900">{brandToDelete.name}</strong> ({brandToDelete.code})?
-              This will un-link {brandToDelete.productCount} products associated with this brand.
+              Are you sure you want to delete{' '}
+              <strong className="text-gray-900">{brandToDelete.brand_name}</strong>?
             </p>
 
             <div className="mt-6 flex items-center justify-end gap-2">
@@ -425,10 +559,11 @@ export default function BrandsPage() {
               </button>
               <button
                 type="button"
+                disabled={isSubmitting}
                 onClick={handleConfirmDelete}
-                className="h-10 rounded-lg bg-rose-600 px-4 text-[13px] font-semibold text-white hover:bg-rose-700 cursor-pointer"
+                className="h-10 rounded-lg bg-rose-600 px-4 text-[13px] font-semibold text-white hover:bg-rose-700 cursor-pointer disabled:opacity-50"
               >
-                Yes, Delete
+                {isSubmitting ? 'Deleting...' : 'Yes, Delete'}
               </button>
             </div>
           </div>

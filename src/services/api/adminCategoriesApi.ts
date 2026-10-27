@@ -11,6 +11,7 @@ export interface CategoryListParams {
   limit?: number;
   offset?: number;
   parent_category_id?: number;
+  roots_only?: boolean;
   is_active?: boolean;
   search?: string;
 }
@@ -69,8 +70,11 @@ export async function getAdminCategories(
   const queryParams: Record<string, string | number | boolean | undefined> = {};
   if (params?.limit !== undefined) queryParams.limit = params.limit;
   if (params?.offset !== undefined) queryParams.offset = params.offset;
+  // Do not combine roots_only=true with parent_category_id per API contract
   if (params?.parent_category_id !== undefined && params?.parent_category_id !== null) {
     queryParams.parent_category_id = params.parent_category_id;
+  } else if (params?.roots_only !== undefined) {
+    queryParams.roots_only = String(params.roots_only);
   }
   if (params?.is_active !== undefined) {
     queryParams.is_active = String(params.is_active);
@@ -87,6 +91,22 @@ export async function getAdminCategories(
     data: Array.isArray(res.data) ? res.data : [],
     pagination: res.pagination,
   };
+}
+
+export async function getAdminCategoriesTree(params?: {
+  is_active?: boolean;
+}): Promise<BackendCategory[]> {
+  const queryParams: Record<string, string | undefined> = {};
+  if (params?.is_active !== undefined) {
+    queryParams.is_active = String(params.is_active);
+  }
+  const res = await apiFetch<ApiResponse<BackendCategory[]>>(
+    '/api/admin/categories/tree',
+    {
+      params: Object.keys(queryParams).length > 0 ? queryParams : undefined,
+    }
+  );
+  return Array.isArray(res.data) ? res.data : [];
 }
 
 

@@ -168,9 +168,10 @@ export default function ProductManagementPage() {
       const imgs = await getAdminProductImages(p.id);
       setGalleryImages(imgs);
       if (imgs.length > 0) {
-        setSelectedPreviewImage(imgs[0].image_url);
+        const primaryUrl = imgs.find((i) => i.is_primary)?.image_url || imgs[0].image_url;
+        setSelectedPreviewImage(primaryUrl);
         setProducts((prev) =>
-          prev.map((item) => (item.id === p.id ? { ...item, image: imgs[0].image_url } : item))
+          prev.map((item) => (item.id === p.id ? { ...item, image: primaryUrl } : item))
         );
       }
     } catch (err: any) {
@@ -377,39 +378,43 @@ export default function ProductManagementPage() {
               ? ('draft' as const)
               : undefined,
         };
-        const filterKey = JSON.stringify(baseParams);
-
-        // Total for the current filter (one tiny request, cached until filters change / refresh).
-        let total: number;
-        if (!forceRecount && totalCacheRef.current?.key === filterKey) {
-          total = totalCacheRef.current.total;
-        } else {
-          const countRes = await getAdminProducts({ ...baseParams, limit: 1, offset: 0 });
-          total = countRes.pagination?.total ?? countRes.data.length;
-          totalCacheRef.current = { key: filterKey, total };
-        }
-        if (requestId !== requestIdRef.current) return;
-
-        // Window counted from the newest end.
-        const end = Math.max(total - currentPage * pageSize, 0);
-        const start = Math.max(end - pageSize, 0);
-        const limit = end - start;
-
-        let items: BackendProduct[] = [];
-        if (limit > 0) {
-          const res = await getAdminProducts({ ...baseParams, limit, offset: start });
-          items = Array.isArray(res.data) ? res.data : [];
-        }
+        const res = await getAdminProducts({
+          ...baseParams,
+          limit: pageSize,
+          offset: currentPage * pageSize,
+        });
         if (requestId !== requestIdRef.current) return; // stale response
 
-        // Newest first within the page.
-        items.sort((a, b) => Number(b.product_id ?? b.id ?? 0) - Number(a.product_id ?? a.id ?? 0));
+        const items = Array.isArray(res.data) ? res.data : [];
+        const total = res.pagination?.total ?? items.length;
 
-        setProducts(
-          items.map((bp, idx) => mapBackendProductToRecord(bp, idx, categoriesRef.current))
+        const initialMapped = items.map((bp, idx) =>
+          mapBackendProductToRecord(bp, idx, categoriesRef.current)
         );
+        setProducts(initialMapped);
         setTotalCount(total);
         setIsLive(true);
+
+        // Populate S3 thumbnails for the visible page items
+        void Promise.all(
+          items.map(async (bp) => {
+            const pId = bp.product_id ?? bp.id;
+            if (!pId || (Array.isArray(bp.images) && bp.images.length > 0)) return;
+            try {
+              const imgs = await getAdminProductImages(pId);
+              const primaryImg = imgs.find((i) => i.is_primary)?.image_url || imgs[0]?.image_url;
+              if (primaryImg && requestId === requestIdRef.current) {
+                setProducts((prev) =>
+                  prev.map((row) =>
+                    row.id === String(pId) ? { ...row, image: primaryImg } : row
+                  )
+                );
+              }
+            } catch {
+              // ignore individual image fetch error
+            }
+          })
+        );
       } catch (err: any) {
         if (requestId !== requestIdRef.current) return;
         console.warn('Backend products error:', err.message);
@@ -459,13 +464,7 @@ export default function ProductManagementPage() {
           ? String(primaryCat.category_id ?? primaryCat.id ?? '')
           : product.categoryId || '';
 
-        let imgUrl = resolvePrimaryProductImage(details) || product.image;
-        try {
-          const apiImgs = await getAdminProductImages(product.id);
-          if (apiImgs.length > 0) {
-            imgUrl = apiImgs[0].image_url;
-          }
-        } catch {}
+        const imgUrl = resolvePrimaryProductImage(details) || product.image;
 
         setEditingProduct({
           id: String(details.product_id ?? details.id ?? product.id),
@@ -707,6 +706,32 @@ export default function ProductManagementPage() {
             />
           </div>
         )}
+
+        {/* Company / Brand Filter */}
+        <div className="relative">
+          <select
+            value={selectedBrand}
+            onChange={(e) => {
+              setSelectedBrand(e.target.value);
+              setCurrentPage(0);
+            }}
+            className="h-11 appearance-none rounded-lg border border-[#D6DCE5] bg-white pr-8 pl-3 text-[13px] font-normal text-[#505050] outline-none cursor-pointer focus:border-[#F47C35]"
+          >
+            <option value="">Company: All Companies</option>
+            {Object.values(BRAND_LOOKUP)
+              .slice()
+              .sort((a, b) => a.localeCompare(b))
+              .map((companyName) => (
+                <option key={companyName} value={companyName}>
+                  {companyName}
+                </option>
+              ))}
+          </select>
+          <ChevronDown
+            size={14}
+            className="pointer-events-none absolute top-1/2 right-3 -translate-y-1/2 text-[#9AA7BA]"
+          />
+        </div>
 
         {/* Status Filter */}
         <div className="relative">

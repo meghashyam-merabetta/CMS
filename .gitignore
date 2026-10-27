@@ -34,3 +34,6 @@ next-env.d.ts
 # AI tooling files
 AGENTS.md
 CLAUDE.md
+
+# Local DB schema notes (do not push)
+DB_SCHEMA_NOTES.md

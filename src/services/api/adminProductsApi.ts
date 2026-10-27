@@ -48,144 +48,24 @@ export function generateProductSlug(input: string): string {
 }
 
 /**
- * Normalizes an image candidate string into a valid, loadable URL.
- */
-function normalizeImageUrl(val?: any): string | null {
-  if (typeof val !== 'string') return null;
-  const trimmed = val.trim();
-  if (!trimmed) return null;
-
-  // Already an absolute URL with HTTPS or data/blob URI
-  if (
-    trimmed.startsWith('https://') ||
-    trimmed.startsWith('blob:') ||
-    trimmed.startsWith('data:')
-  ) {
-    return trimmed;
-  }
-
-  // Handle http:// URLs
-  if (trimmed.startsWith('http://')) {
-    // If it points to an S3 bucket or merabetta domain, upgrade to https
-    if (trimmed.includes('amazonaws.com') || trimmed.includes('merabetta.com')) {
-      return trimmed.replace(/^http:\/\//i, 'https://');
-    }
-    // If it points to backend host or localhost with a path, extract relative path
-    const match = trimmed.match(/^http:\/\/[^/]+(\/.*)$/);
-    if (match && match[1]) {
-      return match[1];
-    }
-    return trimmed;
-  }
-
-  // If it starts with a leading slash, it is a valid relative path
-  if (trimmed.startsWith('/')) {
-    return trimmed;
-  }
-
-  // If it looks like a relative path with an image extension, prepend leading slash
-  if (/\.(png|jpe?g|webp|gif|svg|avif)($|\?)/i.test(trimmed)) {
-    return `/${trimmed}`;
-  }
-
-  return null;
-}
-
-/**
- * Extracts all valid signed/public image URLs from a BackendProduct record.
- * Handles Sequelize associations (product_images, ProductImages), Multer-S3 (location, key),
- * and various nested or direct field naming schemes.
+ * Extracts image URLs directly from the backend product's `images` array (`res.data.images`).
  */
 export function resolveProductImageUrls(bp?: BackendProduct | any): string[] {
   if (!bp || typeof bp !== 'object') return [];
-  const urls: string[] = [];
+  const imgs = Array.isArray(bp.images) ? bp.images : [];
+  const sorted = [...imgs].sort((a, b) => (b?.is_primary ? 1 : 0) - (a?.is_primary ? 1 : 0));
+  const urls = sorted
+    .map((item: any) => (typeof item === 'string' ? item : item?.image_url))
+    .filter((u: any): u is string => typeof u === 'string' && u.trim().length > 0);
 
-  const addCandidate = (val?: any) => {
-    const url = normalizeImageUrl(val);
-    if (url && !urls.includes(url)) {
-      urls.push(url);
-    }
-  };
-
-  const processItem = (item?: any) => {
-    if (!item) return;
-    if (typeof item === 'string') {
-      addCandidate(item);
-      return;
-    }
-    if (typeof item === 'object') {
-      // Check Multer-S3 standard properties and all common backend fields
-      addCandidate(item.location);
-      addCandidate(item.image_url);
-      addCandidate(item.imageUrl);
-      addCandidate(item.url);
-      addCandidate(item.image);
-      addCandidate(item.image_name);
-      addCandidate(item.imageName);
-      addCandidate(item.file_path);
-      addCandidate(item.filePath);
-      addCandidate(item.path);
-      addCandidate(item.signed_url);
-      addCandidate(item.signedUrl);
-      addCandidate(item.s3_url);
-      addCandidate(item.s3Url);
-      addCandidate(item.src);
-      addCandidate(item.key);
-    }
-  };
-
-  // 1. Check array properties on bp
-  const imageCollections = [
-    bp.images,
-    bp.product_images,
-    bp.ProductImages,
-    bp.productImages,
-    bp.ProductImage,
-    bp.media,
-    bp.photos,
-    bp.pictures,
-    bp.gallery,
-  ];
-
-  for (const collection of imageCollections) {
-    if (Array.isArray(collection)) {
-      for (const item of collection) {
-        processItem(item);
-      }
-    } else if (collection && typeof collection === 'object') {
-      processItem(collection);
-    }
+  if (urls.length === 0 && typeof bp.image_url === 'string' && bp.image_url.trim()) {
+    return [bp.image_url.trim()];
   }
-
-  // 2. Check direct image properties on bp
-  const directFields = [
-    bp.image,
-    bp.image_url,
-    bp.imageUrl,
-    bp.product_image,
-    bp.productImage,
-    bp.product_image_url,
-    bp.productImageUrl,
-    bp.primary_image,
-    bp.primaryImage,
-    bp.thumbnail,
-    bp.thumbnail_url,
-    bp.thumbnailUrl,
-    bp.location,
-    bp.image_name,
-    bp.imageName,
-    bp.image_path,
-  ];
-
-  for (const field of directFields) {
-    processItem(field);
-  }
-
   return urls;
 }
 
 /**
- * Extracts the primary thumbnail URL for a product.
+ * Extracts the primary thumbnail URL for a product directly from `bp.images`.
  */
 export function resolvePrimaryProductImage(
   bp?: BackendProduct | any
@@ -292,7 +172,7 @@ export async function createAdminProduct(
   const newProdId = created?.product_id ?? created?.id;
 
   // 2. Upload images to POST /api/admin/products/:productId/images if any images were provided
-  const files = (payload.images ?? []).slice(0, MAX_PRODUCT_IMAGES);
+  const files = payload.images ?? [];
   if (files.length > 0 && newProdId) {
     try {
       await uploadAdminProductImages(newProdId, files);
@@ -325,13 +205,22 @@ export interface BackendProductImageRecord {
 }
 
 /**
- * Fetches all images for a specific product via GET /api/admin/products/:productId/images.
+ * Fetches all images for a specific product.
+ * Supports both `GET /api/admin/products/:productId` (`res.data.images`)
+ * and `GET /api/admin/products/:productId/images` (`res.data`).
  */
 export async function getAdminProductImages(
   productId: number | string
 ): Promise<BackendProductImageRecord[]> {
-  const res = await apiFetch<any>(`/api/admin/products/${productId}/images`);
-  return Array.isArray(res?.data) ? res.data : Array.isArray(res) ? res : [];
+  try {
+    const res = await apiFetch<any>(`/api/admin/products/${productId}`);
+    const prod = res?.data ?? res;
+    if (Array.isArray(prod?.images)) return prod.images;
+  } catch {
+    // fallback to /images endpoint
+  }
+  const imgRes = await apiFetch<any>(`/api/admin/products/${productId}/images`);
+  return Array.isArray(imgRes?.data) ? imgRes.data : Array.isArray(imgRes) ? imgRes : [];
 }
 
 /**
@@ -368,11 +257,10 @@ export async function uploadAdminProductImages(
   productId: number | string,
   images: File[]
 ): Promise<any> {
-  const files = images.slice(0, MAX_PRODUCT_IMAGES);
-  if (files.length === 0) return null;
+  if (!images.length) return null;
 
   const formData = new FormData();
-  for (const file of files) {
+  for (const file of images) {
     formData.append(PRODUCT_IMAGE_FIELD_NAME, file);
   }
 
@@ -444,7 +332,7 @@ export async function updateAdminProduct(
   const updated: BackendProduct = res?.data ?? res;
 
   // 2. Upload any new images via POST /api/admin/products/:productId/images
-  const files = (payload.images ?? []).slice(0, MAX_PRODUCT_IMAGES);
+  const files = payload.images ?? [];
   if (files.length > 0) {
     try {
       await uploadAdminProductImages(productId, files);

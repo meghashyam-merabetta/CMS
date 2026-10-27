@@ -1,60 +1,28 @@
 const RAW_BASE_URL = (
-  process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000'
+  process.env.NEXT_PUBLIC_API_URL || 'http://16.4.61.3:3000'
 ).trim().replace(/\/+$/, '');
 
 // Ensure no duplicate /api segment if user includes /api in NEXT_PUBLIC_API_URL
 const BASE_URL = RAW_BASE_URL.replace(/\/api$/, '');
 
-const STORAGE_AUTH_KEY = 'admin_auth';
-const STORAGE_TOKEN_KEY = 'token';
-
-
-export function getAdminAuth(): string | null {
-  if (typeof window !== 'undefined') {
-    return (
-      localStorage.getItem(STORAGE_AUTH_KEY) ||
-      localStorage.getItem(STORAGE_TOKEN_KEY) ||
-      sessionStorage.getItem(STORAGE_AUTH_KEY) ||
-      sessionStorage.getItem(STORAGE_TOKEN_KEY) ||
-      null
-    );
-  }
-  return null;
-}
-
-export function setAdminAuth(token: string) {
-  if (typeof window !== 'undefined' && token) {
-    const cleanToken = token.replace(/^Bearer\s+/i, '').trim();
-    localStorage.setItem(STORAGE_AUTH_KEY, cleanToken);
-    sessionStorage.setItem(STORAGE_AUTH_KEY, cleanToken);
-  }
-}
-
-export function clearAdminAuth() {
-  if (typeof window !== 'undefined') {
-    localStorage.removeItem(STORAGE_AUTH_KEY);
-    localStorage.removeItem(STORAGE_TOKEN_KEY);
-    sessionStorage.removeItem(STORAGE_AUTH_KEY);
-    sessionStorage.removeItem(STORAGE_TOKEN_KEY);
-  }
-}
-
 export interface RequestOptions extends RequestInit {
   params?: Record<string, string | number | boolean | undefined>;
-  timeoutMs?: number;
 }
-
 
 export async function apiFetch<T>(
   endpoint: string,
   options: RequestOptions = {}
 ): Promise<T> {
-  const { params, headers, timeoutMs = 8000, signal, ...rest } = options;
+  const { params, headers, ...rest } = options;
+
+  // In the browser, use same-origin relative path (/api/...) proxied via next.config.ts rewrites
+  // so SameSite=Lax HttpOnly cookies (admin_auth) work seamlessly with remote IP backends.
+  const baseUrl = typeof window !== 'undefined' ? '' : BASE_URL;
 
   let url =
     endpoint.startsWith('http://') || endpoint.startsWith('https://')
       ? endpoint
-      : `${BASE_URL}${endpoint}`;
+      : `${baseUrl}${endpoint}`;
   if (params) {
     const searchParams = new URLSearchParams();
     Object.entries(params).forEach(([key, value]) => {
@@ -71,8 +39,7 @@ export async function apiFetch<T>(
   const method = (rest.method || 'GET').toUpperCase();
   const isFormData = typeof FormData !== 'undefined' && rest.body instanceof FormData;
 
-  // Backend csrfGuard requires Content-Type: application/json on mutating operations.
-  // When fetch is called with no body, browsers strip Content-Type, triggering 415.
+  // Send {} for actions without fields (except FormData)
   if (
     !isFormData &&
     (method === 'POST' || method === 'PUT' || method === 'PATCH' || method === 'DELETE') &&
@@ -81,6 +48,7 @@ export async function apiFetch<T>(
     rest.body = JSON.stringify({});
   }
 
+  // Do not set Content-Type manually for FormData; let browser set multipart boundary
   const requestHeaders: Record<string, string> = isFormData
     ? { ...((headers as Record<string, string>) || {}) }
     : {
@@ -88,85 +56,24 @@ export async function apiFetch<T>(
         ...((headers as Record<string, string>) || {}),
       };
 
-  const token = getAdminAuth();
-  if (token) {
-    if (!requestHeaders['Authorization'] && !requestHeaders['authorization']) {
-      requestHeaders['Authorization'] = `Bearer ${token}`;
-    }
-    if (!requestHeaders['admin_auth']) {
-      requestHeaders['admin_auth'] = token;
-    }
-  }
-
-  const controller = new AbortController();
-  const timer = setTimeout(() => {
-    controller.abort();
-  }, timeoutMs);
-
-  let res: Response;
-  try {
-    res = await fetch(url, {
-      ...rest,
-      signal: signal || controller.signal,
-      credentials: 'include',
-      headers: requestHeaders,
-    });
-  } catch (err: any) {
-    if (err?.name === 'AbortError' || controller.signal.aborted) {
-      throw new Error(
-        `Backend connection error: Request to ${BASE_URL} timed out after ${timeoutMs / 1000}s. Please ensure the backend server is running.`
-      );
-    }
-    const isNetworkError =
-      !err?.message ||
-      err.message === 'Failed to fetch' ||
-      err.message.includes('NetworkError') ||
-      err.message.includes('load failed') ||
-      err.name === 'TypeError';
-
-    if (isNetworkError) {
-      throw new Error(
-        `Backend connection error: Could not connect to backend server at ${BASE_URL}. Please ensure the backend is running.`
-      );
-    }
-    throw new Error(err?.message || 'Failed to connect to backend server');
-  } finally {
-    clearTimeout(timer);
-  }
+  const res = await fetch(url, {
+    ...rest,
+    credentials: 'include',
+    headers: requestHeaders,
+  });
 
   if (!res.ok) {
-    let errorMessage = `Server error ${res.status}: ${res.statusText || 'Request failed'}`.trim();
+    let errorMessage = 'Request failed';
     try {
       const errorData = await res.json();
-      if (typeof errorData === 'string') {
-        errorMessage = errorData;
-      } else if (errorData.error) {
-        errorMessage = typeof errorData.error === 'string' ? errorData.error : JSON.stringify(errorData.error);
-        if (errorData.details && Array.isArray(errorData.details)) {
-          const detailMsgs = errorData.details
-            .map((d: any) => (d.message ? `${d.path ? d.path + ': ' : ''}${d.message}` : JSON.stringify(d)))
-            .join(', ');
-          errorMessage += ` (${detailMsgs})`;
-        }
-      } else if (errorData.message) {
-        errorMessage = typeof errorData.message === 'string' ? errorData.message : JSON.stringify(errorData.message);
-      } else if (errorData.msg) {
-        errorMessage = String(errorData.msg);
-      }
+      errorMessage = errorData?.error || errorData?.message || errorMessage;
     } catch {
-      try {
-        const text = await res.text();
-        if (text && text.length < 300) {
-          errorMessage = text;
-        }
-      } catch {
-        // ignore
-      }
+      // fallback to default message if response has no JSON
     }
     throw new Error(errorMessage);
   }
 
-  // Handle 204 No Content
+  // Successful DELETE and logout responses are 204 with no JSON body
   if (res.status === 204) {
     return {} as T;
   }
@@ -178,4 +85,6 @@ export * from '@/services/api/adminAuthApi';
 export * from '@/services/api/adminManagementApi';
 export * from '@/services/api/adminProductsApi';
 export * from '@/services/api/adminCategoriesApi';
+export * from '@/services/api/adminBrandsApi';
+export * from '@/services/api/adminVariantAttributesApi';
 export * from '@/services/api/adminUsersApi';
