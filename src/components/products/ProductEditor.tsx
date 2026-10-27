@@ -543,17 +543,24 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
             }))
           );
         }
-        const sizeDefs = Array.isArray(liveAttrDefs)
-          ? liveAttrDefs.filter((a) => a.name.toLowerCase() === 'size')
+        const IGNORED_VARIANT_KEYS = new Set([
+          'hsn',
+          'hsn_code',
+          'gst_percent',
+          'gst_rate',
+          'source_attributes',
+        ]);
+        const validAttrDefs = Array.isArray(liveAttrDefs)
+          ? liveAttrDefs.filter((a) => !IGNORED_VARIANT_KEYS.has((a.name || '').toLowerCase()))
           : [];
-        if (sizeDefs.length > 0) {
+        if (validAttrDefs.length > 0) {
           setVariantTypesList(
-            sizeDefs.map((attr) => {
+            validAttrDefs.map((attr) => {
               const attrId = String(attr.id);
               const vals = Array.isArray(attr.values) ? attr.values : [];
               return {
                 id: attrId,
-                name: 'Size',
+                name: attr.name,
                 terms: vals.map((val, i) => ({
                   id: `${attrId}-opt-${i}`,
                   name: val,
@@ -782,29 +789,84 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
 
           if (prodVariants.length > 0) {
             setInitialVariantIds(prodVariants.map((v) => v.id));
+            const IGNORED_VARIANT_KEYS = new Set([
+              'hsn',
+              'hsn_code',
+              'gst_percent',
+              'gst_rate',
+              'source_attributes',
+            ]);
             const liveAttrs = await getAllAdminVariantAttributes().catch(() => []);
-            const sizeAttrDef = liveAttrs.find((a) => a.name.toLowerCase() === 'size');
-            const sizeVtId = sizeAttrDef ? String(sizeAttrDef.id) : 'size';
-            const baseSizeTerms = Array.isArray(sizeAttrDef?.values)
-              ? [...sizeAttrDef!.values]
-              : ['S', 'M', 'L', 'XL', 'XXL'];
+            const discoveredTypes = new Map<string, VariantType>();
+
+            liveAttrs
+              .filter((a) => !IGNORED_VARIANT_KEYS.has((a.name || '').toLowerCase()))
+              .forEach((attr) => {
+                const attrId = String(attr.id);
+                const vals = Array.isArray(attr.values) ? attr.values : [];
+                discoveredTypes.set(attr.name.toLowerCase(), {
+                  id: attrId,
+                  name: attr.name,
+                  terms: vals.map((val, i) => ({
+                    id: `${attrId}-opt-${i}`,
+                    name: val,
+                  })),
+                });
+              });
+
+            if (!discoveredTypes.has('size')) {
+              discoveredTypes.set('size', {
+                id: 'size',
+                name: 'Size',
+                terms: ['S', 'M', 'L', 'XL', 'XXL'].map((val, i) => ({
+                  id: `size-opt-${i}`,
+                  name: val,
+                })),
+              });
+            }
 
             const loadedTerms: Term[] = [];
+            const usedVtIds = new Set<string>();
 
             prodVariants.forEach((v, idx) => {
               const attrsObj = v.attributes || {};
-              const explicitSize =
-                attrsObj.Size ||
-                attrsObj.size ||
-                attrsObj.SIZE ||
-                (v.variant_name ? v.variant_name.replace(/\s*\(Pack of \d+\)/i, '').trim() : '') ||
-                (v.display_name ? v.display_name.replace(/\s*\(Pack of \d+\)/i, '').trim() : '') ||
-                `Size ${idx + 1}`;
-              const sizeVal = String(explicitSize).trim();
+              const validEntries = Object.entries(attrsObj).filter(
+                ([k]) => !IGNORED_VARIANT_KEYS.has(k.toLowerCase())
+              );
 
-              if (!baseSizeTerms.some((s) => s.toLowerCase() === sizeVal.toLowerCase())) {
-                baseSizeTerms.push(sizeVal);
+              let attrName = 'Size';
+              let attrVal = '';
+              if (validEntries.length > 0) {
+                attrName = String(validEntries[0][0] || 'Size').trim();
+                attrVal = String(validEntries[0][1] || '').trim();
               }
+              if (!attrVal) {
+                attrVal =
+                  (v.variant_name ? v.variant_name.replace(/\s*\(Pack of \d+\)/i, '').trim() : '') ||
+                  (v.display_name ? v.display_name.replace(/\s*\(Pack of \d+\)/i, '').trim() : '') ||
+                  `Size ${idx + 1}`;
+              }
+
+              const lowerKey = attrName.toLowerCase();
+              let vtEntry = discoveredTypes.get(lowerKey);
+              if (!vtEntry) {
+                const fallbackId = `attr-${lowerKey.replace(/[^a-z0-9]+/g, '-')}`;
+                vtEntry = {
+                  id: fallbackId,
+                  name: attrName,
+                  terms: [],
+                };
+                discoveredTypes.set(lowerKey, vtEntry);
+              }
+
+              if (!vtEntry.terms.some((s) => s.name.toLowerCase() === attrVal.toLowerCase())) {
+                vtEntry.terms.push({
+                  id: `${vtEntry.id}-opt-${vtEntry.terms.length}`,
+                  name: attrVal,
+                });
+              }
+
+              usedVtIds.add(vtEntry.id);
 
               // Extract unit count if stored in variant_name like "M (Pack of 10)"
               const packMatch = (v.variant_name || '').match(/Pack of (\d+)/i);
@@ -818,9 +880,9 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                 key: `variant-${v.id}`,
                 termId: `variant-${v.id}`,
                 backendVariantId: v.id,
-                variantTypeId: sizeVtId,
-                variantTypeName: 'Size',
-                name: sizeVal,
+                variantTypeId: vtEntry.id,
+                variantTypeName: vtEntry.name,
+                name: attrVal,
                 sku: v.sku || '',
                 variantName: v.variant_name || '',
                 unitCount: extractedUnitCount,
@@ -838,18 +900,10 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
               });
             });
 
-            setVariantTypesList([
-              {
-                id: sizeVtId,
-                name: 'Size',
-                terms: baseSizeTerms.map((val, i) => ({
-                  id: `${sizeVtId}-opt-${i}`,
-                  name: val,
-                })),
-              },
-            ]);
-            setSelectedVariantTypeIds([sizeVtId]);
-            setActiveVariantTabId(sizeVtId);
+            setVariantTypesList(Array.from(discoveredTypes.values()));
+            const vtIdsArr = Array.from(usedVtIds);
+            setSelectedVariantTypeIds(vtIdsArr);
+            setActiveVariantTabId(vtIdsArr[0] || '');
             setTerms(loadedTerms);
             if (loadedTerms[0]) {
               setOpenTerm(loadedTerms[0].key);
