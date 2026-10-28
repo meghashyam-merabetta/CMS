@@ -9,13 +9,15 @@ const BASE_URL = RAW_BASE_URL.replace(/\/api$/, '');
 
 export interface RequestOptions extends RequestInit {
   params?: Record<string, string | number | boolean | undefined>;
+  responseType?: 'json' | 'blob' | 'text';
+  timeoutMs?: number;
 }
 
 export async function apiFetch<T>(
   endpoint: string,
   options: RequestOptions = {}
 ): Promise<T> {
-  const { params, headers, ...rest } = options;
+  const { params, headers, responseType, timeoutMs, ...rest } = options;
 
   // In the browser, use same-origin relative path (/api/...) proxied via next.config.ts rewrites
   // so SameSite=Lax HttpOnly cookies (admin_auth) work seamlessly with remote IP backends.
@@ -62,8 +64,14 @@ export async function apiFetch<T>(
     assertJsonRequestSize(rest.body);
   }
 
+  let signal = rest.signal;
+  if (!signal && timeoutMs && typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function') {
+    signal = AbortSignal.timeout(timeoutMs);
+  }
+
   const res = await fetch(url, {
     ...rest,
+    signal,
     credentials: 'include',
     headers: requestHeaders,
   });
@@ -81,6 +89,14 @@ export async function apiFetch<T>(
     throw new Error(errorMessage);
   }
 
+  if (responseType === 'blob') {
+    return (await res.blob()) as unknown as T;
+  }
+
+  if (responseType === 'text') {
+    return (await res.text()) as unknown as T;
+  }
+
   // Successful DELETE and logout responses are 204 with no JSON body
   if (res.status === 204) {
     return {} as T;
@@ -96,3 +112,4 @@ export * from '@/services/api/adminCategoriesApi';
 export * from '@/services/api/adminBrandsApi';
 export * from '@/services/api/adminVariantAttributesApi';
 export * from '@/services/api/adminUsersApi';
+export * from '@/services/api/adminOrderApi';
