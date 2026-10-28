@@ -1,3 +1,5 @@
+import type { AdditionalProductDetails } from '@/lib/productDetails';
+
 export interface BackendAdminUser {
   id: string;
   name: string;
@@ -21,6 +23,9 @@ export interface BackendAdmin {
 }
 
 export type ProductStatus = 'draft' | 'active' | 'inactive' | 'archived';
+export type ProductType = 'simple' | 'variable';
+export type WeightUnit = 'g' | 'kg';
+export type DimensionUnit = 'cm' | 'mm' | 'in';
 
 export interface BackendProductImage {
   id?: number | string;
@@ -28,6 +33,7 @@ export interface BackendProductImage {
   url?: string;
   image_url?: string;
   imageUrl?: string;
+  s3_key?: string;
   alt_text?: string | null;
   sort_order?: number;
   is_primary?: boolean;
@@ -35,20 +41,95 @@ export interface BackendProductImage {
   image_name?: string;
 }
 
-export interface BackendProduct {
+export interface BackendProductVariant {
+  id: number | string;
+  product_id: number | string;
+  sku: string;
+  variant_name?: string | null;
+  display_name?: string;
+  attributes: Record<string, string>;
+  barcode?: string | null;
+  weight_grams?: number | null;
+  regular_price?: number | string | null;
+  sale_price?: number | string | null;
+  effective_price?: number | string | null;
+  stock_quantity: number;
+  is_active: boolean;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface CreateProductVariantPayload {
+  sku: string;
+  attributes: Record<string, string>;
+  variant_name?: string | null;
+  barcode?: string | null;
+  weight_grams?: number | null;
+  regular_price?: number | null;
+  sale_price?: number | null;
+  stock_quantity?: number;
+  is_active?: boolean;
+}
+
+export type UpdateProductVariantPayload = Partial<CreateProductVariantPayload>;
+
+export interface ProductSpecificationsFields extends AdditionalProductDetails {
+  target_audience?: string | null;
+  hsn_code?: string | null;
+  gst_rate?: number | null;
+  weight?: number | null;
+  weight_unit?: WeightUnit;
+  unit_count?: number | null;
+  package_length?: number | null;
+  package_breadth?: number | null;
+  package_height?: number | null;
+  dimension_unit?: DimensionUnit;
+  material?: string | null;
+  colour?: string | null;
+  package_type?: string | null;
+  shelf_life?: string | null;
+  water_resistant?: boolean | null;
+  hazardous_clause?: string | null;
+  manufactured_in?: string | null;
+  company_name?: string | null;
+  company_address?: string | null;
+  packer_name?: string | null;
+  packer_address?: string | null;
+  keywords?: string[];
+}
+
+export interface BackendProduct extends ProductSpecificationsFields {
   id?: number | string;
   product_id?: number | string;
   brand_id?: number | string | null;
+  brand?: BackendBrand | null;
   name?: string;
   product_name?: string;
   slug?: string;
   description?: string | null;
   short_description?: string | null;
   product_status?: ProductStatus;
+  product_type?: ProductType;
+  product_code?: string | null;
+  sku?: string | null;
+  regular_price?: number | string | null;
+  sale_price?: number | string | null;
+  mrp?: number | string | null;
+  offer_price?: number | string | null;
+  offer_percent?: number | string | null;
+  special_discount_enabled?: boolean;
+  special_discount_percent?: number | string;
+  festival_offer_enabled?: boolean;
+  festival_offer_percent?: number | string;
+  effective_price?: number | string | null;
+  stock_quantity?: number;
+  min_order_quantity?: number;
+  max_order_quantity?: number | null;
   categories?: BackendCategory[];
   category_ids?: number[];
   primary_category_id?: number | null;
   category_id?: number | null;
+  variants?: BackendProductVariant[];
   prescription_required?: boolean;
   age_group?: string | null;
   price?: number;
@@ -129,35 +210,35 @@ export interface ChangeAdminPasswordPayload {
   newPassword: string;
 }
 
-export interface CreateProductPayload {
+export interface CreateProductPayload extends ProductSpecificationsFields {
   product_name: string;
   slug?: string;
   brand_id?: number | null;
   short_description?: string | null;
   description?: string | null;
   product_status?: ProductStatus;
+  product_type?: ProductType;
+  product_code?: string | null;
+  sku?: string | null;
+  regular_price?: number | null;
+  sale_price?: number | null;
+  offer_percent?: number | null;
+  special_discount_enabled?: boolean;
+  special_discount_percent?: number;
+  festival_offer_enabled?: boolean;
+  festival_offer_percent?: number;
+  stock_quantity?: number;
+  min_order_quantity?: number;
+  max_order_quantity?: number | null;
   category_ids?: number[];
   primary_category_id?: number | null;
   category_id?: number | null;
-  prescription_required?: boolean;
   age_group?: string | null;
+  prescription_required?: boolean | null;
   images?: File[];
 }
 
-export interface UpdateProductPayload {
-  product_name?: string;
-  slug?: string;
-  brand_id?: number | null;
-  short_description?: string | null;
-  description?: string | null;
-  product_status?: ProductStatus;
-  category_ids?: number[];
-  primary_category_id?: number | null;
-  category_id?: number | null;
-  prescription_required?: boolean;
-  age_group?: string | null;
-  images?: File[];
-}
+export type UpdateProductPayload = Partial<CreateProductPayload>;
 
 export interface CreateCategoryPayload {
   category_name: string;
@@ -177,6 +258,62 @@ export interface UpdateCategoryPayload {
   description?: string | null;
   sort_order?: number;
   is_active?: boolean;
+}
+
+export interface BackendBrand {
+  brand_id: number | string;
+  id?: number | string;
+  brand_name: string;
+  slug: string;
+  description?: string | null;
+  image_url?: string | null;
+  is_active?: boolean;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface CreateBrandPayload {
+  brand_name: string;
+  slug?: string;
+  description?: string | null;
+  image_url?: string | null;
+  is_active?: boolean;
+}
+
+export interface UpdateBrandPayload {
+  brand_name?: string;
+  slug?: string;
+  description?: string | null;
+  image_url?: string | null;
+  is_active?: boolean;
+}
+
+export interface AdminBrandsResponse {
+  data: BackendBrand[];
+  pagination?: PaginationMeta;
+}
+
+export interface BackendVariantAttribute {
+  id: number | string;
+  name: string;
+  values: string[];
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface CreateVariantAttributePayload {
+  name: string;
+  values: string[];
+}
+
+export interface UpdateVariantAttributePayload {
+  name?: string;
+  values?: string[];
+}
+
+export interface AdminVariantAttributesResponse {
+  data: BackendVariantAttribute[];
+  pagination?: PaginationMeta;
 }
 
 export interface PaginationMeta {

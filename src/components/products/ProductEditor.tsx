@@ -535,6 +535,8 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
   const [customVariantTypeName, setCustomVariantTypeName] = useState('');
   const [customOptionInputByVariant, setCustomOptionInputByVariant] = useState<Record<string, string>>({});
   const [activeOptionByVariant, setActiveOptionByVariant] = useState<Record<string, string>>({});
+  const [selectedOptionsByVariant, setSelectedOptionsByVariant] = useState<Record<string, string[]>>({});
+  const [variantDoneNotice, setVariantDoneNotice] = useState<string>('');
   const [terms, setTerms] = useState<Term[]>([]);
   const [openTerm, setOpenTerm] = useState<string | null>(null);
   const [images, setImages] = useState<GalleryImage[]>([]);
@@ -574,31 +576,54 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
           ? liveAttrDefs.filter((a) => !IGNORED_VARIANT_KEYS.has((a.name || '').toLowerCase()))
           : [];
         if (validAttrDefs.length > 0) {
-          setVariantTypesList(
-            validAttrDefs.map((attr) => {
-              const attrId = String(attr.id);
+          setVariantTypesList((prev) => {
+            const merged = new Map<string, VariantType>();
+            for (const existing of prev) {
+              merged.set(existing.id, {
+                ...existing,
+                terms: [...existing.terms],
+              });
+            }
+            for (const attr of validAttrDefs) {
+              const attrId = (attr.name || 'size').trim().toLowerCase();
               const vals = Array.isArray(attr.values) ? attr.values : [];
-              return {
+              const prevEntry = merged.get(attrId);
+              const existingTerms = prevEntry ? [...prevEntry.terms] : [];
+              for (const val of vals) {
+                const cleanVal = String(val || '').trim();
+                if (
+                  cleanVal &&
+                  !existingTerms.some((t) => t.name.toLowerCase() === cleanVal.toLowerCase())
+                ) {
+                  existingTerms.push({
+                    id: `${attrId}-opt-${existingTerms.length}`,
+                    name: cleanVal,
+                  });
+                }
+              }
+              merged.set(attrId, {
                 id: attrId,
-                name: attr.name,
-                terms: vals.map((val, i) => ({
-                  id: `${attrId}-opt-${i}`,
-                  name: val,
-                })),
-              };
-            })
-          );
+                name: prevEntry?.name || attr.name,
+                terms: existingTerms,
+              });
+            }
+            return Array.from(merged.values());
+          });
         } else {
-          setVariantTypesList([
-            {
-              id: 'size',
-              name: 'Size',
-              terms: ['S', 'M', 'L', 'XL', 'XXL'].map((val, i) => ({
-                id: `size-opt-${i}`,
-                name: val,
-              })),
-            },
-          ]);
+          setVariantTypesList((prev) =>
+            prev.length > 0
+              ? prev
+              : [
+                  {
+                    id: 'size',
+                    name: 'Size',
+                    terms: ['S', 'M', 'L', 'XL', 'XXL'].map((val, i) => ({
+                      id: `size-opt-${i}`,
+                      name: val,
+                    })),
+                  },
+                ]
+          );
         }
         if (Array.isArray(all) && all.length > 0) {
           const roots = all.filter((c) => c.parent_category_id == null);
@@ -679,6 +704,8 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
       setInitialVariantIds([]);
       setSelectedVariantTypeIds([]);
       setActiveVariantTabId('');
+      setSelectedOptionsByVariant({});
+      setVariantDoneNotice('');
       setOpenTerm(null);
       setBrand('');
       setCategoryId('');
@@ -820,7 +847,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
             );
           }
 
-          // Load existing per-product variants if variable product
+          // Load existing per-product variants
           let prodVariants = Array.isArray(prod.variants) ? prod.variants : [];
           {
             try {
@@ -831,8 +858,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
               setProductLoadError(message);
             }
           }
-          const isVarProd = prod.product_type === 'variable' || prodVariants.length > 0;
-          setProductType(isVarProd ? 'VARIABLE' : 'SIMPLE');
+          setProductType(prod.product_type === 'variable' ? 'VARIABLE' : 'SIMPLE');
 
           if (prodVariants.length > 0) {
             setInitialVariantIds(prodVariants.map((v) => v.id));
@@ -849,30 +875,46 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
             liveAttrs
               .filter((a) => !IGNORED_VARIANT_KEYS.has((a.name || '').toLowerCase()))
               .forEach((attr) => {
-                const attrId = String(attr.id);
+                const attrId = (attr.name || 'size').trim().toLowerCase();
                 const vals = Array.isArray(attr.values) ? attr.values : [];
-                discoveredTypes.set(attr.name, {
+                discoveredTypes.set(attrId, {
                   id: attrId,
                   name: attr.name,
                   terms: vals.map((val, i) => ({ id: `${attrId}-opt-${i}`, name: val })),
                 });
               });
 
-            if (!discoveredTypes.has('Size')) {
-              discoveredTypes.set('Size', {
-                id: 'size', name: 'Size',
-                terms: ['S', 'M', 'L', 'XL', 'XXL'].map((val, i) => ({ id: `size-opt-${i}`, name: val })),
+            if (!discoveredTypes.has('size')) {
+              discoveredTypes.set('size', {
+                id: 'size',
+                name: 'Size',
+                terms: ['S', 'M', 'L', 'XL', 'XXL'].map((val, i) => ({
+                  id: `size-opt-${i}`,
+                  name: val,
+                })),
               });
             }
 
             const loadedTerms: Term[] = [];
             const usedVtIds = new Set<string>();
+            const seenTermCombo = new Set<string>();
+            const loadedSelectedOpts: Record<string, string[]> = {};
 
             prodVariants.forEach((v, idx) => {
               const attrsObj = v.attributes || {};
               const validEntries = Object.entries(attrsObj).filter(
                 ([k]) => !IGNORED_VARIANT_KEYS.has(k.toLowerCase())
               );
+
+              // Skip legacy HSN-only placeholder variant rows if there are other variants
+              const rawVarName = (v.variant_name || v.display_name || '').trim();
+              if (
+                validEntries.length === 0 &&
+                /^hsn\s*:/i.test(rawVarName) &&
+                prodVariants.length > 1
+              ) {
+                return;
+              }
 
               let attrName = 'Size';
               let attrVal = '';
@@ -887,24 +929,45 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                   `Size ${idx + 1}`;
               }
 
-              let vtEntry = discoveredTypes.get(attrName);
+              const canonicalId = (attrName || 'size').trim().toLowerCase();
+              let vtEntry = discoveredTypes.get(canonicalId);
               if (!vtEntry) {
-                const fallbackId = `attr-${encodeURIComponent(attrName)}`;
                 vtEntry = {
-                  id: fallbackId,
+                  id: canonicalId,
                   name: attrName,
                   terms: [],
                 };
-                discoveredTypes.set(attrName, vtEntry);
+                discoveredTypes.set(canonicalId, vtEntry);
               }
-              if (!vtEntry.terms.some((t) => t.name === attrVal)) {
+              if (
+                !vtEntry.terms.some(
+                  (t) => t.name.trim().toLowerCase() === attrVal.trim().toLowerCase()
+                )
+              ) {
                 vtEntry.terms.push({
                   id: `${vtEntry.id}-opt-${vtEntry.terms.length}`,
                   name: attrVal,
                 });
               }
 
+              // Deduplicate loaded terms by (variantTypeId, optionName) so duplicate tabs never appear
+              const comboKey = `${vtEntry.id}::${attrVal.trim().toLowerCase()}`;
+              if (seenTermCombo.has(comboKey)) {
+                return;
+              }
+              seenTermCombo.add(comboKey);
+
               usedVtIds.add(vtEntry.id);
+              if (!loadedSelectedOpts[vtEntry.id]) {
+                loadedSelectedOpts[vtEntry.id] = [];
+              }
+              if (
+                !loadedSelectedOpts[vtEntry.id].some(
+                  (o) => o.toLowerCase() === attrVal.trim().toLowerCase()
+                )
+              ) {
+                loadedSelectedOpts[vtEntry.id].push(attrVal);
+              }
 
               // Extract unit count if stored in variant_name like "M (Pack of 10)"
               const packMatch = (v.variant_name || '').match(/Pack of (\d+)/i);
@@ -939,10 +1002,35 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
               });
             });
 
-            setVariantTypesList(Array.from(discoveredTypes.values()));
+            setVariantTypesList((prev) => {
+              const merged = new Map<string, VariantType>();
+              for (const existing of prev) {
+                merged.set(existing.id, { ...existing, terms: [...existing.terms] });
+              }
+              for (const [k, vt] of discoveredTypes.entries()) {
+                const prevEntry = merged.get(k);
+                const mergedTerms = prevEntry ? [...prevEntry.terms] : [];
+                for (const t of vt.terms) {
+                  if (
+                    !mergedTerms.some(
+                      (m) => m.name.trim().toLowerCase() === t.name.trim().toLowerCase()
+                    )
+                  ) {
+                    mergedTerms.push(t);
+                  }
+                }
+                merged.set(k, {
+                  id: k,
+                  name: vt.name || prevEntry?.name || k,
+                  terms: mergedTerms,
+                });
+              }
+              return Array.from(merged.values());
+            });
             const vtIdsArr = Array.from(usedVtIds);
             setSelectedVariantTypeIds(vtIdsArr);
             setActiveVariantTabId(vtIdsArr[0] || '');
+            setSelectedOptionsByVariant(loadedSelectedOpts);
             setTerms(loadedTerms);
             if (loadedTerms[0]) {
               setOpenTerm(loadedTerms[0].key);
@@ -1138,6 +1226,30 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
   }
 
   function patchTerm(key: string, patch: Partial<Term>) {
+    const target = terms.find((t) => t.key === key);
+    if (target && typeof patch.name === 'string' && patch.name.trim()) {
+      const oldName = target.name.trim().toLowerCase();
+      const newName = patch.name.trim();
+      const vId = target.variantTypeId;
+      setSelectedOptionsByVariant((prev) => {
+        const list = prev[vId] || [];
+        const updated = list.map((o) => (o.trim().toLowerCase() === oldName ? newName : o));
+        return { ...prev, [vId]: updated };
+      });
+      setVariantTypesList((prev) =>
+        prev.map((vt) => {
+          if (vt.id !== vId) return vt;
+          const exists = vt.terms.some((x) => x.name.trim().toLowerCase() === newName.toLowerCase());
+          if (exists) return vt;
+          return {
+            ...vt,
+            terms: vt.terms.map((x) =>
+              x.name.trim().toLowerCase() === oldName ? { ...x, name: newName } : x
+            ),
+          };
+        })
+      );
+    }
     setTerms((prev) => prev.map((t) => (t.key === key ? { ...t, ...patch } : t)));
   }
 
@@ -1148,15 +1260,22 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
       (x) => x.variantTypeId === termToRemove.variantTypeId
     );
     setTerms(remainingAll);
+    setSelectedOptionsByVariant((prev) => {
+      const currentList = prev[termToRemove.variantTypeId] || [];
+      return {
+        ...prev,
+        [termToRemove.variantTypeId]: currentList.filter(
+          (opt) => opt.trim().toLowerCase() !== termToRemove.name.trim().toLowerCase()
+        ),
+      };
+    });
 
     if (remainingForVt.length === 0) {
-      const remainingVtIds = selectedVariantTypeIds.filter(
-        (id) => id !== termToRemove.variantTypeId
-      );
-      setSelectedVariantTypeIds(remainingVtIds);
-      if (activeVariantTabId === termToRemove.variantTypeId) {
-        setActiveVariantTabId(remainingVtIds[0] || '');
-      }
+      setActiveOptionByVariant((prev) => {
+        const next = { ...prev };
+        delete next[termToRemove.variantTypeId];
+        return next;
+      });
     } else {
       setActiveOptionByVariant((prev) => ({
         ...prev,
@@ -1184,12 +1303,18 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
   function toggleVariantType(id: string) {
     if (!id) return;
     setError('');
+    setVariantDoneNotice('');
     const isAlreadySelected = selectedVariantTypeIds.includes(id);
     if (isAlreadySelected) {
       const removedTerms = terms.filter((t) => t.variantTypeId === id);
       const remainingIds = selectedVariantTypeIds.filter((x) => x !== id);
       setSelectedVariantTypeIds(remainingIds);
       setTerms((prev) => prev.filter((t) => t.variantTypeId !== id));
+      setSelectedOptionsByVariant((prev) => {
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
       setActiveOptionByVariant((prev) => {
         const next = { ...prev };
         delete next[id];
@@ -1217,32 +1342,18 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
     const vt = variantTypesList.find((v) => v.id === id);
     if (!vt) return;
 
-    const newTerms = vt.terms.map<Term>((t) => ({
-      key: `${vt.id}-${t.id}-${uid()}`,
-      termId: t.id,
-      variantTypeId: vt.id,
-      variantTypeName: vt.name,
-      name: t.name,
-      sku: '',
-      variantName: '',
-      unitCount: unitCount || '',
-      weightGrams: '',
-      barcode: '',
-      regularPrice: '',
-      offerPercent: '',
-      salePrice: '',
-      stockQuantity: '',
-      description: '',
-      image: null,
-    }));
-
-    setSelectedVariantTypeIds((prev) => [...prev, id]);
+    // Select the variant type tab WITHOUT dumping all global options into Terms.
+    // Only options explicitly selected by the user + confirmed via "Done" will appear in Terms.
+    const existingTermsForVt = terms.filter((t) => t.variantTypeId === id);
+    setSelectedVariantTypeIds((prev) => (prev.includes(id) ? prev : [...prev, id]));
     setActiveVariantTabId(id);
-    setTerms((prev) => [...prev, ...newTerms]);
-    if (newTerms[0]) {
-      setActiveOptionByVariant((prev) => ({ ...prev, [id]: newTerms[0].key }));
-      setOpenTerm((prev) => prev ?? newTerms[0].key);
-    }
+    setSelectedOptionsByVariant((prev) => ({
+      ...prev,
+      [id]:
+        prev[id] && prev[id].length > 0
+          ? prev[id]
+          : existingTermsForVt.map((t) => t.name),
+    }));
   }
 
   function selectVariantFromDropdown(id: string) {
@@ -1254,39 +1365,104 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
     toggleVariantType(id);
   }
 
+  function toggleOptionSelection(variantId: string, optionName: string) {
+    const clean = optionName.trim();
+    if (!clean) return;
+    setError('');
+    setVariantDoneNotice('');
+    setSelectedOptionsByVariant((prev) => {
+      const current = prev[variantId] || [];
+      const exists = current.some((o) => o.trim().toLowerCase() === clean.toLowerCase());
+      const nextList = exists
+        ? current.filter((o) => o.trim().toLowerCase() !== clean.toLowerCase())
+        : [...current, clean];
+      return { ...prev, [variantId]: nextList };
+    });
+  }
+
+  function handleConfirmVariantsDone() {
+    setError('');
+    const nextTerms: Term[] = [];
+    const seenCombo = new Set<string>();
+
+    for (const vId of selectedVariantTypeIds) {
+      const vt = variantTypesList.find((v) => v.id === vId);
+      if (!vt) continue;
+      const selectedOpts = selectedOptionsByVariant[vId] || [];
+      for (const rawOpt of selectedOpts) {
+        const optName = rawOpt.trim();
+        if (!optName) continue;
+        const comboKey = `${vId}::${optName.toLowerCase()}`;
+        if (seenCombo.has(comboKey)) continue;
+        seenCombo.add(comboKey);
+
+        // Reuse existing Term if already present so saved price/SKU/stock/backendVariantId are preserved
+        const existingTerm = terms.find(
+          (t) =>
+            t.variantTypeId === vId &&
+            t.name.trim().toLowerCase() === optName.toLowerCase()
+        );
+        if (existingTerm) {
+          nextTerms.push(existingTerm);
+        } else {
+          const vtOpt = vt.terms.find(
+            (x) => x.name.trim().toLowerCase() === optName.toLowerCase()
+          );
+          const termId = vtOpt?.id || `${vId}-opt-${uid()}`;
+          nextTerms.push({
+            key: `${vId}-${termId}-${uid()}`,
+            termId,
+            variantTypeId: vId,
+            variantTypeName: vt.name,
+            name: optName,
+            sku: '',
+            variantName: '',
+            unitCount: unitCount || '',
+            weightGrams: '',
+            barcode: '',
+            regularPrice: '',
+            offerPercent: '',
+            salePrice: '',
+            stockQuantity: '',
+            description: '',
+            image: null,
+          });
+        }
+      }
+    }
+
+    if (nextTerms.length === 0) {
+      setError('Please select at least one variant option before clicking Done.');
+      return;
+    }
+
+    setTerms(nextTerms);
+    setOpenTerm((prev) =>
+      prev && nextTerms.some((t) => t.key === prev) ? prev : nextTerms[0]?.key ?? null
+    );
+    setVariantDoneNotice(`${nextTerms.length} selected option(s) synced to Terms.`);
+    setTab('terms');
+  }
+
   function handleAddCustomVariantType() {
     const trimmed = customVariantTypeName.trim();
     if (!trimmed) return;
-    const newId = `custom-${encodeURIComponent(trimmed)}-${Date.now()}`;
+    const newId = trimmed.toLowerCase();
     const defaultTermKey = `${newId}-opt-1`;
     const newVt: VariantType = {
       id: newId,
       name: trimmed,
       terms: [{ id: defaultTermKey, name: 'Option 1' }],
     };
-    const firstTerm: Term = {
-      key: defaultTermKey,
-      termId: defaultTermKey,
-      variantTypeId: newId,
-      variantTypeName: trimmed,
-      name: 'Option 1',
-      sku: '',
-      variantName: '',
-      unitCount: unitCount || '',
-      weightGrams: '',
-      barcode: '',
-      regularPrice: '',
-      offerPercent: '',
-      salePrice: '',
-      stockQuantity: '',
-      description: '',
-      image: null,
-    };
-    setVariantTypesList((prev) => [...prev, newVt]);
-    setSelectedVariantTypeIds((prev) => [...prev, newId]);
-    setTerms((prev) => [...prev, firstTerm]);
-    setActiveOptionByVariant((prev) => ({ ...prev, [newId]: firstTerm.key }));
-    setOpenTerm(firstTerm.key);
+    setVariantTypesList((prev) =>
+      prev.some((v) => v.id === newId) ? prev : [...prev, newVt]
+    );
+    setSelectedVariantTypeIds((prev) => (prev.includes(newId) ? prev : [...prev, newId]));
+    setActiveVariantTabId(newId);
+    setSelectedOptionsByVariant((prev) => ({
+      ...prev,
+      [newId]: prev[newId] && prev[newId].length > 0 ? prev[newId] : ['Option 1'],
+    }));
     setCustomVariantTypeName('');
   }
 
@@ -1294,41 +1470,62 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
     const vt = variantTypesList.find((v) => v.id === variantId);
     if (!vt) return;
     const rawName = (customOptionInputByVariant[variantId] || '').trim();
-    const existingForVt = terms.filter((t) => t.variantTypeId === variantId);
-    const optionName = rawName || `${vt.name} Option ${existingForVt.length + 1}`;
-    const newKey = `${variantId}-opt-${uid()}`;
-    const newTerm: Term = {
-      key: newKey,
-      termId: newKey,
-      variantTypeId: variantId,
-      variantTypeName: vt.name,
-      name: optionName,
-      sku: '',
-      variantName: '',
-      unitCount: unitCount || '',
-      weightGrams: '',
-      barcode: '',
-      regularPrice: '',
-      offerPercent: '',
-      salePrice: '',
-      stockQuantity: '',
-      description: '',
-      image: null,
-    };
-    setTerms((prev) => [...prev, newTerm]);
-    setActiveOptionByVariant((prev) => ({ ...prev, [variantId]: newKey }));
-    setOpenTerm(newKey);
+    if (!rawName) return;
+    setError('');
+    setVariantDoneNotice('');
+
+    // 1. Add option to variantTypesList if not already present (case-insensitive)
+    setVariantTypesList((prev) =>
+      prev.map((item) => {
+        if (item.id !== variantId) return item;
+        const alreadyInList = item.terms.some(
+          (t) => t.name.trim().toLowerCase() === rawName.toLowerCase()
+        );
+        if (alreadyInList) return item;
+        return {
+          ...item,
+          terms: [
+            ...item.terms,
+            { id: `${variantId}-opt-${uid()}`, name: rawName },
+          ],
+        };
+      })
+    );
+
+    // 2. Automatically mark the new option as selected in selectedOptionsByVariant (without duplicates)
+    setSelectedOptionsByVariant((prev) => {
+      const current = prev[variantId] || [];
+      const exists = current.some((o) => o.trim().toLowerCase() === rawName.toLowerCase());
+      return {
+        ...prev,
+        [variantId]: exists ? current : [...current, rawName],
+      };
+    });
+
     setCustomOptionInputByVariant((prev) => ({ ...prev, [variantId]: '' }));
   }
 
   /** Syncs per-product variants with /api/admin/products/:productId/variants */
   async function syncProductVariants(targetProductId: string | number) {
-    if (productType !== 'VARIABLE') return;
+    if (productType !== 'VARIABLE' && terms.length === 0 && initialVariantIds.length === 0) return;
+
+    // Deduplicate terms by (variantTypeName, optionName) so duplicate attribute combinations are never sent
+    const uniqueTerms: Term[] = [];
+    const seenAttrCombos = new Set<string>();
+    for (const t of terms) {
+      const attrName = (t.variantTypeName || 'Size').trim();
+      const optVal = t.name.trim();
+      if (!optVal) continue;
+      const comboKey = `${attrName.toLowerCase()}::${optVal.toLowerCase()}`;
+      if (seenAttrCombos.has(comboKey)) continue;
+      seenAttrCombos.add(comboKey);
+      uniqueTerms.push(t);
+    }
 
     // 1. Ensure variant attribute definitions & option values exist on the backend
     const liveAttrs = await getAllAdminVariantAttributes();
     const groupedByAttr = new Map<string, { name: string; values: Set<string> }>();
-    for (const term of terms) {
+    for (const term of uniqueTerms) {
       const attributes = mergeVariantAttributes(term.attributes, (term.variantTypeName || 'Size').trim(), term.name.trim());
       for (const [name, rawValue] of Object.entries(attributes)) {
         const attrName = name.trim();
@@ -1340,7 +1537,9 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
       }
     }
     for (const [key, attribute] of groupedByAttr) {
-      const existing = liveAttrs.find((item) => item.name === key);
+      const existing = liveAttrs.find(
+        (item) => (item.name || '').trim().toLowerCase() === key.toLowerCase()
+      );
       if (!existing) {
         await createAdminVariantAttribute({ name: attribute.name, values: [...attribute.values] });
       } else {
@@ -1353,7 +1552,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
 
     // 2. Delete variants that were removed in the UI
     const currentVariantIds = new Set(
-      terms.flatMap((t) => t.backendVariantId != null ? [String(t.backendVariantId)] : [])
+      uniqueTerms.flatMap((t) => (t.backendVariantId != null ? [String(t.backendVariantId)] : []))
     );
     for (const oldId of initialVariantIds) {
       if (!currentVariantIds.has(String(oldId))) {
@@ -1362,7 +1561,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
       }
     }
 
-    // 3. Create or update each term variant
+    // 3. Create or update each unique term variant
     const baseSkuPrefix = (
       sku.trim() ||
       productCode.trim() ||
@@ -1370,8 +1569,8 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
       `PRD-${targetProductId}`
     ).toUpperCase();
 
-    for (let idx = 0; idx < terms.length; idx++) {
-      const t = terms[idx];
+    for (let idx = 0; idx < uniqueTerms.length; idx++) {
+      const t = uniqueTerms[idx];
       const attrName = (t.variantTypeName || 'Size').trim();
       const optVal = t.name.trim();
       if (!optVal) continue;
@@ -1509,7 +1708,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
     validateAdminProductRequestSize(payload, editId == null);
     let savedId: string | number | null = editId;
     if (savedId != null) {
-      if (payload.product_type === 'simple') {
+      if (payload.product_type === 'simple' && terms.length === 0 && initialVariantIds.length > 0) {
         await removeAllBackendVariantsBeforeSimple(savedId);
       }
       await updateAdminProduct(savedId, payload);
@@ -1550,7 +1749,9 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
         throw new Error(`Product ${savedId} was saved, but an image upload could not be verified: ${reason} Reload this product to check its images before retrying.`);
       }
     }
-    if (productType === 'VARIABLE') await syncProductVariants(savedId);
+    if (productType === 'VARIABLE' || terms.length > 0 || initialVariantIds.length > 0) {
+      await syncProductVariants(savedId);
+    }
   }
 
   async function saveDraft() {
@@ -1776,7 +1977,6 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                       ]}
                       onChange={(v) => {
                         setProductType(v as 'SIMPLE' | 'VARIABLE');
-                        if (v === 'SIMPLE' && (tab === 'variants' || tab === 'terms')) setTab('inventory');
                       }}
                     />
                   </div>
@@ -1787,9 +1987,8 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                     <button
                       key={t.id}
                       type="button"
-                      disabled={productType === 'SIMPLE' && (t.id === 'variants' || t.id === 'terms')}
                       onClick={() => setTab(t.id)}
-                      className={`h-10 rounded-lg border text-[12px] shadow-sm disabled:cursor-not-allowed disabled:opacity-40 ${
+                      className={`h-10 rounded-lg border text-[12px] shadow-sm disabled:cursor-not-allowed disabled:opacity-40 cursor-pointer ${
                         tab === t.id ? 'border-[#D6A7EA] bg-[#F6ECFA]' : 'border-[#ECECEC] bg-white'
                       }`}
                     >
@@ -2452,22 +2651,47 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                             })}
                           </div>
 
-                          {/* Active Variant Type's Separate Option Tabs (Add / Rename / Remove Tabs) */}
+                          {/* Active Variant Type's Selectable Options & "Done" Button */}
                           {(() => {
                             const currentVId = activeVariantTabId || selectedVariantTypeIds[0];
                             const vt = variantTypesList.find((v) => v.id === currentVId);
                             if (!vt) return null;
-                            const vtTerms = terms.filter((t) => t.variantTypeId === currentVId);
-                            const activeKey = activeOptionByVariant[currentVId] ?? vtTerms[0]?.key ?? null;
+                            const selectedForCurrent = selectedOptionsByVariant[currentVId] || [];
                             const customInputVal = customOptionInputByVariant[currentVId] || '';
-                            const activeTermObj = vtTerms.find((t) => t.key === activeKey) || vtTerms[0];
+                            const totalSelectedCount = selectedVariantTypeIds.reduce(
+                              (sum, vId) => sum + (selectedOptionsByVariant[vId]?.length || 0),
+                              0
+                            );
+
+                            // Combine vt.terms + any selected options into a deduplicated display list
+                            const allOptionNames: string[] = [];
+                            const seenLower = new Set<string>();
+                            for (const item of vt.terms) {
+                              const clean = item.name.trim();
+                              if (clean && !seenLower.has(clean.toLowerCase())) {
+                                seenLower.add(clean.toLowerCase());
+                                allOptionNames.push(clean);
+                              }
+                            }
+                            for (const opt of selectedForCurrent) {
+                              const clean = opt.trim();
+                              if (clean && !seenLower.has(clean.toLowerCase())) {
+                                seenLower.add(clean.toLowerCase());
+                                allOptionNames.push(clean);
+                              }
+                            }
 
                             return (
                               <div className="mt-4 rounded-xl border border-[#EAEAEA] bg-[#FAFAFA] p-4">
                                 <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
-                                  <span className="text-[13px] font-semibold text-[#111]">
-                                    {vt.name} — Separate Option Tabs ({vtTerms.length})
-                                  </span>
+                                  <div>
+                                    <span className="text-[13px] font-semibold text-[#111]">
+                                      {vt.name} — Select Options ({selectedForCurrent.length} selected)
+                                    </span>
+                                    <p className="text-[11px] text-[#666]">
+                                      Click options below to select or unselect them, then click <strong>Done</strong> to show only selected options in Terms.
+                                    </p>
+                                  </div>
                                   <div className="inline-flex items-center gap-1.5">
                                     <input
                                       type="text"
@@ -2490,76 +2714,87 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                                     <button
                                       type="button"
                                       onClick={() => handleAddOptionToVariant(currentVId)}
-                                      className="h-9 rounded-lg bg-[#F47C35] px-3 text-[12px] font-semibold text-white hover:bg-[#E96F29] cursor-pointer"
+                                      className="h-9 rounded-lg bg-[#0D2B53] px-3 text-[12px] font-semibold text-white hover:bg-[#163C70] cursor-pointer"
                                     >
-                                      + Add Tab
+                                      + Add Option
                                     </button>
                                   </div>
                                 </div>
 
-                                {/* Separate Option Tabs Bar */}
+                                {/* Selectable Option Chips */}
                                 <div className="flex flex-wrap items-center gap-2">
-                                  {vtTerms.map((t) => {
-                                    const active = activeKey === t.key;
+                                  {allOptionNames.map((optName) => {
+                                    const isSelected = selectedForCurrent.some(
+                                      (o) => o.trim().toLowerCase() === optName.toLowerCase()
+                                    );
                                     return (
-                                      <div
-                                        key={t.key}
-                                        className={`inline-flex h-9 items-center rounded-lg border text-[12px] font-semibold transition ${
-                                          active
-                                            ? 'border-[#F47C35] bg-[#FFF4EE] text-[#F47C35]'
-                                            : 'border-[#E2E2E2] bg-white text-[#444] hover:bg-gray-50'
+                                      <button
+                                        key={optName}
+                                        type="button"
+                                        onClick={() => toggleOptionSelection(currentVId, optName)}
+                                        className={`inline-flex h-9 items-center gap-1.5 rounded-lg border px-3.5 text-[12px] font-semibold transition cursor-pointer ${
+                                          isSelected
+                                            ? 'border-[#F47C35] bg-[#FFF4EE] text-[#F47C35] shadow-2xs'
+                                            : 'border-[#E2E2E2] bg-white text-[#555] hover:bg-gray-50'
                                         }`}
                                       >
-                                        <button
-                                          type="button"
-                                          onClick={() => {
-                                            setActiveOptionByVariant((prev) => ({
-                                              ...prev,
-                                              [currentVId]: t.key,
-                                            }));
-                                            setOpenTerm(t.key);
-                                          }}
-                                          className="h-full px-3.5 cursor-pointer"
+                                        <span
+                                          className={`flex h-4 w-4 items-center justify-center rounded border text-[10px] ${
+                                            isSelected
+                                              ? 'border-[#F47C35] bg-[#F47C35] text-white'
+                                              : 'border-[#CCC] bg-white text-transparent'
+                                          }`}
                                         >
-                                          {t.name}{Object.entries(t.attributes || {}).filter(([attribute]) => attribute !== t.variantTypeName).map(([, value]) => ` / ${value}`).join('')}
-                                        </button>
-                                        <button
-                                          type="button"
-                                          title={`Remove ${t.name}`}
-                                          onClick={() => void handleRemoveTerm(t)}
-                                          className="mr-1.5 flex h-5 w-5 items-center justify-center rounded text-[#999] hover:bg-black/5 hover:text-[#E14C2A] cursor-pointer"
-                                        >
-                                          ×
-                                        </button>
-                                      </div>
+                                          ✓
+                                        </span>
+                                        <span>{optName}</span>
+                                      </button>
                                     );
                                   })}
                                 </div>
 
-                                {/* Selected Option Tab Rename & Quick Jump to Terms */}
-                                {activeTermObj && (
-                                  <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[#E8E8E8] bg-white px-3.5 py-2.5">
-                                    <div className="flex items-center gap-2">
-                                      <span className="text-[12px] font-medium text-[#555]">Rename Tab:</span>
-                                      <input
-                                        type="text"
-                                        value={activeTermObj.name}
-                                        onChange={(e) => patchTerm(activeTermObj.key, { name: e.target.value })}
-                                        className="h-8 rounded-md border border-[#D7D7D7] bg-white px-2.5 text-[13px] font-semibold text-[#111] outline-none focus:border-[#F47C35]"
-                                      />
-                                    </div>
+                                {/* Footer Bar with Selection Summary & "Done" Button */}
+                                <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[#E8E8E8] bg-white px-4 py-3">
+                                  <div className="text-[12px] text-[#444]">
+                                    {totalSelectedCount > 0 ? (
+                                      <span>
+                                        <strong className="text-[#111]">{totalSelectedCount}</strong> option(s) selected across variant types.
+                                      </span>
+                                    ) : (
+                                      <span className="text-[#888]">
+                                        No options selected yet. Click the options above to select them.
+                                      </span>
+                                    )}
+                                    {variantDoneNotice && (
+                                      <span className="ml-2 text-emerald-600 font-medium">
+                                        • {variantDoneNotice}
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div className="flex items-center gap-2">
+                                    {selectedForCurrent.length > 0 && (
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          setSelectedOptionsByVariant((prev) => ({
+                                            ...prev,
+                                            [currentVId]: [],
+                                          }))
+                                        }
+                                        className="h-9 rounded-lg border border-gray-300 bg-white px-3 text-[12px] font-medium text-gray-600 hover:bg-gray-50 cursor-pointer"
+                                      >
+                                        Clear {vt.name}
+                                      </button>
+                                    )}
                                     <button
                                       type="button"
-                                      onClick={() => {
-                                        setOpenTerm(activeTermObj.key);
-                                        setTab('terms');
-                                      }}
-                                      className="text-[12px] font-semibold text-[#F47C35] hover:underline cursor-pointer"
+                                      onClick={handleConfirmVariantsDone}
+                                      className="h-9 rounded-lg bg-[#F47C35] px-5 text-[13px] font-semibold text-white shadow-xs hover:bg-[#E96F29] transition-colors cursor-pointer"
                                     >
-                                      Configure Price & Stock in Terms →
+                                      Done ({totalSelectedCount}) →
                                     </button>
                                   </div>
-                                )}
+                                </div>
                               </div>
                             );
                           })()}
