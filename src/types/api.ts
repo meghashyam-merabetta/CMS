@@ -193,3 +193,133 @@ export interface ApiResponse<T> {
   message?: string;
   user?: BackendAdminUser;
 }
+
+/* ------------------------------------------------------------------ */
+/* Admin Ordering Types                                               */
+/* ------------------------------------------------------------------ */
+
+export interface OrderingItem {
+  id: string;
+  name: string;
+  patientName: string | null;
+  quantity: number;
+  unitMrp: number;
+  unitPrice: number;
+  lineMrp: number;
+  linePrice: number;
+  offerDiscount: number;
+}
+
+export interface OrderingRecord {
+  id: string;
+  customerId: string;
+  bookingNumber: string | null;
+  createdAt: string;
+  updatedAt: string;
+  status: string;
+  paymentStatus: string | null;
+  paymentMethod: 'online' | 'cod' | string | null;
+  total: number;
+  customerName: string | null;
+  email: string | null;
+  phone: string | null;
+  couponCode: string | null;
+  labId: string | null;
+  integrationStatus: string | null;
+  providerBookingId: string | null;
+  items: OrderingItem[];
+  itemNames: string;
+  itemCount: number;
+  totalQuantity: number | null;
+  totalMrp: number | null;
+  offerDiscount: number;
+  subtotal: number;
+  couponPercent: number | null;
+  couponMaxDiscount: number | null;
+  couponDiscount: number;
+  priceAfterCoupon: number;
+  collectionCharges: number;
+  deliveryCharges: number;
+  charges: number | null;
+  finalAmount: number;
+}
+
+export interface OrderingPagination {
+  page: number;
+  limit: number;
+  total: number;
+  totalPages: number;
+  hasNext: boolean;
+}
+
+export interface AdminOrderingListResponse {
+  data: OrderingRecord[];
+  pagination: OrderingPagination;
+}
+
+export interface AdminOrderingDetailRecord extends OrderingRecord {
+  details?: {
+    id?: string;
+    kind?: 'products' | 'labs' | string;
+    date?: string;
+    status?: string;
+    paymentStatus?: string;
+    paymentMethod?: string;
+    total?: number;
+    subtotal?: number;
+    discount?: number;
+    delivery?: number;
+    couponCode?: string | null;
+    coupon?: Record<string, any>;
+    items?: any[];
+    address?: string;
+    addressSnapshot?: {
+      line1?: string;
+      line2?: string;
+      city?: string;
+      state?: string;
+      postalCode?: string;
+    };
+    deliveryNotes?: string;
+    orderedBy?: {
+      name?: string;
+      email?: string;
+      phone?: string;
+    };
+    recipient?: {
+      name?: string;
+      email?: string;
+      phone?: string;
+    };
+    additionalMembers?: any[];
+    collectionDate?: string;
+    slot?: string;
+    reports?: any[];
+    [key: string]: any;
+  };
+}
+
+export interface AdminOrderingDetailResponse {
+  data: AdminOrderingDetailRecord;
+}
+
+export interface ProductOrderListParams {
+  orderId?: string;
+  from?: string;
+  to?: string;
+  status?: string;
+  paymentMethod?: 'online' | 'cod' | string;
+  page?: number;
+  limit?: number;
+}
+
+export interface LabBookingListParams {
+  bookingId?: string;
+  from?: string;
+  to?: string;
+  status?: string;
+  labId?: string;
+  page?: number;
+  limit?: number;
+}
+

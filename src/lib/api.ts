@@ -1,5 +1,5 @@
 const RAW_BASE_URL = (
-  process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000'
+  process.env.NEXT_PUBLIC_API_URL || 'http://16.4.61.3:3000'
 ).trim().replace(/\/+$/, '');
 
 // Ensure no duplicate /api segment if user includes /api in NEXT_PUBLIC_API_URL
@@ -42,6 +42,7 @@ export function clearAdminAuth() {
 export interface RequestOptions extends RequestInit {
   params?: Record<string, string | number | boolean | undefined>;
   timeoutMs?: number;
+  responseType?: 'json' | 'blob' | 'text';
 }
 
 
@@ -49,7 +50,7 @@ export async function apiFetch<T>(
   endpoint: string,
   options: RequestOptions = {}
 ): Promise<T> {
-  const { params, headers, timeoutMs = 8000, signal, ...rest } = options;
+  const { params, headers, timeoutMs = 8000, signal, responseType = 'json', ...rest } = options;
 
   let url =
     endpoint.startsWith('http://') || endpoint.startsWith('https://')
@@ -84,9 +85,9 @@ export async function apiFetch<T>(
   const requestHeaders: Record<string, string> = isFormData
     ? { ...((headers as Record<string, string>) || {}) }
     : {
-        'Content-Type': 'application/json',
-        ...((headers as Record<string, string>) || {}),
-      };
+      'Content-Type': 'application/json',
+      ...((headers as Record<string, string>) || {}),
+    };
 
   const token = getAdminAuth();
   if (token) {
@@ -171,6 +172,14 @@ export async function apiFetch<T>(
     return {} as T;
   }
 
+  if (responseType === 'blob') {
+    return (await res.blob()) as unknown as T;
+  }
+
+  if (responseType === 'text') {
+    return (await res.text()) as unknown as T;
+  }
+
   return res.json();
 }
 
@@ -179,3 +188,4 @@ export * from '@/services/api/adminManagementApi';
 export * from '@/services/api/adminProductsApi';
 export * from '@/services/api/adminCategoriesApi';
 export * from '@/services/api/adminUsersApi';
+export * from '@/services/api/adminOrdersApi';

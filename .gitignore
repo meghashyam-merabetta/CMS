@@ -10,6 +10,7 @@
 /.next/
 /out/
 
+
 # production
 /build
 
@@ -22,15 +23,24 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
-# local env files
+# env files (never pushed to git)
+.env
+.env.example
+.env.local
 .env*.local
 
 # typescript
 *.tsbuildinfo
 next-env.d.ts
 
+*.log
+*.txt
+*.md
+.next.config.ts
+
 
 
 # AI tooling files
 AGENTS.md
 CLAUDE.md
+
