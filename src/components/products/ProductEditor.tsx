@@ -43,6 +43,8 @@ import {
 } from '@/services/api/adminVariantAttributesApi';
 import { ProductStatus, WeightUnit, DimensionUnit } from '@/types/api';
 import { mergeVariantAttributes } from '@/lib/productCatalog';
+import AdditionalProductDetails, { ProductDetailSummary } from './AdditionalProductDetails';
+import { readProductDetails, serializeProductDetails, validateProductDetails, ProductDetailValues } from '@/lib/productDetails';
 
 /* ------------------------------------------------------------------ */
 /* Option data & types                                                */
@@ -469,6 +471,8 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
   const [description, setDescription] = useState('');
   const [detailsText, setDetailsText] = useState('');
   const [details, setDetails] = useState<string[]>([]);
+  const [additionalDetails, setAdditionalDetails] = useState<ProductDetailValues>({});
+  const [initialAdditionalDetails, setInitialAdditionalDetails] = useState<ProductDetailValues>({});
   const [productLoadError, setProductLoadError] = useState('');
   const [lookupError, setLookupError] = useState('');
   const [productType, setProductType] = useState<'SIMPLE' | 'VARIABLE'>('VARIABLE');
@@ -679,9 +683,14 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
       setBrand('');
       setCategoryId('');
       setSubCategoryId('');
+      setAdditionalDetails({});
+      setInitialAdditionalDetails({});
       try {
         const prod = await getAdminProductById(id);
         if (prod) {
+          const loadedDetails = readProductDetails(prod);
+          setAdditionalDetails(loadedDetails);
+          setInitialAdditionalDetails(loadedDetails);
           const prodName = prod.product_name || prod.name || '';
           setName(prodName);
           setSlug(prod.slug || generateProductSlug(prodName));
@@ -991,6 +1000,8 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
     if (productLoadError) return productLoadError;
     if (lookupError) return lookupError;
     if (!name.trim()) return 'Product name is required.';
+    const additionalError = validateProductDetails(additionalDetails);
+    if (additionalError) return additionalError;
     if (uncertainImageUpload.current) {
       return 'An image upload could not be verified. Reload this product to check its saved images before retrying.';
     }
@@ -1480,6 +1491,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
       packer_name: (sameAsManufacturer ? companyName : packerName).trim() || null,
       packer_address: (sameAsManufacturer ? companyAddress : packerAddress).trim() || null,
       keywords: parsedKeywords,
+      ...serializeProductDetails(additionalDetails, initialAdditionalDetails),
       ...(imageFiles.length > 0 ? { images: imageFiles } : {}),
     };
   }
@@ -1510,6 +1522,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
       // Preserve the new ID on reload, including after an uncertain upload result.
       window.history.replaceState(null, '', `/admin/products/edit?id=${encodeURIComponent(savedId)}`);
     }
+    setInitialAdditionalDetails({ ...additionalDetails });
 
     // Persist each successful upload immediately, before variants or the next file
     // can fail. A retry then includes only files that have not been uploaded.
@@ -2862,15 +2875,16 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                     if (editId && targetImg.backendImageId) {
                       setReplacingImage(true);
                       try {
-                        await replaceAdminProductImage(editId, targetImg.backendImageId, file);
-                        const newBlobUrl = URL.createObjectURL(file);
+                        const replaced = await replaceAdminProductImage(editId, targetImg.backendImageId, file);
+                        if (!replaced?.image_url) throw new Error('The saved image URL was not returned. Refresh the product to check its image.');
                         setImages((prev) =>
                           prev.map((x) =>
                             x.key === targetKey
-                              ? { ...x, src: newBlobUrl, name: file.name, size: file.size }
+                              ? { ...x, src: replaced.image_url, name: file.name, size: file.size, file: undefined }
                               : x
                           )
                         );
+                        if (targetImg.src.startsWith('blob:')) URL.revokeObjectURL(targetImg.src);
                       } catch (err: any) {
                         setError(err?.message || 'Failed to replace product image.');
                       } finally {
@@ -3114,6 +3128,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
               </section>
             </div>
           </div>
+          <AdditionalProductDetails values={additionalDetails} onChange={setAdditionalDetails} />
           </fieldset>
         </form>
       </section>
@@ -3270,6 +3285,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                     </dl>
                   </div>
 
+                  <ProductDetailSummary values={additionalDetails} />
                   {error && (
                     <p
                       role="alert"

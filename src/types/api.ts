@@ -1,3 +1,5 @@
+import type { AdditionalProductDetails } from '@/lib/productDetails';
+
 export interface BackendAdminUser {
   id: string;
   name: string;
@@ -71,7 +73,7 @@ export interface CreateProductVariantPayload {
 
 export type UpdateProductVariantPayload = Partial<CreateProductVariantPayload>;
 
-export interface ProductSpecificationsFields {
+export interface ProductSpecificationsFields extends AdditionalProductDetails {
   target_audience?: string | null;
   hsn_code?: string | null;
   gst_rate?: number | null;

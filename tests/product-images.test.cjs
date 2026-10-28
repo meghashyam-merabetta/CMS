@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const ts = require('typescript');
 const { loadTypeScript } = require('./helpers.cjs');
 const { mergeVariantAttributes } = loadTypeScript(require.resolve('../src/lib/productCatalog.ts'));
+const { readProductDetails, serializeProductDetails, validateProductDetails } = loadTypeScript(require.resolve('../src/lib/productDetails.ts'));
 
 function loadService(apiFetch) {
   return loadTypeScript(require.resolve('../src/services/api/adminProductsApi.ts'), apiFetch);
@@ -111,6 +112,8 @@ function saveEnv() {
     validateAdminProductRequestSize,
     uncertainImageUpload: { current: false },
     productLoadError: '', lookupError: '',
+    additionalDetails: {}, initialAdditionalDetails: {}, validateProductDetails,
+    setInitialAdditionalDetails(value) { env.initialAdditionalDetails = value; },
     images: [{ key: 'local', file: file(), src: 'blob:local' }],
     serverImages: [], creates: 0, updates: 0, uploads: 0,
     buildApiPayload: () => ({ product_name: 'Test', product_type: 'variable', images: [file()] }),
@@ -291,6 +294,7 @@ test('loading saved variants keeps case-distinct attribute types and options sep
   ];
   const state = {};
   const env = new Proxy({
+    readProductDetails,
     getAdminProductById: async () => ({ product_name: 'Test', slug: 'test', product_type: 'variable' }),
     getAdminProductImages: async () => [],
     getAllAdminProductVariants: async () => variants,
@@ -367,6 +371,7 @@ function pricingEnv() {
   ].map((name) => [name, '']));
   Object.assign(env, {
     name: 'Test', regular: '100', sale: '80', offer: '20', pricingMode: 'percent', productType: 'SIMPLE', images: [], terms: [], details: [],
+    additionalDetails: {}, initialAdditionalDetails: {}, serializeProductDetails,
     specialDiscountEnabled: false, festivalOfferEnabled: false, sameAsManufacturer: false, weightUnit: 'g', dimensionUnit: 'cm',
     generateProductSlug: loadService(() => {}).generateProductSlug,
     setPricingMode(value) { env.pricingMode = value; }, setRegular(value) { env.regular = value; },

@@ -1,5 +1,6 @@
 import { apiFetch } from '@/lib/api';
 import { assertJsonRequestSize } from '@/lib/jsonRequest';
+import { PRODUCT_DETAIL_FIELDS } from '@/lib/productDetails';
 import {
   BackendProduct,
   CreateProductPayload,
@@ -285,7 +286,9 @@ function buildProductRequestBody(
   if (payload.keywords !== undefined) {
     body.keywords = (payload.keywords || []).map((k) => k.trim()).filter(Boolean);
   }
-
+  for (const { key } of PRODUCT_DETAIL_FIELDS) {
+    if (payload[key] !== undefined) body[key] = payload[key];
+  }
 
   return body;
 }

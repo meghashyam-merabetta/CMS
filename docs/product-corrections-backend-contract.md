@@ -10,7 +10,7 @@ Implemented locally on 28 October 2026. These changes are not deployed.
 - JSON requests are checked against 16 KiB in encoded UTF-8 bytes before fetch. Product metadata is checked before variant cleanup. Multipart image requests bypass the JSON limit; server 413 responses without JSON have a useful error message.
 - Automated client checks cover same-origin browser request paths, cookie inclusion, JSON headers, multipart boundaries and 204 handling. They do not establish real proxy forwarding or authenticated backend integration.
 
-The remaining integration checks require disposable staging records and authenticated access: login/me/logout through the proxy, actual Cookie/Set-Cookie/Origin forwarding, production HTTPS cookies, brand/product CRUD, sorting/category assignments, variant combinations, image operations and controlled failure recovery. For the default frontend development command, configure the backend's `ALLOWED_ORIGINS` with the actual browser origin (typically `http://localhost:5173`); do not copy example ports blindly. Root-category descendant inclusion remains a product/backend decision. Additional Product Details remains deferred.
+The remaining integration checks require disposable staging records and authenticated access: login/me/logout through the proxy, actual Cookie/Set-Cookie/Origin forwarding, production HTTPS cookies, brand/product CRUD, sorting/category assignments, variant combinations, image operations and controlled failure recovery. For the default frontend development command, configure the backend's `ALLOWED_ORIGINS` with the actual browser origin (typically `http://localhost:5173`); do not copy example ports blindly. Root-category descendant inclusion remains a product/backend decision. Additional Product Details has been restored at the user’s request; backend persistence for its new fields is not yet verified.
 
 ## Frontend changes
 
@@ -20,13 +20,13 @@ The remaining integration checks require disposable staging records and authenti
 - Product rows show variant sizes and other attributes. Missing thumbnails/variant summaries are fetched for the visible page; failures have a retry message.
 - Image aliases are normalized across listing, gallery and editor. Saved image/variant loading errors are visible and prevent saving incomplete editor state.
 - Multi-attribute variants retain all attributes and their original key casing. Other attributes can be edited in Terms; combination labels distinguish options with the same size.
-- Earlier image limit/deletion/retry fixes remain in place. Additional Product Details and its 43 new fields have been removed from the UI, preview, types and save requests pending user confirmation.
+- Earlier image limit/deletion/retry fixes remain in place. Additional Product Details and its 43 optional fields are restored with controls, validation, saved-value loading, preview, and whitelisted save mappings.
 
-## Deferred proposal — requires confirmation before implementation
+## Restored frontend fields — backend contract required
 
-The backend is not in this repository. The table below is retained only as a proposal for review. These new fields are not currently implemented or sent by the frontend. If approved later, they will need frontend controls and backend validators, storage and response serialization.
+The user has requested restoration of this section. The table below is now implemented in the frontend. The backend is outside this repository; its latest inspected schema did not support these new keys. Backend validators, database storage and response serialization must support them before populated additional details can be saved successfully.
 
-No new field keys from this proposal are included in current save requests. Existing supported specification fields remain available.
+Blank additional fields are omitted. Entered values are sent to POST/PATCH product endpoints; clearing a previously saved value sends null, and No sends false. Existing supported specification fields remain available. The 16 KiB preflight check includes these additional fields. An API rejection leaves the entered values in the form; there is no silent fallback that discards additional details.
 
 | API key | Form label | Type |
 | --- | --- | --- |
@@ -86,4 +86,4 @@ Existing short description and bullet editing continue to share the existing des
 
 ## Verification
 
-Run npm test for pagination, image aliases/deletion/retries, sorting and attribute preservation. Run npm run build -- --webpack for the production build. No live records were mutated during implementation checks.
+Run npm test for pagination, image aliases/deletion/retries, sorting, attribute preservation, additional-field round trips, validation and rendered controls. Run npm run build -- --webpack for the production build. No live records were mutated during implementation checks.

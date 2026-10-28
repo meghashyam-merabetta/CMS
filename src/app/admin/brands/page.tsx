@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Search,
   Plus,
@@ -21,6 +21,9 @@ import {
   generateBrandSlug,
 } from '@/services/api/adminBrandsApi';
 import { BackendBrand } from '@/types/api';
+import EntityImageInput from '@/components/ui/EntityImageInput';
+import type { CatalogImageSelection } from '@/lib/catalogImages';
+import { saveEntityWithImage, EntityImageSaveState } from '@/services/api/adminEntityImagesApi';
 
 export default function BrandsPage() {
   const [brands, setBrands] = useState<BackendBrand[]>([]);
@@ -36,6 +39,11 @@ export default function BrandsPage() {
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [editingBrand, setEditingBrand] = useState<BackendBrand | null>(null);
   const [brandToDelete, setBrandToDelete] = useState<BackendBrand | null>(null);
+  const [addImage, setAddImage] = useState<CatalogImageSelection>({ file: null, remove: false });
+  const [editImage, setEditImage] = useState<CatalogImageSelection>({ file: null, remove: false });
+  const [imageSaveError, setImageSaveError] = useState('');
+  const addImageSave = useRef<EntityImageSaveState<BackendBrand>>({});
+  const editImageSave = useRef<EntityImageSaveState<BackendBrand>>({});
 
   // Form State for Add
   const [newBrand, setNewBrand] = useState({
@@ -73,18 +81,39 @@ export default function BrandsPage() {
   );
 
   // Handle Add
+  function openAddBrand() {
+    addImageSave.current = {};
+    setAddImage({ file: null, remove: false });
+    setImageSaveError('');
+    setNewBrand({ brand_name: '', slug: '', description: '', image_url: '', is_active: true });
+    setIsAddModalOpen(true);
+  }
+
+  function openEditBrand(brand: BackendBrand) {
+    editImageSave.current = { id: String(brand.brand_id ?? brand.id) };
+    setEditImage({ file: null, remove: false });
+    setImageSaveError('');
+    setEditingBrand({ ...brand });
+  }
+
   const handleAddBrand = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newBrand.brand_name.trim() || isSubmitting) return;
 
     setIsSubmitting(true);
+    setImageSaveError('');
     try {
-      const created = await createAdminBrand({
+      const payload = {
         brand_name: newBrand.brand_name.trim(),
         slug: generateBrandSlug(newBrand.slug.trim() || newBrand.brand_name),
         description: newBrand.description.trim() || null,
-        image_url: newBrand.image_url.trim() || null,
         is_active: newBrand.is_active,
+      };
+      const created = await saveEntityWithImage({
+        resource: 'brands', state: addImageSave.current, metadata: payload, selection: addImage,
+        saveMetadata: (id) => id ? updateAdminBrand(id, payload) : createAdminBrand(payload),
+        getId: (brand) => brand.brand_id ?? brand.id,
+        onImageSaved: (url) => { setNewBrand((previous) => ({ ...previous, image_url: url || '' })); setAddImage({ file: null, remove: false }); },
       });
 
       setIsAddModalOpen(false);
@@ -98,6 +127,7 @@ export default function BrandsPage() {
       showToast(`Brand "${created.brand_name}" created successfully.`);
       await loadBrands();
     } catch (err: any) {
+      setImageSaveError(err.message || 'Failed to save brand.');
       showToast(err.message || 'Failed to create brand', 'error');
     } finally {
       setIsSubmitting(false);
@@ -113,18 +143,25 @@ export default function BrandsPage() {
     if (!brandId) return;
 
     setIsSubmitting(true);
+    setImageSaveError('');
     try {
-      const updated = await updateAdminBrand(brandId, {
+      const payload = {
         brand_name: editingBrand.brand_name.trim(),
         slug: generateBrandSlug(editingBrand.slug || editingBrand.brand_name),
         description: editingBrand.description?.trim() || null,
-        image_url: editingBrand.image_url?.trim() || null,
         is_active: editingBrand.is_active !== false,
+      };
+      const updated = await saveEntityWithImage({
+        resource: 'brands', state: editImageSave.current, metadata: payload, selection: editImage,
+        saveMetadata: (id) => updateAdminBrand(id ?? brandId, payload),
+        getId: (brand) => brand.brand_id ?? brand.id,
+        onImageSaved: (url) => { setEditingBrand((previous) => previous ? { ...previous, image_url: url } : previous); setEditImage({ file: null, remove: false }); },
       });
       showToast(`Brand "${updated.brand_name}" updated successfully.`);
       setEditingBrand(null);
       await loadBrands();
     } catch (err: any) {
+      setImageSaveError(err.message || 'Failed to save brand.');
       showToast(err.message || 'Failed to update brand', 'error');
     } finally {
       setIsSubmitting(false);
@@ -198,7 +235,7 @@ export default function BrandsPage() {
             </button>
             <button
               type="button"
-              onClick={() => setIsAddModalOpen(true)}
+              onClick={openAddBrand}
               className="inline-flex h-11 items-center gap-2 rounded-lg bg-[#F47C35] px-5 text-[13px] font-semibold text-white shadow-xs transition hover:bg-[#E96F29] cursor-pointer"
             >
               <Plus size={16} />
@@ -292,7 +329,7 @@ export default function BrandsPage() {
                           <div className="inline-flex items-center justify-center gap-1.5">
                             <button
                               type="button"
-                              onClick={() => setEditingBrand({ ...b })}
+                              onClick={() => openEditBrand(b)}
                               title="Edit brand"
                               className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-gray-200 bg-white text-blue-600 hover:bg-blue-50 hover:border-blue-300 transition cursor-pointer"
                             >
@@ -323,8 +360,10 @@ export default function BrandsPage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-xs">
           <form
             onSubmit={handleAddBrand}
-            className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl animate-in fade-in"
+            className="max-h-[90dvh] overflow-y-auto w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl animate-in fade-in"
           >
+            <fieldset disabled={isSubmitting} className="contents">
+            {imageSaveError && <p role="alert" className="mb-4 rounded-lg bg-red-50 p-3 text-sm text-red-700">{imageSaveError}</p>}
             <div className="flex items-center justify-between border-b border-gray-100 pb-4">
               <h3 className="text-[16px] font-bold text-gray-900">Add New Brand</h3>
               <button
@@ -367,16 +406,7 @@ export default function BrandsPage() {
                 />
               </div>
 
-              <div>
-                <label className="block font-medium text-gray-700">Logo Image URL</label>
-                <input
-                  type="url"
-                  placeholder="https://cdn.example.com/joylife.png"
-                  value={newBrand.image_url}
-                  onChange={(e) => setNewBrand({ ...newBrand, image_url: e.target.value })}
-                  className="mt-1 h-10 w-full rounded-lg border border-[#D6DCE5] px-3 text-[13px] outline-none focus:border-[#F47C35]"
-                />
-              </div>
+              <EntityImageInput label="Brand Logo" currentUrl={newBrand.image_url} value={addImage} onChange={setAddImage} disabled={isSubmitting} />
 
               <div>
                 <label className="block font-medium text-gray-700">Description</label>
@@ -417,9 +447,10 @@ export default function BrandsPage() {
                 disabled={isSubmitting}
                 className="h-10 rounded-lg bg-[#F47C35] px-5 text-[13px] font-semibold text-white hover:bg-[#E96F29] cursor-pointer disabled:opacity-50"
               >
-                {isSubmitting ? 'Creating...' : 'Create Brand'}
+                {isSubmitting ? 'Saving...' : addImageSave.current.id ? 'Retry Save' : 'Create Brand'}
               </button>
             </div>
+          </fieldset>
           </form>
         </div>
       )}
@@ -429,8 +460,10 @@ export default function BrandsPage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-xs">
           <form
             onSubmit={handleSaveEdit}
-            className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl animate-in fade-in"
+            className="max-h-[90dvh] overflow-y-auto w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl animate-in fade-in"
           >
+            <fieldset disabled={isSubmitting} className="contents">
+            {imageSaveError && <p role="alert" className="mb-4 rounded-lg bg-red-50 p-3 text-sm text-red-700">{imageSaveError}</p>}
             <div className="flex items-center justify-between border-b border-gray-100 pb-4">
               <div>
                 <h3 className="text-[16px] font-bold text-gray-900">Edit Brand</h3>
@@ -472,17 +505,7 @@ export default function BrandsPage() {
                 />
               </div>
 
-              <div>
-                <label className="block font-medium text-gray-700">Logo Image URL</label>
-                <input
-                  type="url"
-                  value={editingBrand.image_url || ''}
-                  onChange={(e) =>
-                    setEditingBrand({ ...editingBrand, image_url: e.target.value })
-                  }
-                  className="mt-1 h-10 w-full rounded-lg border border-[#D6DCE5] px-3 text-[13px] outline-none focus:border-[#F47C35]"
-                />
-              </div>
+              <EntityImageInput label="Brand Logo" currentUrl={editingBrand.image_url} value={editImage} onChange={setEditImage} disabled={isSubmitting} />
 
               <div>
                 <label className="block font-medium text-gray-700">Description</label>
@@ -530,6 +553,7 @@ export default function BrandsPage() {
                 {isSubmitting ? 'Saving...' : 'Save Changes'}
               </button>
             </div>
+          </fieldset>
           </form>
         </div>
       )}

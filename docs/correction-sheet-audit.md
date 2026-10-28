@@ -1,6 +1,6 @@
 # Correction sheet audit — 28 October 2026
 
-Implementation update: this document records the findings before the latest fixes. See [Product corrections and backend contract](product-corrections-backend-contract.md) for the implemented fixes, deferred additional-field proposal and remaining backend requirements. Additional Product Details has been removed pending confirmation.
+Implementation update: this document records the findings before the latest fixes. See [Product corrections and backend contract](product-corrections-backend-contract.md) for the implemented fixes, restored additional-field contract and remaining backend requirements. Additional Product Details has subsequently been restored at the user’s request; its backend persistence remains unverified.
 
 Scope: the five supplied screenshots, compared against the current local source, including the earlier local fixes. This is an implementation audit with mocked API checks, not authenticated browser or live CRUD verification. No application code was changed during this audit.
 

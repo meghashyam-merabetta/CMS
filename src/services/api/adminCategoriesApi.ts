@@ -1,5 +1,6 @@
 import { apiFetch } from '@/lib/api';
 import { collectAllPages } from '@/lib/pagination';
+import { CATALOG_IMAGE_FIELD_NAME, MAX_CATALOG_IMAGE_BYTES } from '@/lib/catalogImages';
 import {
   BackendCategory,
   CreateCategoryPayload,
@@ -19,10 +20,9 @@ export interface CategoryListParams {
 
 export const ADMIN_CATEGORIES_ENDPOINT = '/api/admin/categories';
 
-export const CATEGORY_IMAGE_FIELD_NAME =
-  process.env.NEXT_PUBLIC_CATEGORY_IMAGE_FIELD || 'category_image';
+export const CATEGORY_IMAGE_FIELD_NAME = CATALOG_IMAGE_FIELD_NAME;
 
-export const MAX_CATEGORY_IMAGE_BYTES = 10 * 1024 * 1024; // 10 MB limit
+export const MAX_CATEGORY_IMAGE_BYTES = MAX_CATALOG_IMAGE_BYTES;
 
 /**
  * Generates a backend-compliant URL slug matching /^[a-z0-9]+(?:-[a-z0-9]+)*$/

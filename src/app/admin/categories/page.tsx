@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import Link from 'next/link';
 import {
   Search,
@@ -34,6 +34,9 @@ import {
 } from '@/services/api/adminCategoriesApi';
 import { getAdminProducts, resolvePrimaryProductImage } from '@/services/api/adminProductsApi';
 import { BackendCategory, BackendProduct } from '@/types/api';
+import EntityImageInput from '@/components/ui/EntityImageInput';
+import type { CatalogImageSelection } from '@/lib/catalogImages';
+import { saveEntityWithImage, EntityImageSaveState } from '@/services/api/adminEntityImagesApi';
 
 /**
  * Traverses category hierarchy to identify all descendant IDs of a given category.
@@ -110,6 +113,10 @@ export default function CategoryManagementPage() {
     is_active: true,
   });
   const [addFormErrors, setAddFormErrors] = useState<Record<string, string>>({});
+  const [addImage, setAddImage] = useState<CatalogImageSelection>({ file: null, remove: false });
+  const [editImage, setEditImage] = useState<CatalogImageSelection>({ file: null, remove: false });
+  const addImageSave = useRef<EntityImageSaveState<BackendCategory>>({});
+  const editImageSave = useRef<EntityImageSaveState<BackendCategory>>({});
 
   // Edit category form state
   const [editForm, setEditForm] = useState({
@@ -370,6 +377,8 @@ export default function CategoryManagementPage() {
   /* Add Category Handlers                                              */
   /* ------------------------------------------------------------------ */
   const handleOpenAddModal = (defaultParentId = '') => {
+    addImageSave.current = {};
+    setAddImage({ file: null, remove: false });
     setAddForm({
       category_name: '',
       slug: '',
@@ -390,18 +399,23 @@ export default function CategoryManagementPage() {
     if (!addForm.category_name.trim() || isSubmitting) return;
 
     setIsSubmitting(true);
+    setAddFormErrors({});
     try {
       const payload = {
         category_name: addForm.category_name.trim(),
         slug: generateCategorySlug(addForm.slug.trim() || addForm.category_name),
         parent_category_id: addForm.parent_category_id ? Number(addForm.parent_category_id) : null,
-        category_image: addForm.category_image.trim() || null,
         description: addForm.description.trim() || null,
         sort_order: Number(addForm.sort_order) || 0,
         is_active: addForm.is_active,
       };
 
-      const created = await createAdminCategory(payload);
+      const created = await saveEntityWithImage({
+        resource: 'categories', state: addImageSave.current, metadata: payload, selection: addImage,
+        saveMetadata: (id) => id ? updateAdminCategory(id, payload) : createAdminCategory(payload),
+        getId: (category) => category.category_id ?? category.id,
+        onImageSaved: (url) => { setAddForm((previous) => ({ ...previous, category_image: url || '' })); setAddImage({ file: null, remove: false }); },
+      });
       showToast(`Category "${created.category_name}" created successfully.`);
       setIsAddModalOpen(false);
       await Promise.all([loadCategories(), refreshAllCategories()]);
@@ -410,6 +424,7 @@ export default function CategoryManagementPage() {
         await fetchSubCategoriesForRoot(payload.parent_category_id);
       }
     } catch (err: any) {
+      setAddFormErrors({ submit: err.message || 'Failed to save category.' });
       showToast(err.message || 'Failed to create category on backend.', 'error');
     } finally {
       setIsSubmitting(false);
@@ -422,6 +437,9 @@ export default function CategoryManagementPage() {
   const handleOpenEditModal = async (cat: BackendCategory) => {
     const catId = Number(cat.category_id ?? cat.id);
     if (!catId) return;
+
+    editImageSave.current = { id: String(catId) };
+    setEditImage({ file: null, remove: false });
 
     setEditingCategoryId(catId);
     setEditForm({
@@ -462,18 +480,23 @@ export default function CategoryManagementPage() {
     if (!editingCategoryId || !editForm.category_name.trim() || isSubmitting) return;
 
     setIsSubmitting(true);
+    setEditFormErrors({});
     try {
       const payload = {
         category_name: editForm.category_name.trim(),
         slug: generateCategorySlug(editForm.slug.trim() || editForm.category_name),
         parent_category_id: editForm.parent_category_id ? Number(editForm.parent_category_id) : null,
-        category_image: editForm.category_image.trim() || null,
         description: editForm.description.trim() || null,
         sort_order: Number(editForm.sort_order) || 0,
         is_active: editForm.is_active,
       };
 
-      const updated = await updateAdminCategory(editingCategoryId, payload);
+      const updated = await saveEntityWithImage({
+        resource: 'categories', state: editImageSave.current, metadata: payload, selection: editImage,
+        saveMetadata: (id) => updateAdminCategory(id ?? editingCategoryId, payload),
+        getId: (category) => category.category_id ?? category.id,
+        onImageSaved: (url) => { setEditForm((previous) => ({ ...previous, category_image: url || '' })); setEditImage({ file: null, remove: false }); },
+      });
       showToast(`Category "${updated.category_name}" updated successfully.`);
       setEditingCategoryId(null);
       await Promise.all([loadCategories(), refreshAllCategories()]);
@@ -482,6 +505,7 @@ export default function CategoryManagementPage() {
         await fetchSubCategoriesForRoot(payload.parent_category_id);
       }
     } catch (err: any) {
+      setEditFormErrors({ submit: err.message || 'Failed to save category.' });
       showToast(err.message || 'Failed to update category on backend.', 'error');
     } finally {
       setIsSubmitting(false);
@@ -1334,8 +1358,10 @@ export default function CategoryManagementPage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-xs">
           <form
             onSubmit={handleAddSubmit}
-            className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl animate-in fade-in"
+            className="max-h-[90dvh] overflow-y-auto w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl animate-in fade-in"
           >
+            <fieldset disabled={isSubmitting} className="contents">
+            {addFormErrors.submit && <p role="alert" className="mb-4 rounded-lg bg-red-50 p-3 text-sm text-red-700">{addFormErrors.submit}</p>}
             <div className="flex items-center justify-between border-b border-gray-100 pb-4">
               <div>
                 <h2 className="text-[16px] font-bold text-gray-900">Add New Category</h2>
@@ -1419,18 +1445,9 @@ export default function CategoryManagementPage() {
                 </div>
               </div>
 
-              {/* Category Image URL & Sort Order */}
-              <div className="grid grid-cols-3 gap-3">
-                <div className="col-span-2">
-                  <label className="block font-medium text-gray-700">Image URL</label>
-                  <input
-                    type="text"
-                    placeholder="https://..."
-                    value={addForm.category_image}
-                    onChange={(e) => setAddForm({ ...addForm, category_image: e.target.value })}
-                    className="mt-1 h-10 w-full rounded-lg border border-[#D6DCE5] px-3 text-[13px] outline-none focus:border-[#F47C35]"
-                  />
-                </div>
+              {/* Category Image & Sort Order */}
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                <div className="sm:col-span-2"><EntityImageInput label="Category Image" currentUrl={addForm.category_image} value={addImage} onChange={setAddImage} disabled={isSubmitting} /></div>
                 <div>
                   <label className="block font-medium text-gray-700">Sort Order</label>
                   <input
@@ -1478,10 +1495,11 @@ export default function CategoryManagementPage() {
                     <span>Saving...</span>
                   </>
                 ) : (
-                  <span>Create Category</span>
+                  <span>{addImageSave.current.id ? 'Retry Save' : 'Create Category'}</span>
                 )}
               </button>
             </div>
+          </fieldset>
           </form>
         </div>
       )}
@@ -1493,8 +1511,10 @@ export default function CategoryManagementPage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-xs">
           <form
             onSubmit={handleEditSubmit}
-            className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl animate-in fade-in"
+            className="max-h-[90dvh] overflow-y-auto w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl animate-in fade-in"
           >
+            <fieldset disabled={isSubmitting} className="contents">
+            {editFormErrors.submit && <p role="alert" className="mb-4 rounded-lg bg-red-50 p-3 text-sm text-red-700">{editFormErrors.submit}</p>}
             <div className="flex items-center justify-between border-b border-gray-100 pb-4">
               <div>
                 <h2 className="text-[16px] font-bold text-gray-900">Edit Category</h2>
@@ -1584,18 +1604,9 @@ export default function CategoryManagementPage() {
                   )}
                 </div>
 
-                {/* Category Image URL & Sort Order */}
-                <div className="grid grid-cols-3 gap-3">
-                  <div className="col-span-2">
-                    <label className="block font-medium text-gray-700">Image URL</label>
-                    <input
-                      type="text"
-                      placeholder="https://..."
-                      value={editForm.category_image}
-                      onChange={(e) => setEditForm({ ...editForm, category_image: e.target.value })}
-                      className="mt-1 h-10 w-full rounded-lg border border-[#D6DCE5] px-3 text-[13px] outline-none focus:border-[#F47C35]"
-                    />
-                  </div>
+                {/* Category Image & Sort Order */}
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                  <div className="sm:col-span-2"><EntityImageInput label="Category Image" currentUrl={editForm.category_image} value={editImage} onChange={setEditImage} disabled={isSubmitting} /></div>
                   <div>
                     <label className="block font-medium text-gray-700">Sort Order</label>
                     <input
@@ -1648,6 +1659,7 @@ export default function CategoryManagementPage() {
                 )}
               </button>
             </div>
+          </fieldset>
           </form>
         </div>
       )}
