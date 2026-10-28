@@ -238,6 +238,7 @@ function buildProductRequestBody(
   const nullableStringSpecs = [
     'target_audience',
     'hsn_code',
+    'barcode',
     'material',
     'colour',
     'package_type',
@@ -264,6 +265,9 @@ function buildProductRequestBody(
     'package_length',
     'package_breadth',
     'package_height',
+    'product_length',
+    'product_breadth',
+    'product_height',
   ] as const;
 
   for (const field of nullableNumberSpecs) {
@@ -279,12 +283,52 @@ function buildProductRequestBody(
   if (payload.dimension_unit !== undefined) {
     body.dimension_unit = payload.dimension_unit;
   }
+  if (payload.product_dimension_unit !== undefined) {
+    body.product_dimension_unit =
+      typeof payload.product_dimension_unit === 'string' && payload.product_dimension_unit.trim()
+        ? payload.product_dimension_unit.trim()
+        : null;
+  }
   if (payload.water_resistant !== undefined) {
     body.water_resistant =
       payload.water_resistant === null ? null : Boolean(payload.water_resistant);
   }
   if (payload.keywords !== undefined) {
     body.keywords = (payload.keywords || []).map((k) => k.trim()).filter(Boolean);
+  }
+  if (payload.reusable !== undefined) {
+    body.reusable = payload.reusable === null ? null : Boolean(payload.reusable);
+  }
+  if (payload.has_accessories !== undefined) {
+    body.has_accessories = Boolean(payload.has_accessories);
+  }
+  if (payload.accessories !== undefined) {
+    body.accessories =
+      typeof payload.accessories === 'string' && payload.accessories.trim()
+        ? payload.accessories.trim()
+        : null;
+  }
+  if (payload.item_condition !== undefined) {
+    body.item_condition =
+      payload.item_condition === 'refurbished' ? 'refurbished' : 'new';
+  }
+  if (payload.gift_options_available !== undefined) {
+    body.gift_options_available = Boolean(payload.gift_options_available);
+  }
+  if (payload.gift_options_charge !== undefined) {
+    body.gift_options_charge =
+      payload.gift_options_charge != null && !isNaN(Number(payload.gift_options_charge))
+        ? Number(payload.gift_options_charge)
+        : null;
+  }
+  if (payload.gift_wrap_available !== undefined) {
+    body.gift_wrap_available = Boolean(payload.gift_wrap_available);
+  }
+  if (payload.gift_wrap_charge !== undefined) {
+    body.gift_wrap_charge =
+      payload.gift_wrap_charge != null && !isNaN(Number(payload.gift_wrap_charge))
+        ? Number(payload.gift_wrap_charge)
+        : null;
   }
   for (const { key } of PRODUCT_DETAIL_FIELDS) {
     if (payload[key] !== undefined) body[key] = payload[key];

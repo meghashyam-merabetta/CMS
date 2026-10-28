@@ -496,6 +496,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
   const [targetAudience, setTargetAudience] = useState('');
   const [hsnCode, setHsnCode] = useState('');
   const [gstRate, setGstRate] = useState('');
+  const [barcode, setBarcode] = useState('');
   const [weight, setWeight] = useState('');
   const [weightUnit, setWeightUnit] = useState<WeightUnit>('g');
   const [unitCount, setUnitCount] = useState('');
@@ -503,12 +504,24 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
   const [packageBreadth, setPackageBreadth] = useState('');
   const [packageHeight, setPackageHeight] = useState('');
   const [dimensionUnit, setDimensionUnit] = useState<DimensionUnit>('cm');
+  const [productLength, setProductLength] = useState('');
+  const [productBreadth, setProductBreadth] = useState('');
+  const [productHeight, setProductHeight] = useState('');
+  const [productDimensionUnit, setProductDimensionUnit] = useState<string>('');
   const [material, setMaterial] = useState('');
   const [colour, setColour] = useState('');
   const [packageType, setPackageType] = useState('');
   const [shelfLife, setShelfLife] = useState('');
   const [waterResistant, setWaterResistant] = useState<string>(''); // '' | 'true' | 'false'
   const [hazardousClause, setHazardousClause] = useState('');
+  const [reusable, setReusable] = useState<boolean | null>(null);
+  const [hasAccessories, setHasAccessories] = useState<boolean>(false);
+  const [accessoriesText, setAccessoriesText] = useState<string>('');
+  const [itemCondition, setItemCondition] = useState<'new' | 'refurbished'>('new');
+  const [giftOptionsAvailable, setGiftOptionsAvailable] = useState<boolean>(false);
+  const [giftOptionsCharge, setGiftOptionsCharge] = useState<string>('');
+  const [giftWrapAvailable, setGiftWrapAvailable] = useState<boolean>(false);
+  const [giftWrapCharge, setGiftWrapCharge] = useState<string>('');
   const [manufacturedIn, setManufacturedIn] = useState('');
   const [companyName, setCompanyName] = useState('');
   const [companyAddress, setCompanyAddress] = useState('');
@@ -778,6 +791,11 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
               : {};
           setTargetAudience(prod.target_audience || '');
           setHsnCode(prod.hsn_code || (firstVarAttrs.hsn ? String(firstVarAttrs.hsn) : ''));
+          setBarcode(
+            (prod as any).barcode ||
+              (Array.isArray(prod.variants) && prod.variants.find((v) => v.barcode)?.barcode) ||
+              ''
+          );
           setGstRate(
             prod.gst_rate != null
               ? String(prod.gst_rate)
@@ -792,6 +810,32 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
           setPackageBreadth(prod.package_breadth != null ? String(prod.package_breadth) : '');
           setPackageHeight(prod.package_height != null ? String(prod.package_height) : '');
           setDimensionUnit(prod.dimension_unit || 'cm');
+
+          const pLen =
+            prod.product_length != null
+              ? String(prod.product_length)
+              : loadedDetails.product_length || '';
+          const pBreadth =
+            prod.product_breadth != null
+              ? String(prod.product_breadth)
+              : loadedDetails.product_breadth || '';
+          const pHeight =
+            prod.product_height != null
+              ? String(prod.product_height)
+              : loadedDetails.product_height || '';
+          const pDimUnit =
+            (prod.product_dimension_unit || loadedDetails.product_dimension_unit || '') as string;
+          setProductLength(pLen);
+          setProductBreadth(pBreadth);
+          setProductHeight(pHeight);
+          setProductDimensionUnit(pDimUnit);
+          setAdditionalDetails((prev) => ({
+            ...prev,
+            product_length: pLen,
+            product_breadth: pBreadth,
+            product_height: pHeight,
+            product_dimension_unit: pDimUnit,
+          }));
           setMaterial(prod.material || '');
           setColour(prod.colour || '');
           setPackageType(prod.package_type || '');
@@ -804,6 +848,44 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
               : ''
           );
           setHazardousClause(prod.hazardous_clause || '');
+
+          const savedReusable =
+            prod.reusable !== undefined
+              ? prod.reusable
+              : loadedDetails.reusable === 'true'
+              ? true
+              : loadedDetails.reusable === 'false'
+              ? false
+              : null;
+          setReusable(savedReusable ?? null);
+
+          const savedHasAccessories =
+            prod.has_accessories !== undefined
+              ? Boolean(prod.has_accessories)
+              : Boolean(prod.accessories || loadedDetails.accessories);
+          const savedAccessories =
+            (prod.accessories ?? loadedDetails.accessories ?? '').trim();
+          setHasAccessories(savedHasAccessories);
+          setAccessoriesText(savedHasAccessories ? savedAccessories : '');
+
+          const savedCondition = prod.item_condition || (prod as any).condition;
+          if (savedCondition === 'refurbished' || savedCondition === 'new') {
+            setItemCondition(savedCondition);
+          } else {
+            setItemCondition('new');
+          }
+
+          const savedGiftOptionsAvail = Boolean(prod.gift_options_available);
+          const savedGiftOptionsCharge =
+            prod.gift_options_charge != null ? String(prod.gift_options_charge) : '';
+          setGiftOptionsAvailable(savedGiftOptionsAvail);
+          setGiftOptionsCharge(savedGiftOptionsAvail ? savedGiftOptionsCharge : '');
+
+          const savedGiftWrapAvail = Boolean(prod.gift_wrap_available);
+          const savedGiftWrapCharge =
+            prod.gift_wrap_charge != null ? String(prod.gift_wrap_charge) : '';
+          setGiftWrapAvailable(savedGiftWrapAvail);
+          setGiftWrapCharge(savedGiftWrapAvail ? savedGiftWrapCharge : '');
           setManufacturedIn(prod.manufactured_in || '');
           setCompanyName(prod.company_name || '');
           setCompanyAddress(prod.company_address || '');
@@ -989,7 +1071,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                 variantName: v.variant_name || '',
                 unitCount: extractedUnitCount,
                 weightGrams: v.weight_grams != null ? String(v.weight_grams) : '',
-                barcode: v.barcode || '',
+                barcode: v.barcode || (prod as any).barcode || '',
                 regularPrice: v.regular_price != null ? String(v.regular_price) : '',
                 offerPercent:
                   v.regular_price != null && v.sale_price != null
@@ -1088,8 +1170,38 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
     if (productLoadError) return productLoadError;
     if (lookupError) return lookupError;
     if (!name.trim()) return 'Product name is required.';
-    const additionalError = validateProductDetails(additionalDetails);
+    if (typeof hasAccessories !== 'undefined' && hasAccessories && typeof accessoriesText !== 'undefined' && !accessoriesText.trim()) {
+      return 'Please specify the included accessories.';
+    }
+    const currentAdditional = {
+      ...additionalDetails,
+      ...(typeof productLength !== 'undefined' ? { product_length: productLength } : {}),
+      ...(typeof productBreadth !== 'undefined' ? { product_breadth: productBreadth } : {}),
+      ...(typeof productHeight !== 'undefined' ? { product_height: productHeight } : {}),
+      ...(typeof productDimensionUnit !== 'undefined' ? { product_dimension_unit: productDimensionUnit } : {}),
+    };
+    const additionalError = validateProductDetails(currentAdditional);
     if (additionalError) return additionalError;
+
+    if (typeof giftOptionsAvailable !== 'undefined' && giftOptionsAvailable) {
+      if (typeof giftOptionsCharge === 'undefined' || giftOptionsCharge.trim() === '') {
+        return 'Please enter a valid gift options charge.';
+      }
+      const chargeNum = Number(giftOptionsCharge);
+      if (isNaN(chargeNum) || chargeNum < 0) {
+        return 'Gift options charge must be a non-negative amount.';
+      }
+    }
+
+    if (typeof giftWrapAvailable !== 'undefined' && giftWrapAvailable) {
+      if (typeof giftWrapCharge === 'undefined' || giftWrapCharge.trim() === '') {
+        return 'Please enter a valid gift wrap charge.';
+      }
+      const chargeNum = Number(giftWrapCharge);
+      if (isNaN(chargeNum) || chargeNum < 0) {
+        return 'Gift wrap charge must be a non-negative amount.';
+      }
+    }
     if (uncertainImageUpload.current) {
       return 'An image upload could not be verified. Reload this product to check its saved images before retrying.';
     }
@@ -1419,7 +1531,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
             variantName: '',
             unitCount: unitCount || '',
             weightGrams: '',
-            barcode: '',
+            barcode: barcode || '',
             regularPrice: '',
             offerPercent: '',
             salePrice: '',
@@ -1645,6 +1757,10 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
     const effectiveUnitCountStr =
       unitCount.trim() || (productType === 'VARIABLE' ? terms[0]?.unitCount?.trim() || '' : '');
 
+    const effectiveBarcode =
+      (typeof barcode !== 'undefined' ? barcode.trim() : '') ||
+      (terms[0]?.barcode ? terms[0].barcode.trim() : '');
+
     return {
       product_name: name.trim(),
       slug: generateProductSlug(slug.trim() || name.trim()),
@@ -1670,6 +1786,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
       target_audience: targetAudience.trim() || null,
       hsn_code: hsnCode.trim() || null,
       gst_rate: num(gstRate),
+      barcode: effectiveBarcode || null,
       weight: num(weight),
       weight_unit: weightUnit,
       unit_count: num(effectiveUnitCountStr) != null ? Math.floor(num(effectiveUnitCountStr)!) : null,
@@ -1690,7 +1807,88 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
       packer_name: (sameAsManufacturer ? companyName : packerName).trim() || null,
       packer_address: (sameAsManufacturer ? companyAddress : packerAddress).trim() || null,
       keywords: parsedKeywords,
-      ...serializeProductDetails(additionalDetails, initialAdditionalDetails),
+      ...(() => {
+        const detailsObj = serializeProductDetails(
+          {
+            ...additionalDetails,
+            ...(typeof productLength !== 'undefined' ? { product_length: productLength } : {}),
+            ...(typeof productBreadth !== 'undefined' ? { product_breadth: productBreadth } : {}),
+            ...(typeof productHeight !== 'undefined' ? { product_height: productHeight } : {}),
+            ...(typeof productDimensionUnit !== 'undefined' ? { product_dimension_unit: productDimensionUnit } : {}),
+          },
+          initialAdditionalDetails
+        );
+        const {
+          product_length: _pl,
+          product_breadth: _pb,
+          product_height: _ph,
+          product_dimension_unit: _pdu,
+          ...restDetails
+        } = detailsObj;
+        return {
+          ...restDetails,
+          ...(detailsObj.product_length !== undefined
+            ? {
+                product_length:
+                  detailsObj.product_length != null && !isNaN(Number(detailsObj.product_length))
+                    ? Number(detailsObj.product_length)
+                    : null,
+              }
+            : {}),
+          ...(detailsObj.product_breadth !== undefined
+            ? {
+                product_breadth:
+                  detailsObj.product_breadth != null && !isNaN(Number(detailsObj.product_breadth))
+                    ? Number(detailsObj.product_breadth)
+                    : null,
+              }
+            : {}),
+          ...(detailsObj.product_height !== undefined
+            ? {
+                product_height:
+                  detailsObj.product_height != null && !isNaN(Number(detailsObj.product_height))
+                    ? Number(detailsObj.product_height)
+                    : null,
+              }
+            : {}),
+          ...(detailsObj.product_dimension_unit !== undefined
+            ? {
+                product_dimension_unit:
+                  typeof detailsObj.product_dimension_unit === 'string' && detailsObj.product_dimension_unit
+                    ? (detailsObj.product_dimension_unit as 'cm' | 'mm' | 'in')
+                    : null,
+              }
+            : {}),
+        };
+      })(),
+      reusable: typeof reusable !== 'undefined' ? (reusable as boolean | null) : null,
+      has_accessories: typeof hasAccessories !== 'undefined' ? Boolean(hasAccessories) : false,
+      accessories:
+        typeof hasAccessories !== 'undefined' &&
+        hasAccessories &&
+        typeof accessoriesText !== 'undefined' &&
+        accessoriesText.trim()
+          ? accessoriesText.trim()
+          : null,
+      item_condition: (typeof itemCondition !== 'undefined' ? itemCondition : 'new') as 'new' | 'refurbished',
+      gift_options_available: typeof giftOptionsAvailable !== 'undefined' ? Boolean(giftOptionsAvailable) : false,
+      gift_options_charge:
+        typeof giftOptionsAvailable !== 'undefined' &&
+        giftOptionsAvailable &&
+        typeof giftOptionsCharge !== 'undefined' &&
+        giftOptionsCharge.trim() !== '' &&
+        !isNaN(Number(giftOptionsCharge))
+          ? Number(Number(giftOptionsCharge).toFixed(2))
+          : null,
+      gift_wrap_available: typeof giftWrapAvailable !== 'undefined' ? Boolean(giftWrapAvailable) : false,
+      gift_wrap_charge:
+        typeof giftWrapAvailable !== 'undefined' &&
+        giftWrapAvailable &&
+        typeof giftWrapCharge !== 'undefined' &&
+        giftWrapCharge.trim() !== '' &&
+        !isNaN(Number(giftWrapCharge))
+          ? Number(Number(giftWrapCharge).toFixed(2))
+          : null,
       ...(imageFiles.length > 0 ? { images: imageFiles } : {}),
     };
   }
@@ -2221,6 +2419,21 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                             />
                           </div>
                         </div>
+
+                        <div>
+                          <Label htmlFor="spec-barcode">Barcode / EAN (optional)</Label>
+                          <input
+                            id="spec-barcode"
+                            value={barcode}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              setBarcode(val);
+                              setTerms((prev) => prev.map((t) => ({ ...t, barcode: val })));
+                            }}
+                            placeholder="Eg: 8901234567890"
+                            className={INPUT_CLASS}
+                          />
+                        </div>
                       </div>
 
                       {/* 2. Product Attributes & Packaging */}
@@ -2304,6 +2517,121 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                               presets={HAZARDOUS_PRESETS}
                               placeholder="Enter custom safety or hazardous clause"
                             />
+                          </div>
+
+                          {/* 1. Product Usage Status (Disposable / Reusable) */}
+                          <div className="md:col-span-2">
+                            <Label htmlFor="spec-usage-status">Product Usage Status (Disposable / Reusable)</Label>
+                            <div id="spec-usage-status" className="flex flex-wrap gap-2">
+                              {[
+                                { label: 'Disposable', value: false, id: 'usage-status-disposable' },
+                                { label: 'Reusable', value: true, id: 'usage-status-reusable' },
+                                { label: 'Not Applicable', value: null, id: 'usage-status-na' },
+                              ].map((opt) => {
+                                const active = reusable === opt.value;
+                                return (
+                                  <button
+                                    key={opt.label}
+                                    id={opt.id}
+                                    type="button"
+                                    onClick={() => {
+                                      setReusable(opt.value);
+                                      setAdditionalDetails((prev) => ({
+                                        ...prev,
+                                        reusable: opt.value === null ? '' : String(opt.value),
+                                      }));
+                                    }}
+                                    className={`rounded-lg border px-3 py-2 text-[12px] font-medium transition cursor-pointer ${
+                                      active
+                                        ? 'border-[#F47C35] bg-[#FFF4EE] text-[#F47C35] font-semibold'
+                                        : 'border-[#E2E8F0] bg-white text-[#475569] hover:bg-slate-50'
+                                    }`}
+                                  >
+                                    {opt.label}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+
+                          {/* 2. Accessories Along With Product? */}
+                          <div className="md:col-span-2">
+                            <Label htmlFor="spec-has-accessories">Accessories Along With Product?</Label>
+                            <div id="spec-has-accessories" className="flex flex-wrap gap-2">
+                              {[
+                                { label: 'No', value: false, id: 'accessories-no' },
+                                { label: 'Yes', value: true, id: 'accessories-yes' },
+                              ].map((opt) => {
+                                const active = hasAccessories === opt.value;
+                                return (
+                                  <button
+                                    key={opt.label}
+                                    id={opt.id}
+                                    type="button"
+                                    onClick={() => {
+                                      setHasAccessories(opt.value);
+                                      if (!opt.value) {
+                                        setAccessoriesText('');
+                                        setAdditionalDetails((prev) => ({ ...prev, accessories: '' }));
+                                      }
+                                    }}
+                                    className={`rounded-lg border px-3 py-2 text-[12px] font-medium transition cursor-pointer ${
+                                      active
+                                        ? 'border-[#F47C35] bg-[#FFF4EE] text-[#F47C35] font-semibold'
+                                        : 'border-[#E2E8F0] bg-white text-[#475569] hover:bg-slate-50'
+                                    }`}
+                                  >
+                                    {opt.label}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                            {hasAccessories && (
+                              <div className="mt-3">
+                                <Label htmlFor="spec-accessories" required>
+                                  Specify included accessories
+                                </Label>
+                                <textarea
+                                  id="spec-accessories"
+                                  value={accessoriesText}
+                                  onChange={(e) => {
+                                    const val = e.target.value;
+                                    setAccessoriesText(val);
+                                    setAdditionalDetails((prev) => ({ ...prev, accessories: val }));
+                                  }}
+                                  placeholder="Enter included accessories (e.g. charging cable, user manual)"
+                                  className="mt-1 min-h-20 w-full rounded-lg border border-gray-300 bg-white p-3 text-[13px] outline-none focus:border-[#F47C35] focus:ring-2 focus:ring-[#F47C35]/10"
+                                />
+                              </div>
+                            )}
+                          </div>
+
+                          {/* 3. Condition of Item */}
+                          <div className="md:col-span-2">
+                            <Label htmlFor="spec-item-condition">Condition of Item</Label>
+                            <div id="spec-item-condition" className="flex flex-wrap gap-2">
+                              {[
+                                { label: 'New', value: 'new', id: 'condition-new' },
+                                { label: 'Refurbished', value: 'refurbished', id: 'condition-refurbished' },
+                              ].map((opt) => {
+                                const active = itemCondition === opt.value;
+                                return (
+                                  <button
+                                    key={opt.label}
+                                    id={opt.id}
+                                    type="button"
+                                    onClick={() => setItemCondition(opt.value as 'new' | 'refurbished')}
+                                    className={`rounded-lg border px-3 py-2 text-[12px] font-medium transition cursor-pointer ${
+                                      active
+                                        ? 'border-[#F47C35] bg-[#FFF4EE] text-[#F47C35] font-semibold'
+                                        : 'border-[#E2E8F0] bg-white text-[#475569] hover:bg-slate-50'
+                                    }`}
+                                  >
+                                    {opt.label}
+                                  </button>
+                                );
+                              })}
+                            </div>
                           </div>
                         </div>
                       </div>
@@ -2423,6 +2751,99 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                                   {u}
                                 </button>
                               ))}
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Individual Item Dimensions (Inside Package) */}
+                        <div className="rounded-xl border border-gray-200 bg-white p-3.5 space-y-3">
+                          <div>
+                            <h6 className="text-[13px] font-semibold text-gray-800">
+                              Individual Item Dimensions (Inside Package)
+                            </h6>
+                          </div>
+                          <div className="grid gap-3 sm:grid-cols-4">
+                            <div className="min-w-0">
+                              <Label htmlFor="spec-item-len">
+                                <span className="block truncate whitespace-nowrap">Product Length</span>
+                              </Label>
+                              <input
+                                id="spec-item-len"
+                                type="number"
+                                min="0"
+                                step="0.01"
+                                placeholder="L"
+                                value={productLength}
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  setProductLength(val);
+                                  setAdditionalDetails((prev) => ({ ...prev, product_length: val }));
+                                }}
+                                className={INPUT_CLASS}
+                              />
+                            </div>
+                            <div className="min-w-0">
+                              <Label htmlFor="spec-item-breadth">
+                                <span className="block truncate whitespace-nowrap">Product Breadth</span>
+                              </Label>
+                              <input
+                                id="spec-item-breadth"
+                                type="number"
+                                min="0"
+                                step="0.01"
+                                placeholder="B"
+                                value={productBreadth}
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  setProductBreadth(val);
+                                  setAdditionalDetails((prev) => ({ ...prev, product_breadth: val }));
+                                }}
+                                className={INPUT_CLASS}
+                              />
+                            </div>
+                            <div className="min-w-0">
+                              <Label htmlFor="spec-item-height">
+                                <span className="block truncate whitespace-nowrap">Product Height</span>
+                              </Label>
+                              <input
+                                id="spec-item-height"
+                                type="number"
+                                min="0"
+                                step="0.01"
+                                placeholder="H (optional)"
+                                value={productHeight}
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  setProductHeight(val);
+                                  setAdditionalDetails((prev) => ({ ...prev, product_height: val }));
+                                }}
+                                className={INPUT_CLASS}
+                              />
+                            </div>
+                            <div className="min-w-0">
+                              <Label htmlFor="spec-item-dim-unit">
+                                <span className="block truncate whitespace-nowrap">Product Dimension Unit</span>
+                              </Label>
+                              <div id="spec-item-dim-unit" className="flex h-12 rounded-lg border border-[#D7D7D7] bg-white p-1">
+                                {(['cm', 'mm', 'in'] as const).map((u) => (
+                                  <button
+                                    key={u}
+                                    id={`spec-item-dim-unit-${u}`}
+                                    type="button"
+                                    onClick={() => {
+                                      setProductDimensionUnit(u);
+                                      setAdditionalDetails((prev) => ({ ...prev, product_dimension_unit: u }));
+                                    }}
+                                    className={`flex-1 text-[13px] font-semibold rounded-md transition cursor-pointer ${
+                                      productDimensionUnit === u
+                                        ? 'bg-[#F47C35] text-white'
+                                        : 'text-gray-600 hover:bg-gray-50'
+                                    }`}
+                                  >
+                                    {u}
+                                  </button>
+                                ))}
+                              </div>
                             </div>
                           </div>
                         </div>
@@ -2591,6 +3012,119 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                               + Add Keyword
                             </button>
                           </div>
+                        </div>
+                      </div>
+
+                      {/* 5. Gift Options & Gift Wrap Availability */}
+                      <div className="rounded-xl border border-[#EAEAEA] bg-[#FAFAFA] p-4 space-y-4">
+                        <h5 className="text-[13px] font-bold uppercase tracking-wider text-[#0D2B53]">
+                          5. Gift Options & Gift Wrap Availability
+                        </h5>
+
+                        {/* Gift Options Availability */}
+                        <div className="space-y-2">
+                          <Label htmlFor="spec-gift-options-avail">Gift Options Available?</Label>
+                          <div id="spec-gift-options-avail" className="flex flex-wrap gap-2">
+                            {[
+                              { label: 'No', value: false, id: 'gift-options-no' },
+                              { label: 'Yes', value: true, id: 'gift-options-yes' },
+                            ].map((opt) => {
+                              const active = giftOptionsAvailable === opt.value;
+                              return (
+                                <button
+                                  key={opt.label}
+                                  id={opt.id}
+                                  type="button"
+                                  onClick={() => {
+                                    setGiftOptionsAvailable(opt.value);
+                                    if (!opt.value) setGiftOptionsCharge('');
+                                  }}
+                                  className={`rounded-lg border px-3 py-2 text-[12px] font-medium transition cursor-pointer ${
+                                    active
+                                      ? 'border-[#F47C35] bg-[#FFF4EE] text-[#F47C35] font-semibold'
+                                      : 'border-[#E2E8F0] bg-white text-[#475569] hover:bg-slate-50'
+                                  }`}
+                                >
+                                  {opt.label}
+                                </button>
+                              );
+                            })}
+                          </div>
+                          {giftOptionsAvailable && (
+                            <div className="mt-3 max-w-xs">
+                              <Label htmlFor="spec-gift-options-charge" required>
+                                Gift Options Charge (₹)
+                              </Label>
+                              <div className="relative">
+                                <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-500 font-medium text-[14px]">
+                                  ₹
+                                </span>
+                                <input
+                                  id="spec-gift-options-charge"
+                                  type="number"
+                                  min="0"
+                                  step="0.01"
+                                  value={giftOptionsCharge}
+                                  onChange={(e) => setGiftOptionsCharge(e.target.value)}
+                                  placeholder="0.00"
+                                  className={`${INPUT_CLASS} pl-8`}
+                                />
+                              </div>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Gift Wrap Availability */}
+                        <div className="pt-3 border-t border-gray-200/80 space-y-2">
+                          <Label htmlFor="spec-gift-wrap-avail">Gift Wrap Available?</Label>
+                          <div id="spec-gift-wrap-avail" className="flex flex-wrap gap-2">
+                            {[
+                              { label: 'No', value: false, id: 'gift-wrap-no' },
+                              { label: 'Yes', value: true, id: 'gift-wrap-yes' },
+                            ].map((opt) => {
+                              const active = giftWrapAvailable === opt.value;
+                              return (
+                                <button
+                                  key={opt.label}
+                                  id={opt.id}
+                                  type="button"
+                                  onClick={() => {
+                                    setGiftWrapAvailable(opt.value);
+                                    if (!opt.value) setGiftWrapCharge('');
+                                  }}
+                                  className={`rounded-lg border px-3 py-2 text-[12px] font-medium transition cursor-pointer ${
+                                    active
+                                      ? 'border-[#F47C35] bg-[#FFF4EE] text-[#F47C35] font-semibold'
+                                      : 'border-[#E2E8F0] bg-white text-[#475569] hover:bg-slate-50'
+                                  }`}
+                                >
+                                  {opt.label}
+                                </button>
+                              );
+                            })}
+                          </div>
+                          {giftWrapAvailable && (
+                            <div className="mt-3 max-w-xs">
+                              <Label htmlFor="spec-gift-wrap-charge" required>
+                                Gift Wrap Charge (₹)
+                              </Label>
+                              <div className="relative">
+                                <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-500 font-medium text-[14px]">
+                                  ₹
+                                </span>
+                                <input
+                                  id="spec-gift-wrap-charge"
+                                  type="number"
+                                  min="0"
+                                  step="0.01"
+                                  value={giftWrapCharge}
+                                  onChange={(e) => setGiftWrapCharge(e.target.value)}
+                                  placeholder="0.00"
+                                  className={`${INPUT_CLASS} pl-8`}
+                                />
+                              </div>
+                            </div>
+                          )}
                         </div>
                       </div>
                     </div>
@@ -2896,7 +3430,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                                   />
                                 </div>
 
-                                {/* Variant SKU, Display Name, Weight (grams), Barcode */}
+                                {/* Variant SKU, Display Name, Weight (grams) */}
                                 <div className="grid gap-4 md:grid-cols-2">
                                   <div>
                                     <Label htmlFor={`term-sku-${t.key}`}>
@@ -2936,16 +3470,6 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                                       value={t.weightGrams}
                                       onChange={(e) => patchTerm(t.key, { weightGrams: e.target.value })}
                                       placeholder="Eg: 450"
-                                      className={termInputBase}
-                                    />
-                                  </div>
-                                  <div>
-                                    <Label htmlFor={`term-barcode-${t.key}`}>Barcode / EAN (optional)</Label>
-                                    <input
-                                      id={`term-barcode-${t.key}`}
-                                      value={t.barcode}
-                                      onChange={(e) => patchTerm(t.key, { barcode: e.target.value })}
-                                      placeholder="Eg: 8901234567890"
                                       className={termInputBase}
                                     />
                                   </div>

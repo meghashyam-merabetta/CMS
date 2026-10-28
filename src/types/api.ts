@@ -77,6 +77,7 @@ export interface ProductSpecificationsFields extends AdditionalProductDetails {
   target_audience?: string | null;
   hsn_code?: string | null;
   gst_rate?: number | null;
+  barcode?: string | null;
   weight?: number | null;
   weight_unit?: WeightUnit;
   unit_count?: number | null;
@@ -96,6 +97,18 @@ export interface ProductSpecificationsFields extends AdditionalProductDetails {
   packer_name?: string | null;
   packer_address?: string | null;
   keywords?: string[];
+  reusable?: boolean | null;
+  has_accessories?: boolean | null;
+  accessories?: string | null;
+  item_condition?: 'new' | 'refurbished' | null;
+  product_length?: number | null;
+  product_breadth?: number | null;
+  product_height?: number | null;
+  product_dimension_unit?: 'cm' | 'mm' | 'in' | string | null;
+  gift_options_available?: boolean | null;
+  gift_options_charge?: number | null;
+  gift_wrap_available?: boolean | null;
+  gift_wrap_charge?: number | null;
 }
 
 export interface BackendProduct extends ProductSpecificationsFields {

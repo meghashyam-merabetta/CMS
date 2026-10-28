@@ -407,3 +407,275 @@ test('percentage entry switches back to calculated pricing, including a 100% off
   assert.equal(payload.offer_percent, 100);
   assert.equal(payload.sale_price, 0);
 });
+
+test('barcode field has moved from terms to specifications and updates save payload', () => {
+  const env = pricingEnv();
+  env.barcode = '';
+  env.terms = [{ key: 'v1', barcode: '' }];
+  env.setBarcode = (val) => { env.barcode = val; };
+  env.setTerms = (updater) => { env.terms = updater(env.terms); };
+
+  const changeHandler = editorInputHandler('spec-barcode', env);
+  assert.throws(() => editorInputHandler('term-barcode-v1', env));
+
+  changeHandler({ target: { value: '8901234567890' } });
+  assert.equal(env.barcode, '8901234567890');
+  assert.equal(env.terms[0].barcode, '8901234567890');
+
+  const payload = editorHandler('buildApiPayload', env)('active');
+  assert.equal(payload.barcode, '8901234567890');
+});
+
+test('product usage status, accessories, and item condition integrate with form and API payload', async () => {
+  const env = pricingEnv();
+  env.productLoadError = '';
+  env.lookupError = '';
+  env.uncertainImageUpload = { current: false };
+  env.validateProductDetails = () => '';
+  env.reusable = null;
+  env.hasAccessories = false;
+  env.accessoriesText = '';
+  env.itemCondition = 'new';
+  env.validateProductImages = () => '';
+
+  // 1. Condition of Item defaults to 'new', accessories to false/null
+  let payload = editorHandler('buildApiPayload', env)('active');
+  assert.equal(payload.item_condition, 'new');
+  assert.equal(payload.reusable, null);
+  assert.equal(payload.has_accessories, false);
+  assert.equal(payload.accessories, null);
+
+  // 2. Select Disposable (false) and Reusable (true)
+  env.reusable = false;
+  payload = editorHandler('buildApiPayload', env)('active');
+  assert.equal(payload.reusable, false);
+
+  env.reusable = true;
+  payload = editorHandler('buildApiPayload', env)('active');
+  assert.equal(payload.reusable, true);
+
+  // 3. Accessories: conditional validation and payload values
+  env.hasAccessories = true;
+  env.accessoriesText = '   ';
+  const validateBasics = editorHandler('validateBasics', env);
+  assert.equal(validateBasics(), 'Please specify the included accessories.');
+
+  env.accessoriesText = 'Charger and manual';
+  assert.equal(validateBasics(), '');
+  payload = editorHandler('buildApiPayload', env)('active');
+  assert.equal(payload.has_accessories, true);
+  assert.equal(payload.accessories, 'Charger and manual');
+
+  // Switch to No for accessories
+  env.hasAccessories = false;
+  env.accessoriesText = '';
+  payload = editorHandler('buildApiPayload', env)('active');
+  assert.equal(payload.has_accessories, false);
+  assert.equal(payload.accessories, null);
+
+  // 4. Condition of Item: Refurbished
+  env.itemCondition = 'refurbished';
+  payload = editorHandler('buildApiPayload', env)('active');
+  assert.equal(payload.item_condition, 'refurbished');
+
+  // 5. Test adminProductsApi serializes into both create (POST) and update (PATCH) payloads
+  const bodies = [];
+  const api = loadService(async (_url, options = {}) => {
+    if (options.body) bodies.push(JSON.parse(options.body));
+    return { data: { product_id: 456 } };
+  });
+  await api.createAdminProduct(payload);
+  await api.updateAdminProduct(456, payload);
+  assert.equal(bodies.length, 2);
+  for (const body of bodies) {
+    assert.equal(body.reusable, true);
+    assert.equal(body.has_accessories, false);
+    assert.equal(body.accessories, null);
+    assert.equal(body.item_condition, 'refurbished');
+  }
+});
+
+test('individual item dimensions inside package remain separate from package dimensions and persist to API', async () => {
+  const env = pricingEnv();
+  env.productLoadError = '';
+  env.lookupError = '';
+  env.uncertainImageUpload = { current: false };
+  env.validateProductDetails = loadTypeScript(require.resolve('../src/lib/productDetails.ts')).validateProductDetails;
+  env.validateProductImages = () => '';
+  env.productLength = '';
+  env.productBreadth = '';
+  env.productHeight = '';
+  env.productDimensionUnit = '';
+  env.setProductLength = (val) => { env.productLength = val; };
+  env.setProductBreadth = (val) => { env.productBreadth = val; };
+  env.setProductHeight = (val) => { env.productHeight = val; };
+  env.setProductDimensionUnit = (val) => { env.productDimensionUnit = val; };
+  env.setAdditionalDetails = (updater) => {
+    env.additionalDetails = updater(env.additionalDetails);
+  };
+
+  // Set package dimensions
+  env.packageLength = '30';
+  env.packageBreadth = '20';
+  env.packageHeight = '10';
+  env.dimensionUnit = 'cm';
+
+  // Use input handlers for item dimensions
+  const lenHandler = editorInputHandler('spec-item-len', env);
+  const breadthHandler = editorInputHandler('spec-item-breadth', env);
+  const heightHandler = editorInputHandler('spec-item-height', env);
+
+  lenHandler({ target: { value: '15' } });
+  breadthHandler({ target: { value: '8' } });
+  assert.equal(env.productLength, '15');
+  assert.equal(env.productBreadth, '8');
+  assert.equal(env.packageLength, '30'); // Package dimension unchanged
+  assert.equal(env.packageBreadth, '20');
+
+  // Validation: unit is required if length is provided
+  const validateBasics = editorHandler('validateBasics', env);
+  assert.equal(validateBasics(), 'Select an actual product dimension unit.');
+
+  // Set unit
+  env.productDimensionUnit = 'mm';
+  env.additionalDetails.product_dimension_unit = 'mm';
+  assert.equal(validateBasics(), ''); // Valid even when item height is empty (optional)
+
+  // Set optional height
+  heightHandler({ target: { value: '2.5' } });
+  assert.equal(env.productHeight, '2.5');
+
+  // Verify buildApiPayload includes both package and item dimensions independently
+  const payload = editorHandler('buildApiPayload', env)('active');
+  assert.equal(payload.package_length, 30);
+  assert.equal(payload.package_breadth, 20);
+  assert.equal(payload.package_height, 10);
+  assert.equal(payload.dimension_unit, 'cm');
+  assert.equal(payload.product_length, 15);
+  assert.equal(payload.product_breadth, 8);
+  assert.equal(payload.product_height, 2.5);
+  assert.equal(payload.product_dimension_unit, 'mm');
+
+  // Test adminProductsApi serializes both create and update payloads
+  const bodies = [];
+  const api = loadService(async (_url, options = {}) => {
+    if (options.body) bodies.push(JSON.parse(options.body));
+    return { data: { product_id: 789 } };
+  });
+  await api.createAdminProduct(payload);
+  await api.updateAdminProduct(789, payload);
+  assert.equal(bodies.length, 2);
+  for (const body of bodies) {
+    assert.equal(body.package_length, 30);
+    assert.equal(body.package_breadth, 20);
+    assert.equal(body.package_height, 10);
+    assert.equal(body.dimension_unit, 'cm');
+    assert.equal(body.product_length, 15);
+    assert.equal(body.product_breadth, 8);
+    assert.equal(body.product_height, 2.5);
+    assert.equal(body.product_dimension_unit, 'mm');
+  }
+});
+
+test('gift options and gift wrap availability work independently with validation and payload persistence', async () => {
+  const env = pricingEnv();
+  env.productLoadError = '';
+  env.lookupError = '';
+  env.uncertainImageUpload = { current: false };
+  env.validateProductDetails = () => '';
+  env.validateProductImages = () => '';
+
+  env.giftOptionsAvailable = false;
+  env.giftOptionsCharge = '';
+  env.giftWrapAvailable = false;
+  env.giftWrapCharge = '';
+  env.setGiftOptionsCharge = (val) => { env.giftOptionsCharge = val; };
+  env.setGiftWrapCharge = (val) => { env.giftWrapCharge = val; };
+
+  // 1. Both options No by default
+  let payload = editorHandler('buildApiPayload', env)('active');
+  assert.equal(payload.gift_options_available, false);
+  assert.equal(payload.gift_options_charge, null);
+  assert.equal(payload.gift_wrap_available, false);
+  assert.equal(payload.gift_wrap_charge, null);
+
+  const validateBasics = editorHandler('validateBasics', env);
+  assert.equal(validateBasics(), '');
+
+  // 2. Gift Options Yes: missing charge is rejected
+  env.giftOptionsAvailable = true;
+  env.giftOptionsCharge = '';
+  assert.equal(validateBasics(), 'Please enter a valid gift options charge.');
+
+  // Negative charge is rejected
+  env.giftOptionsCharge = '-5';
+  assert.equal(validateBasics(), 'Gift options charge must be a non-negative amount.');
+
+  // Charge of 0 is valid!
+  env.giftOptionsCharge = '0';
+  assert.equal(validateBasics(), '');
+  payload = editorHandler('buildApiPayload', env)('active');
+  assert.equal(payload.gift_options_available, true);
+  assert.equal(payload.gift_options_charge, 0);
+
+  // Decimal charge works
+  const giftOptInput = editorInputHandler('spec-gift-options-charge', env);
+  giftOptInput({ target: { value: '25.50' } });
+  assert.equal(env.giftOptionsCharge, '25.50');
+  payload = editorHandler('buildApiPayload', env)('active');
+  assert.equal(payload.gift_options_charge, 25.5);
+
+  // Switching Gift Options back to No clears active charge in payload
+  env.giftOptionsAvailable = false;
+  env.giftOptionsCharge = '';
+  payload = editorHandler('buildApiPayload', env)('active');
+  assert.equal(payload.gift_options_available, false);
+  assert.equal(payload.gift_options_charge, null);
+
+  // 3. Gift Wrap Yes: independent of Gift Options
+  env.giftWrapAvailable = true;
+  env.giftWrapCharge = '';
+  assert.equal(validateBasics(), 'Please enter a valid gift wrap charge.');
+
+  env.giftWrapCharge = '-1';
+  assert.equal(validateBasics(), 'Gift wrap charge must be a non-negative amount.');
+
+  env.giftWrapCharge = '0';
+  assert.equal(validateBasics(), '');
+  payload = editorHandler('buildApiPayload', env)('active');
+  assert.equal(payload.gift_wrap_available, true);
+  assert.equal(payload.gift_wrap_charge, 0);
+
+  const giftWrapInput = editorInputHandler('spec-gift-wrap-charge', env);
+  giftWrapInput({ target: { value: '49.99' } });
+  assert.equal(env.giftWrapCharge, '49.99');
+  payload = editorHandler('buildApiPayload', env)('active');
+  assert.equal(payload.gift_wrap_charge, 49.99);
+
+  // 4. Both options Yes together with independent charges
+  env.giftOptionsAvailable = true;
+  env.giftOptionsCharge = '15.00';
+  payload = editorHandler('buildApiPayload', env)('active');
+  assert.equal(payload.gift_options_available, true);
+  assert.equal(payload.gift_options_charge, 15);
+  assert.equal(payload.gift_wrap_available, true);
+  assert.equal(payload.gift_wrap_charge, 49.99);
+
+  // 5. Verify adminProductsApi includes both in POST and PATCH requests
+  const bodies = [];
+  const api = loadService(async (_url, options = {}) => {
+    if (options.body) bodies.push(JSON.parse(options.body));
+    return { data: { product_id: 101 } };
+  });
+  await api.createAdminProduct(payload);
+  await api.updateAdminProduct(101, payload);
+  assert.equal(bodies.length, 2);
+  for (const body of bodies) {
+    assert.equal(body.gift_options_available, true);
+    assert.equal(body.gift_options_charge, 15);
+    assert.equal(body.gift_wrap_available, true);
+    assert.equal(body.gift_wrap_charge, 49.99);
+  }
+});
+
+

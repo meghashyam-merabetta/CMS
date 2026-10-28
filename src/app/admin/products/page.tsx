@@ -953,7 +953,6 @@ export default function ProductManagementPage() {
                       <td className="px-3 font-medium text-slate-900">
                         {p.name}
                         {p.catalogCode && <div className="mt-1 text-[11px] font-normal text-gray-500">Code: {p.catalogCode}</div>}
-                        {p.variantSummary && <div className="mt-1 text-[11px] font-normal text-slate-600">{p.variantSummary}</div>}
                         {p.catalogWarning && <div role="status" className="mt-1 text-[11px] font-normal text-amber-700">{p.catalogWarning}. Refresh to retry.</div>}
                       </td>
                       <td className="px-3 text-[#606060]">{p.category}</td>

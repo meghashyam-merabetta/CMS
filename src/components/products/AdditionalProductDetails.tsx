@@ -14,6 +14,15 @@ export function ProductDetailSummary({ values }: { values: ProductDetailValues }
   </details>;
 }
 
+const EXCLUDED_DETAIL_FIELDS = new Set<ProductDetailKey>([
+  'reusable',
+  'accessories',
+  'product_length',
+  'product_breadth',
+  'product_height',
+  'product_dimension_unit',
+]);
+
 export default function AdditionalProductDetails({ values, onChange }: {
   values: ProductDetailValues;
   onChange: (values: ProductDetailValues) => void;
@@ -26,7 +35,7 @@ export default function AdditionalProductDetails({ values, onChange }: {
     {groups.map((group) => <details key={group} className="rounded-xl border border-gray-200 bg-white p-4">
       <summary className="cursor-pointer font-semibold text-[#0D2B53]">{group}</summary>
       <div className="mt-4 grid gap-4 sm:grid-cols-2">
-        {(PRODUCT_DETAIL_FIELDS as readonly (ProductDetailField & { key: ProductDetailKey })[]).filter((field) => field.group === group).map((field) => {
+        {(PRODUCT_DETAIL_FIELDS as readonly (ProductDetailField & { key: ProductDetailKey })[]).filter((field) => field.group === group && !EXCLUDED_DETAIL_FIELDS.has(field.key)).map((field) => {
           const id = `detail-${field.key}`;
           const common = {
             id, value: values[field.key] ?? '',
