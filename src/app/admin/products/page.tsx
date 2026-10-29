@@ -673,7 +673,11 @@ export default function ProductManagementPage() {
       await deleteAdminProduct(productToDelete.id);
       showToast(`Product "${productToDelete.name}" removed successfully.`);
       setProductToDelete(null);
-      await loadProducts(true);
+      if (products.length === 1 && currentPage > 0) {
+        setCurrentPage((prev) => Math.max(0, prev - 1));
+      } else {
+        await loadProducts(true);
+      }
     } catch (err: any) {
       showToast(err.message || 'Failed to delete product on server.', 'error');
     } finally {

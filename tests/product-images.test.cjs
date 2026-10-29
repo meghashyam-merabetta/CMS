@@ -299,7 +299,7 @@ test('loading saved variants keeps case-distinct attribute types and options sep
     getAdminProductImages: async () => [],
     getAllAdminProductVariants: async () => variants,
     getAllAdminVariantAttributes: async () => [{ id: 10, name: 'Size', values: ['Blue'] }, { id: 11, name: 'size', values: ['blue'] }],
-    setVariantTypesList: (value) => { state.types = value; },
+    setVariantTypesList: (value) => { state.types = typeof value === 'function' ? value(state.types || []) : value; },
     setTerms: (value) => { state.terms = value; },
     setError: (value) => { state.error = value; },
   }, {
@@ -679,3 +679,177 @@ test('gift options and gift wrap availability work independently with validation
 });
 
 
+
+test('validateBasics pricing validation rejects invalid sale, offer and regular prices', () => {
+  const env = { ...saveEnv(), validateProductImages };
+  env.name = 'Test';
+  env.regular = '100';
+  env.sale = '150';
+  assert.match(editorHandler('validateBasics', env)(), /Sale Price cannot be greater than Regular Price/);
+
+  env.regular = '-5';
+  env.sale = '';
+  assert.match(editorHandler('validateBasics', env)(), /Regular Price.*cannot be negative/);
+
+  env.regular = '';
+  env.sale = '50';
+  assert.match(editorHandler('validateBasics', env)(), /Regular Price.*required when a Sale Price is set/);
+
+  env.regular = '';
+  env.sale = '';
+  env.offer = '10';
+  assert.match(editorHandler('validateBasics', env)(), /Regular Price.*required when an Offer Discount is set/);
+
+  // Variant term validation
+  env.regular = '100';
+  env.offer = '';
+  env.sale = '90';
+  env.productType = 'VARIABLE';
+  env.terms = [{ name: 'S', regularPrice: '50', salePrice: '60' }];
+  assert.match(editorHandler('validateBasics', env)(), /Sale Price cannot be greater than Regular Price for variant "S"/);
+
+  env.terms = [{ name: 'M', regularPrice: '', salePrice: '40' }];
+  env.regular = '';
+  env.sale = '';
+  assert.match(editorHandler('validateBasics', env)(), /Regular Price is required for variant "M"/);
+});
+
+test('validateBasics validates order quantities and positive dimensions', () => {
+  const env = { ...saveEnv(), validateProductImages };
+  env.name = 'Test';
+  env.minQty = '5';
+  env.maxQty = '2';
+  assert.match(editorHandler('validateBasics', env)(), /Maximum order quantity cannot be less than minimum order quantity/);
+
+  env.minQty = '0';
+  env.maxQty = '';
+  assert.match(editorHandler('validateBasics', env)(), /Minimum order quantity must be at least 1/);
+
+  env.minQty = '1';
+  env.weight = '0';
+  assert.match(editorHandler('validateBasics', env)(), /Weight must be a positive number greater than 0/);
+
+  env.weight = '-10';
+  assert.match(editorHandler('validateBasics', env)(), /Weight must be a positive number greater than 0/);
+
+  env.weight = '50';
+  env.packageLength = '0';
+  assert.match(editorHandler('validateBasics', env)(), /Package Length must be a positive number greater than 0/);
+});
+
+test('handleAddOptionToVariant splits comma-separated input into multiple distinct options', () => {
+  const state = {
+    types: [{ id: 'size', name: 'Size', terms: [] }],
+    selected: {},
+    inputs: { size: 'Red, Green, Blue' },
+    error: '',
+    notice: '',
+  };
+  const env = {
+    variantTypesList: state.types,
+    customOptionInputByVariant: state.inputs,
+    setVariantTypesList: (fn) => { state.types = typeof fn === 'function' ? fn(state.types) : fn; },
+    setSelectedOptionsByVariant: (fn) => { state.selected = typeof fn === 'function' ? fn(state.selected) : fn; },
+    setCustomOptionInputByVariant: (fn) => { state.inputs = typeof fn === 'function' ? fn(state.inputs) : fn; },
+    setError: (msg) => { state.error = msg; },
+    setVariantDoneNotice: (msg) => { state.notice = msg; },
+    uid: () => Math.random().toString(36).slice(2),
+  };
+
+  editorHandler('handleAddOptionToVariant', env)('size');
+
+  assert.deepEqual(state.types[0].terms.map(t => t.name), ['Red', 'Green', 'Blue']);
+  assert.deepEqual(state.selected.size, ['Red', 'Green', 'Blue']);
+  assert.equal(state.inputs.size, '');
+});
+
+test('variant weight must be an integer and syncProductVariants rounds fractional grams', async () => {
+  const env = { ...saveEnv(), validateProductImages };
+  env.name = 'Test Variable Product';
+  env.terms = [{ name: 'M', weightGrams: '0.89' }];
+  assert.match(editorHandler('validateBasics', env)(), /Weight for variant "M" must be a whole number in grams/);
+
+  env.terms = [{ name: 'M', weightGrams: '-5' }];
+  assert.match(editorHandler('validateBasics', env)(), /Weight for variant "M" must be a non-negative number/);
+
+  // syncProductVariants rounds fractional grams to integer
+  const vEnv = variantEnv();
+  vEnv.terms = [
+    {
+      key: 'term-1',
+      termId: 'term-1',
+      variantTypeId: 'size',
+      variantTypeName: 'Size',
+      name: 'M',
+      sku: 'SKU-M',
+      variantName: 'Size M',
+      unitCount: '1',
+      barcode: '',
+      weightGrams: '35.4',
+      regularPrice: '100',
+      salePrice: '',
+      stockQuantity: '10',
+      backendVariantId: 101,
+    },
+  ];
+  let updatedPayload = null;
+  vEnv.updateAdminProductVariant = async (_productId, _id, payload) => {
+    updatedPayload = payload;
+  };
+  await editorHandler('syncProductVariants', vEnv)(123);
+  assert.equal(updatedPayload?.weight_grams, 35);
+});
+
+test('syncProductVariants safely ignores 404 on deletion and self-heals 404 on update', async () => {
+  const env = variantEnv();
+  const term = (key, backendVariantId) => ({
+    key,
+    termId: key,
+    variantTypeId: 'size',
+    variantTypeName: 'Size',
+    name: key,
+    sku: '',
+    variantName: '',
+    unitCount: '',
+    barcode: '',
+    weightGrams: '50',
+    regularPrice: '100',
+    salePrice: '',
+    stockQuantity: '5',
+    backendVariantId,
+  });
+
+  // 1. Stale variant 179 in initialVariantIds that is already deleted on server (404)
+  env.initialVariantIds = [179];
+  env.terms = [term('M', 186)];
+  let deletedId = null;
+  env.deleteAdminProductVariant = async (_productId, id) => {
+    deletedId = id;
+    const err = new Error('Product variant not found');
+    err.status = 404;
+    throw err;
+  };
+
+  // 2. Term with stale backendVariantId 186 returns 404 on update and falls back to create
+  let updateCalledWith = null;
+  let createCalledWith = null;
+  env.updateAdminProductVariant = async (_productId, id, payload) => {
+    updateCalledWith = id;
+    const err = new Error('Product variant not found');
+    err.status = 404;
+    throw err;
+  };
+  env.createAdminProductVariant = async (_productId, payload) => {
+    createCalledWith = payload;
+    return { id: 200 };
+  };
+
+  await editorHandler('syncProductVariants', env)(123);
+
+  // Assertions:
+  assert.equal(deletedId, 179);
+  assert.deepEqual(env.initialVariantIds, [200]);
+  assert.equal(updateCalledWith, 186);
+  assert.ok(createCalledWith, 'createAdminProductVariant was called as a self-healing fallback');
+  assert.equal(env.terms[0].backendVariantId, 200);
+});

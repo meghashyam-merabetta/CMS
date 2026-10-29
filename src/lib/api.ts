@@ -1,7 +1,7 @@
 import { assertJsonRequestSize } from '@/lib/jsonRequest';
 
 const RAW_BASE_URL = (
-  process.env.NEXT_PUBLIC_API_URL || 'http://16.4.61.3:3000'
+  process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000'
 ).trim().replace(/\/+$/, '');
 
 // Ensure no duplicate /api segment if user includes /api in NEXT_PUBLIC_API_URL
@@ -82,7 +82,14 @@ export async function apiFetch<T>(
       : 'Request failed';
     try {
       const errorData = await res.json();
-      errorMessage = errorData?.error || errorData?.message || errorMessage;
+      if (errorData?.details && Array.isArray(errorData.details) && errorData.details.length > 0) {
+        const detailStr = errorData.details
+          .map((d: any) => (d?.message ? (d?.path ? `${d.path}: ${d.message}` : d.message) : String(d)))
+          .join(', ');
+        errorMessage = errorData.error ? `${errorData.error} (${detailStr})` : detailStr;
+      } else {
+        errorMessage = errorData?.error || errorData?.message || errorMessage;
+      }
     } catch {
       // fallback to default message if response has no JSON
     }

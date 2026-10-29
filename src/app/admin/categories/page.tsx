@@ -234,23 +234,20 @@ export default function CategoryManagementPage() {
   }, []);
 
   /**
-   * Loads root categories from GET /api/admin/categories?roots_only=true
+   * Loads all categories and extracts root categories in memory to prevent concurrent DB pool exhaustion
    */
   const loadCategories = useCallback(async () => {
     setIsLoading(true);
     setFetchError(null);
 
     try {
-      const [rootsRes, allList] = await Promise.all([
-        getAdminCategories({ roots_only: true, limit: 100, offset: 0 }),
-        getAllAdminCategories(),
-      ]);
-      const fetchedRoots = Array.isArray(rootsRes.data) ? rootsRes.data : [];
+      const allList = await getAllAdminCategories();
+      const fetchedRoots = allList.filter((c) => c.parent_category_id == null);
 
       setCategories(fetchedRoots);
-      setAllCategories(allList.length > 0 ? allList : fetchedRoots);
-      setTotalCount(allList.length || rootsRes.pagination?.total || fetchedRoots.length);
-      setHasMore(rootsRes.pagination?.hasMore ?? false);
+      setAllCategories(allList);
+      setTotalCount(allList.length);
+      setHasMore(false);
       setIsLive(true);
 
       // If a specific root category filter is selected, auto-expand that root category
@@ -418,7 +415,7 @@ export default function CategoryManagementPage() {
       });
       showToast(`Category "${created.category_name}" created successfully.`);
       setIsAddModalOpen(false);
-      await Promise.all([loadCategories(), refreshAllCategories()]);
+      await loadCategories();
       if (payload.parent_category_id) {
         setExpandedRootIds((prev) => new Set(prev).add(payload.parent_category_id!));
         await fetchSubCategoriesForRoot(payload.parent_category_id);
@@ -499,7 +496,7 @@ export default function CategoryManagementPage() {
       });
       showToast(`Category "${updated.category_name}" updated successfully.`);
       setEditingCategoryId(null);
-      await Promise.all([loadCategories(), refreshAllCategories()]);
+      await loadCategories();
       if (payload.parent_category_id) {
         setExpandedRootIds((prev) => new Set(prev).add(payload.parent_category_id!));
         await fetchSubCategoriesForRoot(payload.parent_category_id);
@@ -529,7 +526,7 @@ export default function CategoryManagementPage() {
       await deleteAdminCategory(catId);
       showToast(`Category "${categoryToDelete.category_name}" deleted successfully.`);
       setCategoryToDelete(null);
-      await Promise.all([loadCategories(), refreshAllCategories()]);
+      await loadCategories();
       if (parentIdToRefresh) {
         await fetchSubCategoriesForRoot(parentIdToRefresh);
       }

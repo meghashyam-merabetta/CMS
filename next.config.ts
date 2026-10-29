@@ -1,7 +1,7 @@
 import type { NextConfig } from "next";
 
 const BACKEND_ORIGIN = (
-  process.env.NEXT_PUBLIC_API_URL || "http://16.4.61.3:3000"
+  process.env.NEXT_PUBLIC_API_URL || "http://localhost:3000"
 )
   .trim()
   .replace(/\/+$/, "")

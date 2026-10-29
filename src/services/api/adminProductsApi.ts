@@ -174,16 +174,16 @@ function buildProductRequestBody(
 
   // Pricing & discount fields (send numbers, not strings)
   if (payload.regular_price !== undefined) {
-    body.regular_price =
-      payload.regular_price != null ? Number(payload.regular_price) : null;
+    const reg = payload.regular_price != null ? Number(payload.regular_price) : null;
+    body.regular_price = reg != null && !isNaN(reg) && reg >= 0 ? reg : null;
   }
   if (payload.sale_price !== undefined) {
-    body.sale_price =
-      payload.sale_price != null ? Number(payload.sale_price) : null;
+    const sale = payload.sale_price != null ? Number(payload.sale_price) : null;
+    body.sale_price = sale != null && !isNaN(sale) && sale >= 0 ? sale : null;
   }
   if (payload.offer_percent !== undefined) {
-    body.offer_percent =
-      payload.offer_percent != null ? Number(payload.offer_percent) : null;
+    const off = payload.offer_percent != null ? Number(payload.offer_percent) : null;
+    body.offer_percent = off != null && !isNaN(off) && off >= 0 ? off : null;
   }
   if (payload.special_discount_enabled !== undefined) {
     body.special_discount_enabled = Boolean(payload.special_discount_enabled);
@@ -206,10 +206,15 @@ function buildProductRequestBody(
     body.min_order_quantity = Math.max(1, Math.floor(Number(payload.min_order_quantity) || 1));
   }
   if (payload.max_order_quantity !== undefined) {
-    body.max_order_quantity =
+    const maxVal =
       payload.max_order_quantity != null && Number(payload.max_order_quantity) >= 1
         ? Math.floor(Number(payload.max_order_quantity))
         : null;
+    if (maxVal != null && body.min_order_quantity != null && maxVal < body.min_order_quantity) {
+      body.max_order_quantity = body.min_order_quantity;
+    } else {
+      body.max_order_quantity = maxVal;
+    }
   }
 
   // Categories
@@ -258,8 +263,8 @@ function buildProductRequestBody(
     }
   }
 
-  const nullableNumberSpecs = [
-    'gst_rate',
+  // Positive specifications (PostgreSQL / Zod .positive() requires > 0)
+  const positiveSpecs = [
     'weight',
     'unit_count',
     'package_length',
@@ -270,11 +275,18 @@ function buildProductRequestBody(
     'product_height',
   ] as const;
 
-  for (const field of nullableNumberSpecs) {
+  for (const field of positiveSpecs) {
     if (payload[field] !== undefined) {
       const val = payload[field];
-      body[field] = val != null && !isNaN(Number(val)) ? Number(val) : null;
+      const numVal = val != null && !isNaN(Number(val)) ? Number(val) : null;
+      body[field] = numVal != null && numVal > 0 ? numVal : null;
     }
+  }
+
+  if (payload.gst_rate !== undefined) {
+    const val = payload.gst_rate;
+    const numVal = val != null && !isNaN(Number(val)) ? Number(val) : null;
+    body.gst_rate = numVal != null && numVal >= 0 ? numVal : null;
   }
 
   if (payload.weight_unit !== undefined) {

@@ -957,7 +957,8 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
             liveAttrs
               .filter((a) => !IGNORED_VARIANT_KEYS.has((a.name || '').toLowerCase()))
               .forEach((attr) => {
-                const attrId = (attr.name || 'size').trim().toLowerCase();
+                const attrName = (attr.name || 'Size').trim();
+                const attrId = attrName;
                 const vals = Array.isArray(attr.values) ? attr.values : [];
                 discoveredTypes.set(attrId, {
                   id: attrId,
@@ -966,12 +967,12 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                 });
               });
 
-            if (!discoveredTypes.has('size')) {
-              discoveredTypes.set('size', {
-                id: 'size',
+            if (!discoveredTypes.has('Size') && !discoveredTypes.has('size')) {
+              discoveredTypes.set('Size', {
+                id: 'Size',
                 name: 'Size',
                 terms: ['S', 'M', 'L', 'XL', 'XXL'].map((val, i) => ({
-                  id: `size-opt-${i}`,
+                  id: `Size-opt-${i}`,
                   name: val,
                 })),
               });
@@ -1011,7 +1012,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                   `Size ${idx + 1}`;
               }
 
-              const canonicalId = (attrName || 'size').trim().toLowerCase();
+              const canonicalId = (attrName || 'Size').trim();
               let vtEntry = discoveredTypes.get(canonicalId);
               if (!vtEntry) {
                 vtEntry = {
@@ -1023,7 +1024,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
               }
               if (
                 !vtEntry.terms.some(
-                  (t) => t.name.trim().toLowerCase() === attrVal.trim().toLowerCase()
+                  (t) => t.name.trim() === attrVal.trim()
                 )
               ) {
                 vtEntry.terms.push({
@@ -1033,7 +1034,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
               }
 
               // Deduplicate loaded terms by (variantTypeId, optionName) so duplicate tabs never appear
-              const comboKey = `${vtEntry.id}::${attrVal.trim().toLowerCase()}`;
+              const comboKey = `${vtEntry.id}::${attrVal.trim()}`;
               if (seenTermCombo.has(comboKey)) {
                 return;
               }
@@ -1045,7 +1046,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
               }
               if (
                 !loadedSelectedOpts[vtEntry.id].some(
-                  (o) => o.toLowerCase() === attrVal.trim().toLowerCase()
+                  (o) => o === attrVal.trim()
                 )
               ) {
                 loadedSelectedOpts[vtEntry.id].push(attrVal);
@@ -1095,7 +1096,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                 for (const t of vt.terms) {
                   if (
                     !mergedTerms.some(
-                      (m) => m.name.trim().toLowerCase() === t.name.trim().toLowerCase()
+                      (m) => m.name.trim() === t.name.trim()
                     )
                   ) {
                     mergedTerms.push(t);
@@ -1204,6 +1205,100 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
     }
     if (uncertainImageUpload.current) {
       return 'An image upload could not be verified. Reload this product to check its saved images before retrying.';
+    }
+
+    const parseNum = (v: any): number | null => {
+      if (typeof v === 'number') return Number.isFinite(v) ? v : null;
+      if (typeof v !== 'string' || !v.trim()) return null;
+      const n = Number(v);
+      return Number.isFinite(n) ? n : null;
+    };
+
+    // Pricing & Discount Validation
+    const regNum = parseNum(typeof regular !== 'undefined' ? regular : '');
+    const saleNum = parseNum(typeof sale !== 'undefined' ? sale : '');
+    const offerNum = parseNum(typeof offer !== 'undefined' ? offer : '');
+
+    if (regNum != null && regNum < 0) {
+      return 'Regular Price (MRP) cannot be negative.';
+    }
+    if (saleNum != null && saleNum < 0) {
+      return 'Sale Price cannot be negative.';
+    }
+    if (saleNum != null && saleNum > 0 && regNum == null) {
+      return 'Regular Price (MRP) is required when a Sale Price is set.';
+    }
+    if (offerNum != null && offerNum > 0 && regNum == null) {
+      return 'Regular Price (MRP) is required when an Offer Discount is set.';
+    }
+    if (regNum != null && saleNum != null && saleNum > regNum) {
+      return 'Sale Price cannot be greater than Regular Price (MRP).';
+    }
+
+    // Order Quantities Validation
+    const minNum = parseNum(typeof minQty !== 'undefined' ? minQty : '');
+    const maxNum = parseNum(typeof maxQty !== 'undefined' ? maxQty : '');
+    if (minNum != null && minNum < 1) {
+      return 'Minimum order quantity must be at least 1.';
+    }
+    if (minNum != null && maxNum != null && maxNum < minNum) {
+      return 'Maximum order quantity cannot be less than minimum order quantity.';
+    }
+
+    // Positive-only specifications (Weight, Dimensions, Unit Count)
+    const positiveSpecs: [any, string][] = [
+      [typeof weight !== 'undefined' ? weight : '', 'Weight'],
+      [typeof unitCount !== 'undefined' ? unitCount : '', 'Unit Count'],
+      [typeof packageLength !== 'undefined' ? packageLength : '', 'Package Length'],
+      [typeof packageBreadth !== 'undefined' ? packageBreadth : '', 'Package Breadth'],
+      [typeof packageHeight !== 'undefined' ? packageHeight : '', 'Package Height'],
+      [typeof productLength !== 'undefined' ? productLength : '', 'Product Length'],
+      [typeof productBreadth !== 'undefined' ? productBreadth : '', 'Product Breadth'],
+      [typeof productHeight !== 'undefined' ? productHeight : '', 'Product Height'],
+    ];
+    for (const [val, label] of positiveSpecs) {
+      if (typeof val === 'string' && val.trim() !== '') {
+        const n = Number(val);
+        if (!Number.isFinite(n) || n <= 0) {
+          return `${label} must be a positive number greater than 0.`;
+        }
+      }
+    }
+
+    if (typeof terms !== 'undefined' && Array.isArray(terms)) {
+      for (const t of terms) {
+        const termLabel = t.name || 'option';
+        const termReg = parseNum(t.regularPrice) ?? regNum;
+        const termSale = parseNum(t.salePrice);
+
+        if (t.regularPrice && typeof t.regularPrice === 'string' && t.regularPrice.trim() !== '') {
+          const tr = parseNum(t.regularPrice);
+          if (tr != null && tr < 0) {
+            return `Regular Price cannot be negative for variant "${termLabel}".`;
+          }
+        }
+        if (termSale != null) {
+          if (termSale < 0) {
+            return `Sale Price cannot be negative for variant "${termLabel}".`;
+          }
+          if (termReg == null) {
+            return `Regular Price is required for variant "${termLabel}" when a Sale Price is set.`;
+          }
+          if (termSale > termReg) {
+            return `Sale Price cannot be greater than Regular Price for variant "${termLabel}".`;
+          }
+        }
+
+        if (t.weightGrams && typeof t.weightGrams === 'string' && t.weightGrams.trim() !== '') {
+          const w = Number(t.weightGrams);
+          if (!Number.isFinite(w) || w < 0) {
+            return `Weight for variant "${termLabel}" must be a non-negative number in grams.`;
+          }
+          if (!Number.isInteger(w)) {
+            return `Weight for variant "${termLabel}" must be a whole number in grams (integers only, e.g. 890 instead of 0.89).`;
+          }
+        }
+      }
     }
     return validateProductImages(
       images.flatMap((image) => image.file ? [image.file] : []),
@@ -1398,18 +1493,6 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
     if (openTerm === termToRemove.key) {
       setOpenTerm(remainingAll[0]?.key ?? null);
     }
-
-    // If editing an existing product and this term exists in the backend DB, delete it immediately
-    if (editId && termToRemove.backendVariantId != null) {
-      try {
-        await deleteAdminProductVariant(editId, termToRemove.backendVariantId);
-        setInitialVariantIds((prev) =>
-          prev.filter((id) => String(id) !== String(termToRemove.backendVariantId))
-        );
-      } catch (err) {
-        console.warn('Could not delete variant from backend:', err);
-      }
-    }
   }
 
   function toggleVariantType(id: string) {
@@ -1418,7 +1501,6 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
     setVariantDoneNotice('');
     const isAlreadySelected = selectedVariantTypeIds.includes(id);
     if (isAlreadySelected) {
-      const removedTerms = terms.filter((t) => t.variantTypeId === id);
       const remainingIds = selectedVariantTypeIds.filter((x) => x !== id);
       setSelectedVariantTypeIds(remainingIds);
       setTerms((prev) => prev.filter((t) => t.variantTypeId !== id));
@@ -1434,19 +1516,6 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
       });
       if (activeVariantTabId === id) {
         setActiveVariantTabId(remainingIds[0] || '');
-      }
-      if (editId) {
-        removedTerms.forEach((rt) => {
-          if (rt.backendVariantId != null) {
-            void deleteAdminProductVariant(editId, rt.backendVariantId)
-              .then(() => {
-                setInitialVariantIds((prev) =>
-                  prev.filter((vid) => String(vid) !== String(rt.backendVariantId))
-                );
-              })
-              .catch(() => {});
-          }
-        });
       }
       return;
     }
@@ -1557,7 +1626,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
   }
 
   function handleAddCustomVariantType() {
-    const trimmed = customVariantTypeName.trim();
+    const trimmed = customVariantTypeName.replace(/,/g, ' ').trim();
     if (!trimmed) return;
     const newId = trimmed.toLowerCase();
     const defaultTermKey = `${newId}-opt-1`;
@@ -1581,36 +1650,51 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
   function handleAddOptionToVariant(variantId: string) {
     const vt = variantTypesList.find((v) => v.id === variantId);
     if (!vt) return;
-    const rawName = (customOptionInputByVariant[variantId] || '').trim();
-    if (!rawName) return;
+    const rawInput = (customOptionInputByVariant[variantId] || '').trim();
+    if (!rawInput) return;
     setError('');
     setVariantDoneNotice('');
 
-    // 1. Add option to variantTypesList if not already present (case-insensitive)
+    // Split on comma so comma-separated entries create distinct options and prevent backend 422 comma errors
+    const rawNames = rawInput
+      .split(',')
+      .map((s) => s.trim())
+      .filter((s) => Boolean(s));
+
+    if (rawNames.length === 0) return;
+
+    // 1. Add options to variantTypesList if not already present (case-insensitive)
     setVariantTypesList((prev) =>
       prev.map((item) => {
         if (item.id !== variantId) return item;
-        const alreadyInList = item.terms.some(
-          (t) => t.name.trim().toLowerCase() === rawName.toLowerCase()
-        );
-        if (alreadyInList) return item;
+        const newTerms = [...item.terms];
+        for (const name of rawNames) {
+          const alreadyInList = newTerms.some(
+            (t) => t.name.trim().toLowerCase() === name.toLowerCase()
+          );
+          if (!alreadyInList) {
+            newTerms.push({ id: `${variantId}-opt-${uid()}`, name });
+          }
+        }
         return {
           ...item,
-          terms: [
-            ...item.terms,
-            { id: `${variantId}-opt-${uid()}`, name: rawName },
-          ],
+          terms: newTerms,
         };
       })
     );
 
-    // 2. Automatically mark the new option as selected in selectedOptionsByVariant (without duplicates)
+    // 2. Automatically mark the new options as selected in selectedOptionsByVariant (without duplicates)
     setSelectedOptionsByVariant((prev) => {
       const current = prev[variantId] || [];
-      const exists = current.some((o) => o.trim().toLowerCase() === rawName.toLowerCase());
+      const updated = [...current];
+      for (const name of rawNames) {
+        if (!updated.some((o) => o.trim().toLowerCase() === name.toLowerCase())) {
+          updated.push(name);
+        }
+      }
       return {
         ...prev,
-        [variantId]: exists ? current : [...current, rawName],
+        [variantId]: updated,
       };
     });
 
@@ -1628,7 +1712,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
       const attrName = (t.variantTypeName || 'Size').trim();
       const optVal = t.name.trim();
       if (!optVal) continue;
-      const comboKey = `${attrName.toLowerCase()}::${optVal.toLowerCase()}`;
+      const comboKey = `${attrName}::${optVal}`;
       if (seenAttrCombos.has(comboKey)) continue;
       seenAttrCombos.add(comboKey);
       uniqueTerms.push(t);
@@ -1649,9 +1733,11 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
       }
     }
     for (const [key, attribute] of groupedByAttr) {
-      const existing = liveAttrs.find(
-        (item) => (item.name || '').trim().toLowerCase() === key.toLowerCase()
-      );
+      const existing =
+        liveAttrs.find((item) => (item.name || '').trim() === key) ||
+        liveAttrs.find(
+          (item) => (item.name || '').trim().toLowerCase() === key.toLowerCase()
+        );
       if (!existing) {
         await createAdminVariantAttribute({ name: attribute.name, values: [...attribute.values] });
       } else {
@@ -1668,7 +1754,16 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
     );
     for (const oldId of initialVariantIds) {
       if (!currentVariantIds.has(String(oldId))) {
-        await deleteAdminProductVariant(targetProductId, oldId);
+        try {
+          await deleteAdminProductVariant(targetProductId, oldId);
+        } catch (err: any) {
+          const is404 =
+            err?.status === 404 ||
+            (err instanceof Error && /not found/i.test(err.message));
+          if (!is404) {
+            throw err;
+          }
+        }
         setInitialVariantIds((prev) => prev.filter((id) => String(id) !== String(oldId)));
       }
     }
@@ -1703,7 +1798,11 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
         attributes: mergeVariantAttributes(t.attributes, attrName, optVal),
         variant_name: resolvedVariantName || null,
         barcode: t.barcode.trim() || null,
-        weight_grams: num(t.weightGrams),
+        weight_grams: (() => {
+          const w = num(t.weightGrams);
+          if (w == null) return null;
+          return Math.max(0, Math.round(w));
+        })(),
         regular_price: num(t.regularPrice) ?? num(regular) ?? 0,
         sale_price: num(t.salePrice),
         stock_quantity: Math.max(0, Math.floor(num(t.stockQuantity) ?? 0)),
@@ -1711,7 +1810,22 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
       };
 
       if (t.backendVariantId != null) {
-        await updateAdminProductVariant(targetProductId, t.backendVariantId, variantPayload);
+        try {
+          await updateAdminProductVariant(targetProductId, t.backendVariantId, variantPayload);
+        } catch (err: any) {
+          const is404 =
+            err?.status === 404 ||
+            (err instanceof Error && /not found/i.test(err.message));
+          if (is404) {
+            // Variant record was deleted or not found on the server; recreate it transparently
+            const created = await createAdminProductVariant(targetProductId, variantPayload);
+            if (created?.id == null) throw new Error('The server did not return the saved variant ID.');
+            patchTerm(t.key, { backendVariantId: created.id });
+            setInitialVariantIds((prev) => [...prev, created.id]);
+          } else {
+            throw err;
+          }
+        }
       } else {
         const created = await createAdminProductVariant(targetProductId, variantPayload);
         if (created?.id == null) throw new Error('The server did not return the saved variant ID.');
@@ -3466,7 +3580,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                                       id={`term-weight-${t.key}`}
                                       type="number"
                                       min="0"
-                                      step="0.01"
+                                      step="1"
                                       value={t.weightGrams}
                                       onChange={(e) => patchTerm(t.key, { weightGrams: e.target.value })}
                                       placeholder="Eg: 450"

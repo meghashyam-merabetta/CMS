@@ -47,3 +47,15 @@ test('a server-side 413 without JSON has an actionable error', async (t) => {
   t.mock.method(global, 'fetch', async () => new Response('Request too large', { status: 413 }));
   await assert.rejects(apiFetch('/api/admin/products/123', { method: 'PATCH', body: '{}' }), /too large/);
 });
+
+test('a server-side 422 with details includes validation path and message in error', async (t) => {
+  t.mock.method(global, 'fetch', async () => new Response(JSON.stringify({
+    error: 'Validation failed',
+    details: [{ path: 'weight_grams', message: 'Invalid input: expected int, received number' }],
+  }), { status: 422, headers: { 'Content-Type': 'application/json' } }));
+
+  await assert.rejects(
+    apiFetch('/api/admin/products/123/variants', { method: 'POST', body: '{}' }),
+    /Validation failed.*weight_grams.*expected int/
+  );
+});
