@@ -111,7 +111,6 @@ export async function getAdminCategoriesTree(params?: {
   return Array.isArray(res.data) ? res.data : [];
 }
 
-
 export async function getAllAdminCategories(): Promise<BackendCategory[]> {
   return collectAllPages(
     (offset, limit) => getAdminCategories({ limit, offset }),
@@ -119,15 +118,12 @@ export async function getAllAdminCategories(): Promise<BackendCategory[]> {
   );
 }
 
-
 export async function getAdminCategoryById(
   categoryId: number | string
 ): Promise<BackendCategory> {
   const res = await apiFetch<any>(`/api/admin/categories/${categoryId}`);
   return res?.data ?? res;
 }
-
-
 export async function createAdminCategory(
   payload: CreateCategoryPayload
 ): Promise<BackendCategory> {
@@ -153,7 +149,6 @@ export async function createAdminCategory(
   });
   return res?.data ?? res;
 }
-
 
 export async function updateAdminCategory(
   categoryId: number | string,
@@ -192,12 +187,26 @@ export async function updateAdminCategory(
   return res?.data ?? res;
 }
 
+/**
+ * Validates a category ID before sending a request.
+ */
+function validateCategoryId(categoryId: number | string): number {
+  const id = Number(categoryId);
+
+  if (!Number.isSafeInteger(id) || id <= 0) {
+    throw new Error('Please provide a valid category ID.');
+  }
+
+  return id;
+}
+
 
 export async function deleteAdminCategory(
   categoryId: number | string
 ): Promise<void> {
-  await apiFetch(`/api/admin/categories/${categoryId}`, {
+  const id = validateCategoryId(categoryId);
+
+  await apiFetch<void>(`${ADMIN_CATEGORIES_ENDPOINT}/${id}`, {
     method: 'DELETE',
-    body: JSON.stringify({}),
   });
 }

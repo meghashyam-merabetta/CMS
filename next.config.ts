@@ -13,6 +13,7 @@ const nextConfig: NextConfig = {
     "192.168.1.45",
     "192.168.1.*",
     "192.168.*.*",
+    "16.4.61.3",
     "*.local",
   ],
   turbopack: {
