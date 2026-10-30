@@ -234,20 +234,23 @@ export default function CategoryManagementPage() {
   }, []);
 
   /**
-   * Loads all categories and extracts root categories in memory to prevent concurrent DB pool exhaustion
+   * Loads root categories from GET /api/admin/categories?roots_only=true
    */
   const loadCategories = useCallback(async () => {
     setIsLoading(true);
     setFetchError(null);
 
     try {
-      const allList = await getAllAdminCategories();
-      const fetchedRoots = allList.filter((c) => c.parent_category_id == null);
+      const [rootsRes, allList] = await Promise.all([
+        getAdminCategories({ roots_only: true, limit: 100, offset: 0 }),
+        getAllAdminCategories(),
+      ]);
+      const fetchedRoots = Array.isArray(rootsRes.data) ? rootsRes.data : [];
 
       setCategories(fetchedRoots);
-      setAllCategories(allList);
-      setTotalCount(allList.length);
-      setHasMore(false);
+      setAllCategories(allList.length > 0 ? allList : fetchedRoots);
+      setTotalCount(allList.length || rootsRes.pagination?.total || fetchedRoots.length);
+      setHasMore(rootsRes.pagination?.hasMore ?? false);
       setIsLive(true);
 
       // If a specific root category filter is selected, auto-expand that root category
@@ -415,7 +418,7 @@ export default function CategoryManagementPage() {
       });
       showToast(`Category "${created.category_name}" created successfully.`);
       setIsAddModalOpen(false);
-      await loadCategories();
+      await Promise.all([loadCategories(), refreshAllCategories()]);
       if (payload.parent_category_id) {
         setExpandedRootIds((prev) => new Set(prev).add(payload.parent_category_id!));
         await fetchSubCategoriesForRoot(payload.parent_category_id);
@@ -496,7 +499,7 @@ export default function CategoryManagementPage() {
       });
       showToast(`Category "${updated.category_name}" updated successfully.`);
       setEditingCategoryId(null);
-      await loadCategories();
+      await Promise.all([loadCategories(), refreshAllCategories()]);
       if (payload.parent_category_id) {
         setExpandedRootIds((prev) => new Set(prev).add(payload.parent_category_id!));
         await fetchSubCategoriesForRoot(payload.parent_category_id);
@@ -509,33 +512,66 @@ export default function CategoryManagementPage() {
     }
   };
 
-  /* ------------------------------------------------------------------ */
-  /* Delete Category Handlers                                           */
-  /* ------------------------------------------------------------------ */
-  const handleDeleteConfirm = async () => {
-    if (!categoryToDelete) return;
-    const catId = categoryToDelete.category_id ?? (typeof categoryToDelete.id === 'number' ? categoryToDelete.id : Number(categoryToDelete.id));
-    if (!catId) return;
 
-    setIsSubmitting(true);
-    try {
-      const parentIdToRefresh =
-        categoryToDelete.parent_category_id != null
-          ? Number(categoryToDelete.parent_category_id)
-          : null;
-      await deleteAdminCategory(catId);
-      showToast(`Category "${categoryToDelete.category_name}" deleted successfully.`);
-      setCategoryToDelete(null);
-      await loadCategories();
-      if (parentIdToRefresh) {
-        await fetchSubCategoriesForRoot(parentIdToRefresh);
-      }
-    } catch (err: any) {
-      showToast(err.message || 'Failed to delete category.', 'error');
-    } finally {
-      setIsSubmitting(false);
+  
+const handleDeleteConfirm = async () => {
+  if (!categoryToDelete || isSubmitting) return;
+
+  const rawId =
+    categoryToDelete.category_id ?? categoryToDelete.id;
+  const catId = Number(rawId);
+
+  if (!Number.isSafeInteger(catId) || catId <= 0) {
+    showToast('Cannot delete: invalid category ID.', 'error');
+    return;
+  }
+
+  setIsSubmitting(true);
+
+  try {
+    const rawParentId = categoryToDelete.parent_category_id;
+    const parsedParentId =
+      rawParentId != null ? Number(rawParentId) : null;
+
+    const parentIdToRefresh =
+      parsedParentId !== null &&
+      Number.isSafeInteger(parsedParentId) &&
+      parsedParentId > 0
+        ? parsedParentId
+        : null;
+
+    const deletedName = categoryToDelete.category_name;
+    const isSubcategory = rawParentId != null;
+
+    // Wait for the backend to confirm deletion.
+    await deleteAdminCategory(catId);
+
+    setCategoryToDelete(null);
+
+    showToast(
+      `${isSubcategory ? 'Subcategory' : 'Category'} "${deletedName}" deleted successfully.`
+    );
+
+    // Refresh the lists after successful deletion.
+    await Promise.all([
+      loadCategories(),
+      refreshAllCategories(),
+    ]);
+
+    if (parentIdToRefresh !== null) {
+      await fetchSubCategoriesForRoot(parentIdToRefresh);
     }
-  };
+  } catch (error: unknown) {
+    const message =
+      error instanceof Error
+        ? error.message
+        : 'Failed to delete category. Please try again.';
+
+    showToast(message, 'error');
+  } finally {
+    setIsSubmitting(false);
+  }
+};
 
   // Determine descendants to prevent circular hierarchy assignment
   const disabledParentIdsForEdit = useMemo(() => {
