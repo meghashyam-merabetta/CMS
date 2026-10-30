@@ -98,6 +98,8 @@ function mapBackendProductToRecord(
       ? 'PUBLISHED'
       : rawStatus === 'draft'
       ? 'DRAFT'
+      : rawStatus === 'inactive'
+      ? 'INACTIVE'
       : 'ARCHIVED';
 
   return {
@@ -454,6 +456,8 @@ export default function ProductManagementPage() {
               ? ('active' as const)
               : selectedStatus === 'DRAFT'
               ? ('draft' as const)
+              : selectedStatus === 'INACTIVE'
+              ? ('inactive' as const)
               : selectedStatus === 'ARCHIVED'
               ? ('archived' as const)
               : undefined,
@@ -583,6 +587,8 @@ export default function ProductManagementPage() {
           ? 'active'
           : product.statusCode === 'DRAFT'
           ? 'draft'
+          : product.statusCode === 'INACTIVE'
+          ? 'inactive'
           : 'archived',
       short_description: '',
       description: '',
@@ -889,6 +895,7 @@ export default function ProductManagementPage() {
             <option value="">Status: All</option>
             <option value="PUBLISHED">Published</option>
             <option value="DRAFT">Draft</option>
+            <option value="INACTIVE">Inactive</option>
             <option value="ARCHIVED">Archived</option>
           </select>
           <ChevronDown
@@ -984,6 +991,8 @@ export default function ProductManagementPage() {
                               ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
                               : p.statusCode === 'DRAFT'
                               ? 'bg-amber-50 text-amber-700 border border-amber-200'
+                              : p.statusCode === 'INACTIVE'
+                              ? 'bg-rose-50 text-rose-700 border border-rose-200'
                               : 'bg-gray-100 text-gray-600 border border-gray-200'
                           }`}
                         >

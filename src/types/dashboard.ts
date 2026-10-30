@@ -89,7 +89,7 @@ export interface ProductRecord {
   price: number;
   originalPrice?: number;
   stock: number;
-  statusCode: 'PUBLISHED' | 'DRAFT' | 'ARCHIVED';
+  statusCode: 'PUBLISHED' | 'DRAFT' | 'INACTIVE' | 'ARCHIVED';
   image?: string;
   createdAt: string;
 }
