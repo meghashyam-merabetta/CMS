@@ -99,3 +99,54 @@ export function validateProductDetails(values: ProductDetailValues): string {
   if (values.seller_pincodes && values.seller_pincodes.trim().split(/[\s,]+/).some((pin) => !/^[1-9]\d{5}$/.test(pin))) return 'Enter valid six-digit delivery PIN codes.';
   return '';
 }
+
+/**
+ * Generates Manufacturer SKU following the formula:
+ * MB-[COMPANY-FIRST-LAST]-[VARIANT-INDEX]
+ * E.g. Company "ARREX", index 1 -> "MB-AX-001"
+ * E.g. Company "Sun Pharma", index 2 -> "MB-SA-002"
+ */
+export function generateManufacturerSku(
+  companyOrBrand?: string | null,
+  variantIndex: number = 1
+): string {
+  const companyClean = (companyOrBrand || '')
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, '');
+
+  let companyCode = 'XX';
+  if (companyClean.length >= 2) {
+    companyCode = `${companyClean[0]}${companyClean[companyClean.length - 1]}`;
+  } else if (companyClean.length === 1) {
+    companyCode = `${companyClean[0]}X`;
+  }
+
+  const paddedIndex = String(Math.max(1, Math.floor(variantIndex))).padStart(3, '0');
+  return `MB-${companyCode}-${paddedIndex}`;
+}
+
+/**
+ * Generates Model Number following the formula (Option A):
+ * MD-[CAT-CODE]-[PRODUCT-ID]
+ * E.g. Category "Wheelchairs", Product ID 998844 -> "MD-WHE-998844"
+ * If no Product ID is assigned yet (new product), uses a random 4-digit number e.g. "MD-WHE-4821"
+ */
+export function generateModelNumber(
+  categoryName?: string | null,
+  productId?: string | number | null
+): string {
+  const catClean = (categoryName || '')
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, '');
+
+  const catCode = (catClean.slice(0, 3) || 'GEN').padEnd(3, 'X');
+
+  let idPart = '';
+  if (productId != null && String(productId).trim() !== '' && !isNaN(Number(productId))) {
+    idPart = String(productId).trim();
+  } else {
+    idPart = String(Math.floor(1000 + Math.random() * 9000));
+  }
+
+  return `MD-${catCode}-${idPart}`;
+}

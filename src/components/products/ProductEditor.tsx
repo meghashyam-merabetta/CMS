@@ -44,7 +44,14 @@ import {
 import { ProductStatus, WeightUnit, DimensionUnit } from '@/types/api';
 import { mergeVariantAttributes } from '@/lib/productCatalog';
 import AdditionalProductDetails, { ProductDetailSummary } from './AdditionalProductDetails';
-import { readProductDetails, serializeProductDetails, validateProductDetails, ProductDetailValues } from '@/lib/productDetails';
+import {
+  readProductDetails,
+  serializeProductDetails,
+  validateProductDetails,
+  ProductDetailValues,
+  generateManufacturerSku,
+  generateModelNumber,
+} from '@/lib/productDetails';
 
 /* ------------------------------------------------------------------ */
 /* Option data & types                                                */
@@ -1922,9 +1929,39 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
       packer_address: (sameAsManufacturer ? companyAddress : packerAddress).trim() || null,
       keywords: parsedKeywords,
       ...(() => {
+        const effectiveBrandName =
+          typeof brandName !== 'undefined' && brandName !== 'Unbranded'
+            ? brandName
+            : typeof brand !== 'undefined'
+            ? brand
+            : '';
+        const effectiveCompany = (companyName || '').trim() || effectiveBrandName;
+        const effectiveCategory =
+          typeof category !== 'undefined' && category?.name
+            ? (typeof subCategoryId !== 'undefined' && subCategoryId
+                ? category?.subs?.find((s) => s.id === subCategoryId)?.name
+                : null) || category.name
+            : typeof categoryId !== 'undefined'
+            ? categoryId
+            : '';
+
+        const autoManufacturerSku = additionalDetails.manufacturer_sku?.trim()
+          ? additionalDetails.manufacturer_sku.trim()
+          : typeof generateManufacturerSku === 'function'
+          ? generateManufacturerSku(effectiveCompany, 1)
+          : null;
+
+        const autoModelNumber = additionalDetails.model_number?.trim()
+          ? additionalDetails.model_number.trim()
+          : typeof generateModelNumber === 'function'
+          ? generateModelNumber(effectiveCategory, typeof editId !== 'undefined' ? editId : null)
+          : null;
+
         const detailsObj = serializeProductDetails(
           {
             ...additionalDetails,
+            ...(autoManufacturerSku ? { manufacturer_sku: autoManufacturerSku } : {}),
+            ...(autoModelNumber ? { model_number: autoModelNumber } : {}),
             ...(typeof productLength !== 'undefined' ? { product_length: productLength } : {}),
             ...(typeof productBreadth !== 'undefined' ? { product_breadth: productBreadth } : {}),
             ...(typeof productHeight !== 'undefined' ? { product_height: productHeight } : {}),
@@ -2032,6 +2069,31 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
       setCreatedProductId(String(savedId));
       // Preserve the new ID on reload, including after an uncertain upload result.
       window.history.replaceState(null, '', `/admin/products/edit?id=${encodeURIComponent(savedId)}`);
+
+      // If model_number was auto-generated, update it with the real product ID (Option A)
+      if (
+        typeof additionalDetails !== 'undefined' &&
+        !additionalDetails.model_number?.trim() &&
+        typeof generateModelNumber === 'function'
+      ) {
+        const effectiveCategory =
+          typeof category !== 'undefined' && category?.name
+            ? (typeof subCategoryId !== 'undefined' && subCategoryId
+                ? category?.subs?.find((s) => s.id === subCategoryId)?.name
+                : null) || category.name
+            : typeof categoryId !== 'undefined'
+            ? categoryId
+            : '';
+        const realModelNumber = generateModelNumber(effectiveCategory, savedId);
+        try {
+          await updateAdminProduct(savedId, { model_number: realModelNumber });
+          if (typeof setAdditionalDetails === 'function') {
+            setAdditionalDetails((prev) => ({ ...prev, model_number: realModelNumber }));
+          }
+        } catch {
+          // non-blocking
+        }
+      }
     }
     setInitialAdditionalDetails({ ...additionalDetails });
 
@@ -4001,7 +4063,13 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
               </section>
             </div>
           </div>
-          <AdditionalProductDetails values={additionalDetails} onChange={setAdditionalDetails} />
+          <AdditionalProductDetails
+            values={additionalDetails}
+            onChange={setAdditionalDetails}
+            companyName={companyName.trim() || (brandName !== 'Unbranded' ? brandName : '')}
+            categoryName={(subCategoryId ? category?.subs.find((s) => s.id === subCategoryId)?.name : null) || category?.name || ''}
+            productId={editId}
+          />
           </fieldset>
         </form>
       </section>

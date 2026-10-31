@@ -64,3 +64,18 @@ test('the section renders labelled controls and the preview shows entered values
   assert.match(summary, /MODEL-42/);
   assert.match(summary, />No</);
 });
+
+test('generateManufacturerSku generates MB-[COMPANY-FIRST-LAST]-[INDEX] format', () => {
+  assert.equal(details.generateManufacturerSku('ARREX', 1), 'MB-AX-001');
+  assert.equal(details.generateManufacturerSku('Sun Pharma', 2), 'MB-SA-002');
+  assert.equal(details.generateManufacturerSku('Z', 3), 'MB-ZX-003');
+  assert.equal(details.generateManufacturerSku('', 1), 'MB-XX-001');
+  assert.equal(details.generateManufacturerSku(null, 10), 'MB-XX-010');
+});
+
+test('generateModelNumber generates MD-[CAT-CODE]-[PRODUCT-ID] format', () => {
+  assert.equal(details.generateModelNumber('Wheelchairs', 998844), 'MD-WHE-998844');
+  assert.equal(details.generateModelNumber('Mobility Aids', '102'), 'MD-MOB-102');
+  assert.match(details.generateModelNumber('Wheelchairs', null), /^MD-WHE-\d{4}$/);
+  assert.match(details.generateModelNumber('', null), /^MD-GEN-\d{4}$/);
+});
