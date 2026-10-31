@@ -996,6 +996,46 @@ test('the merged size/colour matrix preserves saved image owners and staged file
   assert.equal(env.terms.filter(term => term.backendVariantId == null).length, 3);
 });
 
+test('a custom variant field and user-entered options persist through the existing attribute and variant APIs', async () => {
+  const env = variantEnv(); let sequence = 0;
+  Object.assign(env, {
+    customVariantTypeName: 'Material', variantTypesList: [], selectedVariantTypeIds: [], selectedOptionsByVariant: {}, customOptionInputByVariant: {},
+    uid: () => String(++sequence), unitCount: '', barcode: '', defaultWeightGrams: '',
+    setVariantTypesList(update) { env.variantTypesList = update(env.variantTypesList); },
+    setSelectedVariantTypeIds(update) { env.selectedVariantTypeIds = update(env.selectedVariantTypeIds); },
+    setSelectedOptionsByVariant(update) { env.selectedOptionsByVariant = update(env.selectedOptionsByVariant); },
+    setCustomOptionInputByVariant(update) { env.customOptionInputByVariant = update(env.customOptionInputByVariant); },
+    setActiveVariantTabId(value) { env.active = value; }, setCustomVariantTypeName(value) { env.customVariantTypeName = value; },
+    setShowNewVariantField() {}, setError(value) { env.error = value; }, setVariantDoneNotice() {}, setTab() {}, setOpenTerm() {},
+    setTerms(value) { env.terms = value; },
+  });
+  editorHandler('handleAddCustomVariantType', env)();
+  assert.deepEqual(env.variantTypesList[0].terms, []); // No fabricated Option 1.
+  env.customOptionInputByVariant[env.active] = 'Cotton, Steel';
+  editorHandler('handleAddOptionToVariant', env)(env.active);
+  editorHandler('handleConfirmVariantsDone', env)();
+  const attributes = [], payloads = [];
+  env.createAdminVariantAttribute = async payload => { attributes.push(payload); };
+  env.createAdminProductVariant = async (_id, payload) => { payloads.push(payload); return { id: payloads.length }; };
+  await editorHandler('syncProductVariants', env)(123);
+  assert.deepEqual(attributes, [{ name: 'Material', values: ['Cotton', 'Steel'] }]);
+  assert.deepEqual(payloads.map(value => value.attributes), [{ Material: 'Cotton' }, { Material: 'Steel' }]);
+});
+
+test('custom field names reuse existing backend definitions and reject names that cannot round-trip', () => {
+  const env = {
+    customVariantTypeName: ' size ', variantTypesList: [{ id: 'backend-size', name: 'Size', terms: [{ name: 'M' }] }], terms: [],
+    setVariantTypesList() { assert.fail('Do not duplicate Size'); },
+    setSelectedVariantTypeIds(update) { env.selected = update([]); }, setSelectedOptionsByVariant(update) { env.options = update({ 'backend-size': ['M'] }); },
+    setActiveVariantTabId(value) { env.active = value; }, setCustomVariantTypeName() {}, setShowNewVariantField() {}, setError(value) { env.error = value; },
+  };
+  const add = editorHandler('handleAddCustomVariantType', env); add();
+  assert.deepEqual(env.selected, ['backend-size']); assert.deepEqual(env.options['backend-size'], ['M']);
+  for (const invalid of ['', 'Size, Colour', 'x'.repeat(101), 'hsn_code', '__proto__']) {
+    env.customVariantTypeName = invalid; add(); assert.ok(env.error);
+  }
+});
+
 test('variant weight auto-inherits from defaultWeightGrams when empty and respects explicit weight', async () => {
   const env = variantEnv();
   env.defaultWeightGrams = '370';

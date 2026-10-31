@@ -565,6 +565,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
   const [selectedVariantTypeIds, setSelectedVariantTypeIds] = useState<string[]>([]);
   const [activeVariantTabId, setActiveVariantTabId] = useState<string>('');
   const [customVariantTypeName, setCustomVariantTypeName] = useState('');
+  const [showNewVariantField, setShowNewVariantField] = useState(false);
   const [customOptionInputByVariant, setCustomOptionInputByVariant] = useState<Record<string, string>>({});
   const [activeOptionByVariant, setActiveOptionByVariant] = useState<Record<string, string>>({});
   const [selectedOptionsByVariant, setSelectedOptionsByVariant] = useState<Record<string, string[]>>({});
@@ -1756,6 +1757,10 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
 
   function selectVariantFromDropdown(id: string) {
     if (!id) return;
+    if (id === '__add_variant_field__') {
+      setShowNewVariantField(true);
+      return;
+    }
     if (selectedVariantTypeIds.includes(id)) {
       setActiveVariantTabId(id);
       return;
@@ -1894,25 +1899,29 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
   }
 
   function handleAddCustomVariantType() {
-    const trimmed = customVariantTypeName.replace(/,/g, ' ').trim();
-    if (!trimmed) return;
-    const newId = trimmed.toLowerCase();
-    const defaultTermKey = `${newId}-opt-1`;
-    const newVt: VariantType = {
-      id: newId,
-      name: trimmed,
-      terms: [{ id: defaultTermKey, name: 'Option 1' }],
-    };
-    setVariantTypesList((prev) =>
-      prev.some((v) => v.id === newId) ? prev : [...prev, newVt]
-    );
+    const trimmed = customVariantTypeName.trim();
+    if (!trimmed || trimmed.length > 100 || trimmed.includes(',')) {
+      setError('Enter one variant field name, up to 100 characters, without commas.');
+      return;
+    }
+    if (['hsn', 'hsn_code', 'gst_rate', 'gst_percent', 'source_attributes', '__proto__', 'constructor', 'prototype'].includes(trimmed.toLowerCase())) {
+      setError('This field name is reserved. Choose another variant field name.');
+      return;
+    }
+    // Reuse the existing definition and its exact ID instead of adding another Size/size.
+    const existing = variantTypesList.find(v => v.name.trim() === trimmed)
+      ?? variantTypesList.find(v => v.name.trim().toLowerCase() === trimmed.toLowerCase());
+    const newId = existing?.id ?? `custom-${uid()}`;
+    if (!existing) setVariantTypesList(prev => [...prev, { id: newId, name: trimmed, terms: [] }]);
     setSelectedVariantTypeIds((prev) => (prev.includes(newId) ? prev : [...prev, newId]));
     setActiveVariantTabId(newId);
     setSelectedOptionsByVariant((prev) => ({
       ...prev,
-      [newId]: prev[newId] && prev[newId].length > 0 ? prev[newId] : ['Option 1'],
+      [newId]: prev[newId] ?? terms.filter(term => term.variantTypeId === newId).map(term => term.name),
     }));
     setCustomVariantTypeName('');
+    setShowNewVariantField(false);
+    setError('');
   }
 
   function handleAddOptionToVariant(variantId: string) {
@@ -3691,14 +3700,29 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                             id="product-variant"
                             value=""
                             placeholder="Select Variant"
-                            options={variantTypesList.map((v) => ({
+                            options={[...variantTypesList.map((v) => ({
                               value: v.id,
                               label: selectedVariantTypeIds.includes(v.id) ? `✓ ${v.name}` : v.name,
-                            }))}
+                            })), { value: '__add_variant_field__', label: '+ Add new field' }]}
                             onChange={selectVariantFromDropdown}
                           />
                         </div>
                       </div>
+
+                      {showNewVariantField && <div className="mt-4 space-y-3 rounded-xl border border-orange-200 bg-orange-50/40 p-4">
+                        <Label htmlFor="new-variant-field">New variant field</Label>
+                        <div className="flex flex-wrap gap-2">
+                          <input id="new-variant-field" autoFocus maxLength={100} value={customVariantTypeName}
+                            onChange={event => setCustomVariantTypeName(event.target.value)} placeholder="e.g. Material or Capacity"
+                            onKeyDown={event => {
+                              if (event.key === 'Enter') { event.preventDefault(); handleAddCustomVariantType(); }
+                              if (event.key === 'Escape') { event.preventDefault(); setShowNewVariantField(false); setCustomVariantTypeName(''); }
+                            }} className={`${INPUT_CLASS} min-w-48 flex-1`} />
+                          <button type="button" onClick={handleAddCustomVariantType} className="rounded-lg bg-[#F47C35] px-4 py-2 text-sm font-semibold text-white hover:bg-[#E96F29]">Add field</button>
+                          <button type="button" onClick={() => { setShowNewVariantField(false); setCustomVariantTypeName(''); }} className="rounded-lg border bg-white px-4 py-2 text-sm">Cancel</button>
+                        </div>
+                        <p className="text-xs text-gray-600">Add a field, enter its options below, then click Done and save the product.</p>
+                      </div>}
 
                       {selectedVariantTypeIds.length > 0 ? (
                         <div className="mt-5">
