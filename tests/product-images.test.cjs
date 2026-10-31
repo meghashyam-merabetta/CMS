@@ -975,3 +975,43 @@ test('duplicate product-code errors highlight the field without changing entered
   assert.equal(state.productCode, 'JOY-01');assert.deepEqual(state.images, ['selected-file']);
   editorHandler('showSaveError', env)(new Error('Image upload failed'), 'Save failed');assert.equal(state.error, 'Image upload failed');
 });
+
+test('the merged size/colour matrix preserves saved image owners and staged files', () => {
+  const env = variantEnv();
+  const pendingImages = [new File(['a'], 'large-black.png', { type: 'image/png' })];
+  env.terms = [{ key: 'saved', backendVariantId: '203', variantTypeId: 'size', variantTypeName: 'Size', name: 'L', attributes: { Size: 'L', Colour: 'Black' }, pendingImages }];
+  Object.assign(env, {
+    selectedVariantTypeIds: ['size', 'colour'],
+    selectedOptionsByVariant: { size: ['M', 'L'], colour: ['Blue', 'Black'] },
+    variantTypesList: [{ id: 'size', name: 'Size', terms: [] }, { id: 'colour', name: 'Colour', terms: [] }],
+    defaultWeightGrams: '250', unitCount: '', barcode: '', uid: (() => { let count = 0; return () => String(++count); })(),
+    setError() {}, setTerms(value) { env.terms = value; }, setOpenTerm() {}, setVariantDoneNotice() {}, setTab() {},
+  });
+  editorHandler('handleConfirmVariantsDone', env)();
+  assert.equal(env.terms.length, 4);
+  assert.equal(new Set(env.terms.map(t => JSON.stringify(t.attributes))).size, 4);
+  const saved = env.terms.find(term => term.backendVariantId === '203');
+  assert.equal(saved.key, 'saved'); assert.equal(saved.pendingImages, pendingImages);
+  assert.deepEqual(saved.attributes, { Size: 'L', Colour: 'Black' });
+  assert.equal(env.terms.filter(term => term.backendVariantId == null).length, 3);
+});
+
+test('variant weight auto-inherits from defaultWeightGrams when empty and respects explicit weight', async () => {
+  const env = variantEnv();
+  env.defaultWeightGrams = '370';
+  const term1 = { key: 'v1', name: 'M', sku: 'SKU1', variantName: '', unitCount: '', barcode: '', weightGrams: '', regularPrice: '100', salePrice: '', stockQuantity: '5' };
+  const term2 = { key: 'v2', name: 'XL', sku: 'SKU2', variantName: '', unitCount: '', barcode: '', weightGrams: '500', regularPrice: '120', salePrice: '', stockQuantity: '3' };
+  env.terms = [term1, term2];
+
+  const createdPayloads = [];
+  env.createAdminProductVariant = async (_productId, payload) => {
+    createdPayloads.push(payload);
+    return { id: createdPayloads.length };
+  };
+
+  await editorHandler('syncProductVariants', env)(123);
+
+  assert.equal(createdPayloads.length, 2);
+  assert.equal(createdPayloads[0].weight_grams, 370, 'Empty variant weight inherits defaultWeightGrams');
+  assert.equal(createdPayloads[1].weight_grams, 500, 'Explicit variant weight is preserved');
+});

@@ -14,6 +14,7 @@ import {
   Package,
   Edit2,
   Trash2,
+  Copy,
   AlertTriangle,
   X,
   CheckCircle2,
@@ -120,6 +121,8 @@ function mapBackendProductToRecord(
     statusCode,
     image: resolvePrimaryProductImage(bp),
     createdAt: bp.created_at || new Date().toISOString(),
+    manufacturerSku: String(bp.manufacturer_sku ?? '').trim() || undefined,
+    modelNumber: String(bp.model_number ?? '').trim() || undefined,
   };
 }
 
@@ -547,6 +550,8 @@ export default function ProductManagementPage() {
             const nameMatch = record.name.toLowerCase().includes(qLower);
             const brandMatch = record.brand.toLowerCase().includes(qLower);
             const catMatch = record.category.toLowerCase().includes(qLower);
+            const mfgSkuMatch = String(bp.manufacturer_sku ?? '').toLowerCase().includes(qLower);
+            const modelNoMatch = String(bp.model_number ?? '').toLowerCase().includes(qLower);
             return (
               idMatch ||
               prdCodeDisplayMatch ||
@@ -555,6 +560,8 @@ export default function ProductManagementPage() {
               nameMatch ||
               brandMatch ||
               catMatch ||
+              mfgSkuMatch ||
+              modelNoMatch ||
               variantMatchesSearch(bp.variants || [], rawQ)
             );
           })
@@ -811,7 +818,7 @@ export default function ProductManagementPage() {
               setSearchQuery(e.target.value);
               setCurrentPage(0);
             }}
-            placeholder="Search ID, name, brand, variant or SKU"
+            placeholder="Search ID, name, brand, variant, SKU or model"
             className="h-11 w-full rounded-lg border border-[#D6DCE5] pr-4 pl-10 text-[13px] outline-none transition focus:border-[#F47C35]"
           />
         </label>
@@ -971,8 +978,22 @@ export default function ProductManagementPage() {
                         </button>
                       </td>
                       <td className="px-3 font-medium text-slate-900">
-                        {p.name}
-                        {p.catalogCode && <div className="mt-1 text-[11px] font-normal text-gray-500">Code: {p.catalogCode}</div>}
+                        <span className="block">{p.name}</span>
+                        {(p.catalogCode || p.manufacturerSku || p.modelNumber) && (
+                          <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] font-normal text-gray-500">
+                            {p.catalogCode && <span>Code: <span className="font-mono text-slate-700">{p.catalogCode}</span></span>}
+                            {p.manufacturerSku && (
+                              <span>
+                                SKU: <span className="font-mono font-medium text-slate-700">{p.manufacturerSku}</span>
+                              </span>
+                            )}
+                            {p.modelNumber && (
+                              <span>
+                                Model: <span className="font-mono font-medium text-slate-700">{p.modelNumber}</span>
+                              </span>
+                            )}
+                          </div>
+                        )}
                         {p.variantSummary && <div className="mt-1 text-[11px] font-normal text-gray-500">{p.variantSummary}</div>}
                         {(p.productType === 'variable' || Boolean(p.variantCount)) && <button type="button"
                           aria-expanded={expandedVariants.has(p.id)} aria-controls={`product-variants-${p.id}`}
@@ -1025,6 +1046,15 @@ export default function ProductManagementPage() {
                             className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-gray-200 bg-white text-blue-600 hover:bg-blue-50 hover:border-blue-300 transition cursor-pointer"
                           >
                             <Edit2 size={13} />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => router.push(`/admin/products/add?copyFrom=${p.id}`)}
+                            title="Copy listing (create new variant with copied details)"
+                            aria-label={`Copy ${p.name}`}
+                            className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-gray-200 bg-white text-indigo-600 hover:bg-indigo-50 hover:border-indigo-300 transition cursor-pointer"
+                          >
+                            <Copy size={13} />
                           </button>
                           <button
                             type="button"
@@ -1280,7 +1310,7 @@ export default function ProductManagementPage() {
                 />
               </div>
 
-              <div className="pt-1">
+              <div className="flex items-center justify-between pt-1">
                 <button
                   type="button"
                   onClick={() => {
@@ -1291,6 +1321,18 @@ export default function ProductManagementPage() {
                   className="text-xs font-semibold text-[#F47C35] hover:text-[#E96F29] underline cursor-pointer"
                 >
                   Open in Full Product Editor &rarr;
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const id = editingProduct.id;
+                    setEditingProduct(null);
+                    router.push(`/admin/products/add?copyFrom=${id}`);
+                  }}
+                  className="inline-flex items-center gap-1 text-xs font-semibold text-indigo-600 hover:text-indigo-800 underline cursor-pointer"
+                >
+                  <Copy size={12} />
+                  <span>Copy Listing</span>
                 </button>
               </div>
             </div>

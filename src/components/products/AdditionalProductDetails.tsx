@@ -1,7 +1,14 @@
 'use client';
 
 import type { ChangeEvent, InvalidEvent } from 'react';
-import { PRODUCT_DETAIL_FIELDS, ProductDetailField, ProductDetailKey, ProductDetailValues } from '@/lib/productDetails';
+import {
+  PRODUCT_DETAIL_FIELDS,
+  ProductDetailField,
+  ProductDetailKey,
+  ProductDetailValues,
+  generateManufacturerSku,
+  generateModelNumber,
+} from '@/lib/productDetails';
 
 export function ProductDetailSummary({ values }: { values: ProductDetailValues }) {
   const filled = PRODUCT_DETAIL_FIELDS.filter((field) => values[field.key]?.trim());
@@ -23,12 +30,27 @@ const EXCLUDED_DETAIL_FIELDS = new Set<ProductDetailKey>([
   'product_dimension_unit',
 ]);
 
-export default function AdditionalProductDetails({ values, onChange }: {
+export default function AdditionalProductDetails({
+  values,
+  onChange,
+  brandName,
+  companyName,
+  categoryName,
+  productId,
+}: {
   values: ProductDetailValues;
   onChange: (values: ProductDetailValues) => void;
+  brandName?: string;
+  companyName?: string;
+  categoryName?: string;
+  productId?: string | number | null;
 }) {
   const groups = [...new Set(PRODUCT_DETAIL_FIELDS.map((field) => field.group))];
   const inputClass = 'mt-1 h-11 w-full rounded-lg border border-gray-300 bg-white px-3 text-sm outline-none focus:border-[#F47C35]';
+  const effectiveBrandOrCompany =
+    (brandName && brandName !== 'Unbranded' ? brandName.trim() : '') ||
+    companyName?.trim() ||
+    '';
   return <section className="mt-6 space-y-4 rounded-2xl bg-[#F7F7F7] p-5">
     <h3 className="text-lg font-semibold">Additional Product Details</h3>
     <p className="text-sm text-gray-600">Add product identity, specifications, sale dates and delivery details where applicable.</p>
@@ -37,23 +59,67 @@ export default function AdditionalProductDetails({ values, onChange }: {
       <div className="mt-4 grid gap-4 sm:grid-cols-2">
         {(PRODUCT_DETAIL_FIELDS as readonly (ProductDetailField & { key: ProductDetailKey })[]).filter((field) => field.group === group && !EXCLUDED_DETAIL_FIELDS.has(field.key)).map((field) => {
           const id = `detail-${field.key}`;
+          const isAutoSku = field.key === 'manufacturer_sku';
+          const isAutoModel = field.key === 'model_number';
+
           const common = {
-            id, value: values[field.key] ?? '', required: field.required, placeholder: field.placeholder,
+            id, value: values[field.key] ?? '', required: field.required,
             onChange: (event: ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => onChange({ ...values, [field.key]: event.target.value }),
             onInvalid: (event: InvalidEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
               const section = event.currentTarget.closest('details');
               if (section) section.open = true;
             },
             className: inputClass,
+            placeholder: isAutoSku
+              ? 'e.g. MB-AX-001 or MB-JE-001 (auto-generated if blank)'
+              : isAutoModel
+              ? 'e.g. MD-WHE-998844 (auto-generated if blank)'
+              : field.placeholder,
           };
-          return <label key={field.key} htmlFor={id} className="text-sm font-medium text-gray-700">
-            {field.label}
-            {field.required && <span className="ml-1 text-red-600" aria-hidden="true">*</span>}
+
+          return <div key={field.key} className="flex flex-col text-sm font-medium text-gray-700">
+            <div className="flex items-center justify-between">
+              <label htmlFor={id} className="cursor-pointer">{field.label}{field.required && <span className="ml-1 text-red-600" aria-hidden="true">*</span>}</label>
+              {isAutoSku && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    onChange({
+                      ...values,
+                      manufacturer_sku: generateManufacturerSku(effectiveBrandOrCompany, 1),
+                    });
+                  }}
+                  className="text-xs text-[#F47C35] hover:text-[#d4621f] flex items-center gap-1 font-semibold cursor-pointer transition-colors"
+                  title="Auto-generate Manufacturer SKU (MB-[BRAND-FIRST-LAST]-001)"
+                >
+                  ✨ Auto-Generate
+                </button>
+              )}
+              {isAutoModel && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    onChange({
+                      ...values,
+                      model_number: generateModelNumber(categoryName, productId),
+                    });
+                  }}
+                  className="text-xs text-[#F47C35] hover:text-[#d4621f] flex items-center gap-1 font-semibold cursor-pointer transition-colors"
+                  title="Auto-generate Model Number (MD-CAT-ID)"
+                >
+                  ✨ Auto-Generate
+                </button>
+              )}
+            </div>
             {field.type === 'select' ? <select {...common}>
               <option value="">Not specified</option>
               {field.options?.map((value) => <option key={value} value={value}>{value === 'true' ? 'Yes' : value === 'false' ? 'No' : value.charAt(0).toUpperCase() + value.slice(1)}</option>)}
             </select> : field.type === 'textarea' ? <textarea {...common} className={`${inputClass} min-h-24 py-2`} /> : <input {...common} type={field.type ?? 'text'} min={field.min} max={field.max} step={field.step} />}
-          </label>;
+          </div>;
         })}
       </div>
     </details>)}
