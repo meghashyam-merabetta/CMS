@@ -52,6 +52,15 @@ test('product summaries distinguish size and colour combinations', () => {
   assert.match(summary, /Size: L \/ Colour: Red/);
 });
 
+test('variant search finds saved options, names, IDs and SKUs without treating tax metadata as options', () => {
+  const variants = [{ id: '203', variant_name: 'DSM02 (Pack of 15)', sku: 'ARREX-DSM02-1', attributes: { Size: 'DSM02', Colour: 'Blue', ' HSN ': '87131010' } }];
+  for (const query of [' dsm02 ', 'pack of 15', '203', 'ARREX-DSM02-1', 'colour: blue']) {
+    assert.equal(catalog.variantMatchesSearch(variants, query), true, query);
+  }
+  for (const query of ['', 'XXXL', '87131010']) assert.equal(catalog.variantMatchesSearch(variants, query), false, query);
+  assert.equal(catalog.variantMatchesSearch([], 'DSM02'), false);
+});
+
 test('sorting supports names, natural product codes and numeric IDs in both directions', () => {
   const rows = [{ id: '10', name: 'Zebra', catalogCode: 'P2' }, { id: '2', name: 'apple', catalogCode: 'P10' }];
   for (const [field, order, expected] of [['product_name', 'asc', '2'], ['product_code', 'asc', '10'], ['product_id', 'asc', '2'], ['product_id', 'desc', '10']]) {

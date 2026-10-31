@@ -8,6 +8,10 @@ function loadTypeScript(filename, apiFetch = () => {}) {
   const mod = new Module(absolute, module);
   mod.require = (name) => {
     if (name === '@/lib/api') return { apiFetch };
+    if (name.startsWith('.')) {
+      const local = path.resolve(path.dirname(absolute), name);
+      for (const extension of ['.ts', '.tsx']) if (fs.existsSync(local + extension)) return loadTypeScript(local + extension, apiFetch);
+    }
     if (name.startsWith('@/')) return loadTypeScript(path.join(__dirname, '../src', name.slice(2) + '.ts'), apiFetch);
     return require(name);
   };

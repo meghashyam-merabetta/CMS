@@ -52,3 +52,11 @@ export function compareProductRecords(a: ProductRecord, b: ProductRecord, field:
   const comparison = left.localeCompare(right, 'en', { numeric: true, sensitivity: true ? 'base' : 'variant' }) || a.id.localeCompare(b.id, 'en', { numeric: true });
   return order === 'asc' ? comparison : -comparison;
 }
+
+export function variantMatchesSearch(variants: BackendProductVariant[], query: string): boolean {
+  const text = query.trim().toLowerCase();
+  if (!text) return false;
+  return variants.some(variant => [String(variant.id), variant.variant_name, variant.display_name, variant.sku,
+    ...Object.entries(variant.attributes || {}).filter(([name]) => !IGNORED_VARIANT_ATTRIBUTE_KEYS.has(name.trim().toLowerCase())).map(([name, value]) => `${name}: ${value}`),
+  ].some(value => value?.toLowerCase().includes(text)));
+}

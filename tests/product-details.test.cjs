@@ -3,11 +3,11 @@ const assert = require('node:assert/strict');
 const { loadTypeScript } = require('./helpers.cjs');
 const details = loadTypeScript(require.resolve('../src/lib/productDetails.ts'));
 
-test('all 43 additional fields serialize and reload with appropriate types', () => {
+test('all 44 additional fields serialize and reload with appropriate types', () => {
   const values = Object.fromEntries(details.PRODUCT_DETAIL_FIELDS.map((field) => [field.key,
     field.key === 'seller_pincodes' ? '560001, 560002' : field.options?.[0] ?? (field.type === 'date' ? '2026-10-20' : field.type === 'number' ? '1' : field.type === 'email' ? 'person@example.com' : 'Example'),
   ]));
-  assert.equal(details.PRODUCT_DETAIL_FIELDS.length, 43);
+  assert.equal(details.PRODUCT_DETAIL_FIELDS.length, 44);
   assert.equal(details.validateProductDetails(values), '');
   const payload = details.serializeProductDetails(values);
   assert.deepEqual(details.readProductDetails(payload), values);
@@ -29,7 +29,14 @@ test('additional details validate ranges, units, dates, email and delivery PINs'
     { net_weight: '1' }, { product_length: '1' }, { business_offer_percent: '101' },
     { seller_handling_days: '1.5' }, { sale_start_date: '2026-10-28', sale_end_date: '2026-10-27' },
     { manufacturing_date: '2026-02-30' }, { manufacturer_email: 'bad email' }, { seller_pincodes: '123' },
-  ]) assert.notEqual(details.validateProductDetails(values), '', JSON.stringify(values));
+  ]) assert.notEqual(details.validateProductDetails({ license_number: 'LIC-123', ...values }), '', JSON.stringify(values));
+});
+
+test('manufacturer licence is mandatory, including whitespace-only input', () => {
+  for (const license_number of [undefined, '', '   ']) {
+    assert.equal(details.validateProductDetails({ license_number }), 'Manufacturer Licence Number is required.');
+  }
+  assert.equal(details.validateProductDetails({ license_number: ' LIC-123 ' }), '');
 });
 
 test('additional fields are included in save bodies while arbitrary and legacy keys stay excluded', async () => {
@@ -55,12 +62,30 @@ test('the section renders labelled controls and the preview shows entered values
   assert.match(html, /Additional Product Details/);
   assert.match(html, /Manufacturer SKU/);
   assert.match(html, /Product Net Weight/);
+  assert.match(html, /Expiry Date \/ Months/);
   assert.doesNotMatch(html, /for="detail-product_length"/);
   assert.match(html, /Sale Starts/);
   assert.match(html, /Battery Required/);
   assert.match(html, /for="detail-model_number"/);
   assert.match(html, /value="MODEL-42"/);
+  assert.match(html, /id="detail-license_number"[^>]*required=""/);
   const summary = renderToStaticMarkup(React.createElement(ui.ProductDetailSummary, { values }));
   assert.match(summary, /MODEL-42/);
   assert.match(summary, />No</);
+});
+
+test('expiry dates and shelf-life durations round-trip through the existing backend field', async () => {
+  for (const shelf_life of ['2028-10-31', '24 Months', '5 Years', 'No Expiry']) {
+    const payload = details.serializeProductDetails({ shelf_life });
+    assert.deepEqual(payload, { shelf_life });
+    assert.equal(details.readProductDetails(payload).shelf_life, shelf_life);
+    let saved;
+    const api = loadTypeScript(require.resolve('../src/services/api/adminProductsApi.ts'), async (_url, options = {}) => {
+      if (options.body) saved = JSON.parse(options.body);
+      return { data: { product_id: 123 } };
+    });
+    await api.updateAdminProduct(123, payload);
+    assert.equal(saved.shelf_life, shelf_life);
+  }
+  assert.deepEqual(details.serializeProductDetails({ shelf_life: '' }, { shelf_life: '24 Months' }), { shelf_life: null });
 });

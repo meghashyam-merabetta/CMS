@@ -32,13 +32,13 @@ export default function AdditionalProductDetails({ values, onChange }: {
   return <section className="mt-6 space-y-4 rounded-2xl bg-[#F7F7F7] p-5">
     <h3 className="text-lg font-semibold">Additional Product Details</h3>
     <p className="text-sm text-gray-600">Add product identity, specifications, sale dates and delivery details where applicable.</p>
-    {groups.map((group) => <details key={group} className="rounded-xl border border-gray-200 bg-white p-4">
+    {groups.map((group) => <details key={group} open={(PRODUCT_DETAIL_FIELDS as readonly ProductDetailField[]).some((field) => field.group === group && field.required && !values[field.key as ProductDetailKey]?.trim())} className="rounded-xl border border-gray-200 bg-white p-4">
       <summary className="cursor-pointer font-semibold text-[#0D2B53]">{group}</summary>
       <div className="mt-4 grid gap-4 sm:grid-cols-2">
         {(PRODUCT_DETAIL_FIELDS as readonly (ProductDetailField & { key: ProductDetailKey })[]).filter((field) => field.group === group && !EXCLUDED_DETAIL_FIELDS.has(field.key)).map((field) => {
           const id = `detail-${field.key}`;
           const common = {
-            id, value: values[field.key] ?? '',
+            id, value: values[field.key] ?? '', required: field.required, placeholder: field.placeholder,
             onChange: (event: ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => onChange({ ...values, [field.key]: event.target.value }),
             onInvalid: (event: InvalidEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
               const section = event.currentTarget.closest('details');
@@ -48,6 +48,7 @@ export default function AdditionalProductDetails({ values, onChange }: {
           };
           return <label key={field.key} htmlFor={id} className="text-sm font-medium text-gray-700">
             {field.label}
+            {field.required && <span className="ml-1 text-red-600" aria-hidden="true">*</span>}
             {field.type === 'select' ? <select {...common}>
               <option value="">Not specified</option>
               {field.options?.map((value) => <option key={value} value={value}>{value === 'true' ? 'Yes' : value === 'false' ? 'No' : value.charAt(0).toUpperCase() + value.slice(1)}</option>)}

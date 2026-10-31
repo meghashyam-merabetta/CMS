@@ -81,6 +81,8 @@ export interface ProductRecord {
   productCode: string;
   catalogCode?: string;
   variantSummary?: string;
+  variantCount?: number;
+  productType?: 'simple' | 'variable';
   catalogWarning?: string;
   name: string;
   brand: string;
