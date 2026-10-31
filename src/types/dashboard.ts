@@ -92,6 +92,8 @@ export interface ProductRecord {
   statusCode: 'PUBLISHED' | 'DRAFT' | 'INACTIVE' | 'ARCHIVED';
   image?: string;
   createdAt: string;
+  manufacturerSku?: string;
+  modelNumber?: string;
 }
 
 export interface CategoryRecord {

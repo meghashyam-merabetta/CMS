@@ -853,3 +853,24 @@ test('syncProductVariants safely ignores 404 on deletion and self-heals 404 on u
   assert.ok(createCalledWith, 'createAdminProductVariant was called as a self-healing fallback');
   assert.equal(env.terms[0].backendVariantId, 200);
 });
+
+test('variant weight auto-inherits from defaultWeightGrams when empty and respects explicit weight', async () => {
+  const env = variantEnv();
+  env.defaultWeightGrams = '370';
+  const term1 = { key: 'v1', name: 'M', sku: 'SKU1', variantName: '', unitCount: '', barcode: '', weightGrams: '', regularPrice: '100', salePrice: '', stockQuantity: '5' };
+  const term2 = { key: 'v2', name: 'XL', sku: 'SKU2', variantName: '', unitCount: '', barcode: '', weightGrams: '500', regularPrice: '120', salePrice: '', stockQuantity: '3' };
+  env.terms = [term1, term2];
+
+  const createdPayloads = [];
+  env.createAdminProductVariant = async (_productId, payload) => {
+    createdPayloads.push(payload);
+    return { id: createdPayloads.length };
+  };
+
+  await editorHandler('syncProductVariants', env)(123);
+
+  assert.equal(createdPayloads.length, 2);
+  assert.equal(createdPayloads[0].weight_grams, 370, 'Empty variant weight inherits defaultWeightGrams');
+  assert.equal(createdPayloads[1].weight_grams, 500, 'Explicit variant weight is preserved');
+});
+

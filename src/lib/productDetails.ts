@@ -102,27 +102,27 @@ export function validateProductDetails(values: ProductDetailValues): string {
 
 /**
  * Generates Manufacturer SKU following the formula:
- * MB-[COMPANY-FIRST-LAST]-[VARIANT-INDEX]
- * E.g. Company "ARREX", index 1 -> "MB-AX-001"
- * E.g. Company "Sun Pharma", index 2 -> "MB-SA-002"
+ * MB-[BRAND-FIRST-LAST]-[VARIANT-INDEX]
+ * Prioritizes Brand name (e.g. "JOYLIFE", index 1 -> "MB-JE-001", "ARREX", index 1 -> "MB-AX-001")
+ * If unbranded, falls back to Company Name (e.g. "Solis Hygiene Pvt. Ltd" -> "MB-SD-001") or "MB-XX-001"
  */
 export function generateManufacturerSku(
-  companyOrBrand?: string | null,
+  brandOrCompany?: string | null,
   variantIndex: number = 1
 ): string {
-  const companyClean = (companyOrBrand || '')
+  const brandOrCompanyClean = (brandOrCompany || '')
     .toUpperCase()
     .replace(/[^A-Z0-9]/g, '');
 
-  let companyCode = 'XX';
-  if (companyClean.length >= 2) {
-    companyCode = `${companyClean[0]}${companyClean[companyClean.length - 1]}`;
-  } else if (companyClean.length === 1) {
-    companyCode = `${companyClean[0]}X`;
+  let code = 'XX';
+  if (brandOrCompanyClean.length >= 2) {
+    code = `${brandOrCompanyClean[0]}${brandOrCompanyClean[brandOrCompanyClean.length - 1]}`;
+  } else if (brandOrCompanyClean.length === 1) {
+    code = `${brandOrCompanyClean[0]}X`;
   }
 
   const paddedIndex = String(Math.max(1, Math.floor(variantIndex))).padStart(3, '0');
-  return `MB-${companyCode}-${paddedIndex}`;
+  return `MB-${code}-${paddedIndex}`;
 }
 
 /**

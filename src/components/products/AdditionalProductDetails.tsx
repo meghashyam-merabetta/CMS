@@ -33,18 +33,24 @@ const EXCLUDED_DETAIL_FIELDS = new Set<ProductDetailKey>([
 export default function AdditionalProductDetails({
   values,
   onChange,
+  brandName,
   companyName,
   categoryName,
   productId,
 }: {
   values: ProductDetailValues;
   onChange: (values: ProductDetailValues) => void;
+  brandName?: string;
   companyName?: string;
   categoryName?: string;
   productId?: string | number | null;
 }) {
   const groups = [...new Set(PRODUCT_DETAIL_FIELDS.map((field) => field.group))];
   const inputClass = 'mt-1 h-11 w-full rounded-lg border border-gray-300 bg-white px-3 text-sm outline-none focus:border-[#F47C35]';
+  const effectiveBrandOrCompany =
+    (brandName && brandName !== 'Unbranded' ? brandName.trim() : '') ||
+    companyName?.trim() ||
+    '';
   return <section className="mt-6 space-y-4 rounded-2xl bg-[#F7F7F7] p-5">
     <h3 className="text-lg font-semibold">Additional Product Details</h3>
     <p className="text-sm text-gray-600">Add product identity, specifications, sale dates and delivery details where applicable.</p>
@@ -65,7 +71,7 @@ export default function AdditionalProductDetails({
             },
             className: inputClass,
             placeholder: isAutoSku
-              ? 'e.g. MB-AX-001 (auto-generated if blank)'
+              ? 'e.g. MB-AX-001 or MB-JE-001 (auto-generated if blank)'
               : isAutoModel
               ? 'e.g. MD-WHE-998844 (auto-generated if blank)'
               : undefined,
@@ -82,11 +88,11 @@ export default function AdditionalProductDetails({
                     e.stopPropagation();
                     onChange({
                       ...values,
-                      manufacturer_sku: generateManufacturerSku(companyName, 1),
+                      manufacturer_sku: generateManufacturerSku(effectiveBrandOrCompany, 1),
                     });
                   }}
                   className="text-xs text-[#F47C35] hover:text-[#d4621f] flex items-center gap-1 font-semibold cursor-pointer transition-colors"
-                  title="Auto-generate Manufacturer SKU (MB-XX-001)"
+                  title="Auto-generate Manufacturer SKU (MB-[BRAND-FIRST-LAST]-001)"
                 >
                   ✨ Auto-Generate
                 </button>

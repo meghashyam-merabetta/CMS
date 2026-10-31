@@ -12,6 +12,7 @@ import {
   X,
   Star,
   RefreshCw,
+  Copy,
 } from 'lucide-react';
 import {
   createAdminProduct,
@@ -462,13 +463,19 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const requestedEditId = searchParams?.get('id') ?? null;
+  const requestedCopyFromId = searchParams?.get('copyFrom') ?? null;
   const [createdProductId, setCreatedProductId] = useState<string | null>(null);
   const createdProductIdRef = useRef<string | null>(null);
   const editId = requestedEditId ?? createdProductId;
   const saveInProgress = useRef(false);
   const uncertainImageUpload = useRef(false);
   const isEditing = Boolean(editId || initialIsEdit);
-  const [isLoadingProduct, setIsLoadingProduct] = useState(Boolean(editId));
+  const [isLoadingProduct, setIsLoadingProduct] = useState(
+    Boolean(editId || requestedCopyFromId)
+  );
+  const [copiedFromInfo, setCopiedFromInfo] = useState<{ id: string; name: string } | null>(
+    null
+  );
 
   const [name, setName] = useState('');
   const [slug, setSlug] = useState('');
@@ -506,6 +513,12 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
   const [barcode, setBarcode] = useState('');
   const [weight, setWeight] = useState('');
   const [weightUnit, setWeightUnit] = useState<WeightUnit>('g');
+  const defaultWeightGrams = useMemo(() => {
+    if (!weight || typeof weight !== 'string' || !weight.trim()) return '';
+    const numVal = Number(weight.trim());
+    if (!Number.isFinite(numVal) || numVal <= 0) return '';
+    return String(Math.round(weightUnit === 'kg' ? numVal * 1000 : numVal));
+  }, [weight, weightUnit]);
   const [unitCount, setUnitCount] = useState('');
   const [packageLength, setPackageLength] = useState('');
   const [packageBreadth, setPackageBreadth] = useState('');
@@ -708,10 +721,10 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
     };
   }, [categoryId]);
 
-  // Load existing product if editId is provided
+  // Load existing product if editId is provided or clone if copyFrom is provided
   useEffect(() => {
     if (requestedEditId && requestedEditId === createdProductIdRef.current) return;
-    if (!requestedEditId) {
+    if (!requestedEditId && !requestedCopyFromId) {
       setIsLoadingProduct(false);
       return;
     }
@@ -1040,23 +1053,34 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                 });
               }
 
-              // Deduplicate loaded terms by (variantTypeId, optionName) so duplicate tabs never appear
-              const comboKey = `${vtEntry.id}::${attrVal.trim()}`;
+              // Deduplicate loaded terms by full attribute combination so all combinations are loaded
+              const comboKey = validEntries.length > 0
+                ? validEntries
+                    .map(([k, val]) => `${String(k).trim()}:${String(val).trim()}`)
+                    .sort()
+                    .join('::')
+                : `${canonicalId}::${attrVal.trim()}`;
               if (seenTermCombo.has(comboKey)) {
                 return;
               }
               seenTermCombo.add(comboKey);
 
-              usedVtIds.add(vtEntry.id);
-              if (!loadedSelectedOpts[vtEntry.id]) {
-                loadedSelectedOpts[vtEntry.id] = [];
-              }
-              if (
-                !loadedSelectedOpts[vtEntry.id].some(
-                  (o) => o === attrVal.trim()
-                )
-              ) {
-                loadedSelectedOpts[vtEntry.id].push(attrVal);
+              // Register all attributes in this variant into discovered types and selected options
+              for (const [eKey, eVal] of validEntries) {
+                const kName = String(eKey || '').trim();
+                const vName = String(eVal || '').trim();
+                if (!kName || !vName) continue;
+                usedVtIds.add(kName);
+                let entryType = discoveredTypes.get(kName);
+                if (!entryType) {
+                  entryType = { id: kName, name: kName, terms: [] };
+                  discoveredTypes.set(kName, entryType);
+                }
+                if (!entryType.terms.some((t) => t.name.trim() === vName)) {
+                  entryType.terms.push({ id: `${kName}-opt-${entryType.terms.length}`, name: vName });
+                }
+                if (!loadedSelectedOpts[kName]) loadedSelectedOpts[kName] = [];
+                if (!loadedSelectedOpts[kName].includes(vName)) loadedSelectedOpts[kName].push(vName);
               }
 
               // Extract unit count if stored in variant_name like "M (Pack of 10)"
@@ -1135,8 +1159,189 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
         setIsLoadingProduct(false);
       }
     }
-    void loadProduct(currentId);
-  }, [requestedEditId]);
+
+    async function loadProductForCopy(id: string) {
+      setIsLoadingProduct(true);
+      setProductLoadError('');
+      setImages([]);
+      setTerms([]);
+      setInitialVariantIds([]);
+      setSelectedVariantTypeIds([]);
+      setActiveVariantTabId('');
+      setSelectedOptionsByVariant({});
+      setVariantDoneNotice('');
+      setOpenTerm(null);
+      setBrand('');
+      setCategoryId('');
+      setSubCategoryId('');
+      setAdditionalDetails({});
+      setInitialAdditionalDetails({});
+      try {
+        const prod = await getAdminProductById(id);
+        if (prod) {
+          const loadedDetails = readProductDetails(prod);
+          // Exclude dimensions, dates, and previous SKU/model codes so fresh ones generate
+          const {
+            net_weight: _nw,
+            net_weight_unit: _nwu,
+            product_length: _pl,
+            product_breadth: _pb,
+            product_height: _ph,
+            product_dimension_unit: _pdu,
+            manufacturing_date: _md,
+            sale_start_date: _ssd,
+            sale_end_date: _sed,
+            manufacturer_sku: _msku,
+            model_number: _mnum,
+            ...filteredDetails
+          } = loadedDetails;
+          setAdditionalDetails(filteredDetails);
+          setInitialAdditionalDetails(filteredDetails);
+
+          const prodName = prod.product_name || prod.name || '';
+          setName(prodName);
+          setSlug(generateProductSlug(prodName));
+          setSlugTouched(false);
+          setProductStatus('draft'); // Default copied product to draft for safety
+          setShortDescription(prod.short_description || '');
+          setDescription(prod.description || '');
+          if (prod.brand_id != null) {
+            setBrand(String(prod.brand_id));
+          }
+          if (Array.isArray(prod.categories) && prod.categories.length > 0) {
+            const primary =
+              prod.categories.find((c) => c.ProductCategory?.is_primary) || prod.categories[0];
+            const pId = String(primary.category_id ?? primary.id ?? '');
+            const parentId =
+              primary.parent_category_id != null ? String(primary.parent_category_id) : '';
+            if (parentId) {
+              setCategoryId(parentId);
+              setSubCategoryId(pId);
+            } else {
+              setCategoryId(pId);
+              setSubCategoryId('');
+            }
+          }
+          setProductType('SIMPLE');
+
+          // Reset codes, stock, pricing, and quantities to blank as requested
+          setProductCode('');
+          setSku('');
+          setBarcode('');
+          setMinQty('');
+          setMaxQty('');
+          setStock('');
+          setRegular('');
+          setSale('');
+          setOffer('');
+          setPricingMode('manual');
+          setSpecialDiscountEnabled(false);
+          setSpecialDiscountPercent('0');
+          setFestivalOfferEnabled(false);
+          setFestivalOfferPercent('0');
+          setServerEffectivePrice('');
+
+          // Specifications (Non-dimension / non-date)
+          setTargetAudience(prod.target_audience || '');
+          setHsnCode(prod.hsn_code || '');
+          setGstRate(prod.gst_rate != null ? String(prod.gst_rate) : '');
+          setUnitCount(prod.unit_count != null ? String(prod.unit_count) : '');
+          setMaterial(prod.material || '');
+          setColour(prod.colour || '');
+          setPackageType(prod.package_type || '');
+          setShelfLife(prod.shelf_life || '');
+          setWaterResistant(
+            prod.water_resistant === true
+              ? 'true'
+              : prod.water_resistant === false
+              ? 'false'
+              : ''
+          );
+          setHazardousClause(prod.hazardous_clause || '');
+
+          // Reset dimensions to blank
+          setWeight('');
+          setWeightUnit(prod.weight_unit || 'g');
+          setPackageLength('');
+          setPackageBreadth('');
+          setPackageHeight('');
+          setDimensionUnit(prod.dimension_unit || 'cm');
+          setProductLength('');
+          setProductBreadth('');
+          setProductHeight('');
+          setProductDimensionUnit((prod.product_dimension_unit as string) || 'cm');
+
+          const savedReusable =
+            prod.reusable !== undefined
+              ? prod.reusable
+              : loadedDetails.reusable === 'true'
+              ? true
+              : loadedDetails.reusable === 'false'
+              ? false
+              : null;
+          setReusable(savedReusable ?? null);
+
+          const savedHasAccessories =
+            prod.has_accessories !== undefined
+              ? Boolean(prod.has_accessories)
+              : Boolean(prod.accessories || loadedDetails.accessories);
+          const savedAccessories =
+            (prod.accessories ?? loadedDetails.accessories ?? '').trim();
+          setHasAccessories(savedHasAccessories);
+          setAccessoriesText(savedHasAccessories ? savedAccessories : '');
+
+          const savedCondition = prod.item_condition || (prod as any).condition;
+          if (savedCondition === 'refurbished' || savedCondition === 'new') {
+            setItemCondition(savedCondition);
+          } else {
+            setItemCondition('new');
+          }
+
+          const savedGiftOptionsAvail = Boolean(prod.gift_options_available);
+          const savedGiftOptionsCharge =
+            prod.gift_options_charge != null ? String(prod.gift_options_charge) : '';
+          setGiftOptionsAvailable(savedGiftOptionsAvail);
+          setGiftOptionsCharge(savedGiftOptionsAvail ? savedGiftOptionsCharge : '');
+
+          const savedGiftWrapAvail = Boolean(prod.gift_wrap_available);
+          const savedGiftWrapCharge =
+            prod.gift_wrap_charge != null ? String(prod.gift_wrap_charge) : '';
+          setGiftWrapAvailable(savedGiftWrapAvail);
+          setGiftWrapCharge(savedGiftWrapAvail ? savedGiftWrapCharge : '');
+          setManufacturedIn(prod.manufactured_in || '');
+          setCompanyName(prod.company_name || '');
+          setCompanyAddress(prod.company_address || '');
+          setPackerName(prod.packer_name || '');
+          setPackerAddress(prod.packer_address || '');
+          setKeywordsText(Array.isArray(prod.keywords) ? prod.keywords.join(', ') : '');
+
+          const descBullets = prod.description ? parseDetails(prod.description) : [];
+          setDetails(descBullets);
+          setDetailsText(prod.description || '');
+
+          // Images start fresh as requested
+          setImages([]);
+
+          setCopiedFromInfo({
+            id: String(prod.product_id ?? prod.id ?? id),
+            name: prodName,
+          });
+        }
+      } catch (err: any) {
+        const message = err?.message || 'Unable to copy product listing. Please try again.';
+        setError(message);
+        setProductLoadError(message);
+      } finally {
+        setIsLoadingProduct(false);
+      }
+    }
+
+    if (currentId) {
+      void loadProduct(currentId);
+    } else if (requestedCopyFromId) {
+      void loadProductForCopy(requestedCopyFromId);
+    }
+  }, [requestedEditId, requestedCopyFromId]);
 
   const fileRef = useRef<HTMLInputElement>(null);
   const imagesRef = useRef<GalleryImage[]>([]);
@@ -1570,52 +1775,110 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
 
   function handleConfirmVariantsDone() {
     setError('');
+
+    const activeTypes = selectedVariantTypeIds
+      .map((vId) => {
+        const vt = variantTypesList.find((v) => v.id === vId);
+        const selectedOpts = (selectedOptionsByVariant[vId] || [])
+          .map((o) => o.trim())
+          .filter(Boolean);
+        return { vt, selectedOpts };
+      })
+      .filter(
+        (item): item is { vt: VariantType; selectedOpts: string[] } =>
+          Boolean(item.vt && item.selectedOpts.length > 0)
+      );
+
+    if (activeTypes.length === 0) {
+      setError('Please select at least one variant option before clicking Done.');
+      return;
+    }
+
+    // Cartesian product of option combinations:
+    const optionLists = activeTypes.map((at) =>
+      at.selectedOpts.map((opt) => ({
+        vtId: at.vt.id,
+        vtName: at.vt.name,
+        optName: opt,
+      }))
+    );
+
+    const cartesianCombos = optionLists.reduce<
+      Array<Array<{ vtId: string; vtName: string; optName: string }>>
+    >(
+      (acc, curr) => acc.flatMap((a) => curr.map((b) => [...a, b])),
+      [[]]
+    );
+
     const nextTerms: Term[] = [];
-    const seenCombo = new Set<string>();
+    const seenCombos = new Set<string>();
 
-    for (const vId of selectedVariantTypeIds) {
-      const vt = variantTypesList.find((v) => v.id === vId);
-      if (!vt) continue;
-      const selectedOpts = selectedOptionsByVariant[vId] || [];
-      for (const rawOpt of selectedOpts) {
-        const optName = rawOpt.trim();
-        if (!optName) continue;
-        const comboKey = `${vId}::${optName.toLowerCase()}`;
-        if (seenCombo.has(comboKey)) continue;
-        seenCombo.add(comboKey);
+    for (const combo of cartesianCombos) {
+      if (combo.length === 0) continue;
+      const primaryItem = combo[0];
+      const attributes: Record<string, string> = {};
+      for (const item of combo) {
+        attributes[item.vtName] = item.optName;
+      }
 
-        // Reuse existing Term if already present so saved price/SKU/stock/backendVariantId are preserved
-        const existingTerm = terms.find(
-          (t) =>
-            t.variantTypeId === vId &&
-            t.name.trim().toLowerCase() === optName.toLowerCase()
+      const comboKey = Object.entries(attributes)
+        .map(([k, v]) => `${k.trim().toLowerCase()}:${v.trim().toLowerCase()}`)
+        .sort()
+        .join('::');
+
+      if (seenCombos.has(comboKey)) continue;
+      seenCombos.add(comboKey);
+
+      // Reuse existing Term if already present so saved price/SKU/stock/backendVariantId are preserved
+      const existingTerm = terms.find((t) => {
+        const tAttrs = mergeVariantAttributes(
+          t.attributes,
+          (t.variantTypeName || 'Size').trim(),
+          t.name.trim()
         );
-        if (existingTerm) {
-          nextTerms.push(existingTerm);
-        } else {
-          const vtOpt = vt.terms.find(
-            (x) => x.name.trim().toLowerCase() === optName.toLowerCase()
-          );
-          const termId = vtOpt?.id || `${vId}-opt-${uid()}`;
-          nextTerms.push({
-            key: `${vId}-${termId}-${uid()}`,
-            termId,
-            variantTypeId: vId,
-            variantTypeName: vt.name,
-            name: optName,
-            sku: '',
-            variantName: '',
-            unitCount: unitCount || '',
-            weightGrams: '',
-            barcode: barcode || '',
-            regularPrice: '',
-            offerPercent: '',
-            salePrice: '',
-            stockQuantity: '',
-            description: '',
-            image: null,
-          });
-        }
+        const tKey = Object.entries(tAttrs)
+          .map(([k, v]) => `${k.trim().toLowerCase()}:${v.trim().toLowerCase()}`)
+          .sort()
+          .join('::');
+        return tKey === comboKey;
+      });
+
+      if (existingTerm) {
+        nextTerms.push({
+          ...existingTerm,
+          attributes,
+          variantTypeName: primaryItem.vtName,
+          name: primaryItem.optName,
+        });
+      } else {
+        const vtOpt = primaryItem.vtName
+          ? variantTypesList
+              .find((v) => v.id === primaryItem.vtId)
+              ?.terms.find(
+                (x) => x.name.trim().toLowerCase() === primaryItem.optName.toLowerCase()
+              )
+          : null;
+        const termId = vtOpt?.id || `${primaryItem.vtId}-opt-${uid()}`;
+        const subNames = combo.map((c) => c.optName).join(' / ');
+        nextTerms.push({
+          key: `combo-${comboKey.replace(/[^a-zA-Z0-9]+/g, '-')}-${uid()}`,
+          termId,
+          variantTypeId: primaryItem.vtId,
+          variantTypeName: primaryItem.vtName,
+          name: primaryItem.optName,
+          attributes,
+          sku: '',
+          variantName: subNames,
+          unitCount: unitCount || '',
+          weightGrams: defaultWeightGrams || '',
+          barcode: barcode || '',
+          regularPrice: '',
+          offerPercent: '',
+          salePrice: '',
+          stockQuantity: '',
+          description: '',
+          image: null,
+        });
       }
     }
 
@@ -1628,7 +1891,11 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
     setOpenTerm((prev) =>
       prev && nextTerms.some((t) => t.key === prev) ? prev : nextTerms[0]?.key ?? null
     );
-    setVariantDoneNotice(`${nextTerms.length} selected option(s) synced to Terms.`);
+    const noticeText =
+      activeTypes.length > 1
+        ? `${nextTerms.length} variant combination(s) generated across ${activeTypes.length} types.`
+        : `${nextTerms.length} option(s) synced to Terms.`;
+    setVariantDoneNotice(noticeText);
     setTab('terms');
   }
 
@@ -1712,14 +1979,18 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
   async function syncProductVariants(targetProductId: string | number) {
     if (productType !== 'VARIABLE' && terms.length === 0 && initialVariantIds.length === 0) return;
 
-    // Deduplicate terms by (variantTypeName, optionName) so duplicate attribute combinations are never sent
+    // Deduplicate terms by full attribute combination so duplicate attribute combinations are never sent
     const uniqueTerms: Term[] = [];
     const seenAttrCombos = new Set<string>();
     for (const t of terms) {
       const attrName = (t.variantTypeName || 'Size').trim();
       const optVal = t.name.trim();
       if (!optVal) continue;
-      const comboKey = `${attrName}::${optVal}`;
+      const mergedAttrs = mergeVariantAttributes(t.attributes, attrName, optVal);
+      const comboKey = Object.entries(mergedAttrs)
+        .map(([k, v]) => `${k.trim()}:${v.trim()}`)
+        .sort()
+        .join('::');
       if (seenAttrCombos.has(comboKey)) continue;
       seenAttrCombos.add(comboKey);
       uniqueTerms.push(t);
@@ -1789,13 +2060,21 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
       const optVal = t.name.trim();
       if (!optVal) continue;
 
+      const optSlug = Object.values(mergeVariantAttributes(t.attributes, attrName, optVal))
+        .map((val) => val.replace(/[^a-zA-Z0-9]+/g, '-').toUpperCase())
+        .filter(Boolean)
+        .join('-');
+
       const resolvedSku =
         t.sku.trim() ||
-        `${baseSkuPrefix}-${optVal.replace(/[^a-zA-Z0-9]+/g, '-').toUpperCase()}-${idx + 1}`;
+        `${baseSkuPrefix}-${optSlug || optVal.replace(/[^a-zA-Z0-9]+/g, '-').toUpperCase()}-${idx + 1}`;
 
       // Embed Unit Count (per pack) into variant_name so each size stores its pack count
       const packCount = t.unitCount.trim();
-      let resolvedVariantName = t.variantName.trim() || optVal;
+      let resolvedVariantName =
+        t.variantName.trim() ||
+        Object.values(mergeVariantAttributes(t.attributes, attrName, optVal)).join(' / ') ||
+        optVal;
       if (packCount && !/pack\s+of\s+\d+/i.test(resolvedVariantName)) {
         resolvedVariantName = `${resolvedVariantName} (Pack of ${packCount})`;
       }
@@ -1807,8 +2086,10 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
         barcode: t.barcode.trim() || null,
         weight_grams: (() => {
           const w = num(t.weightGrams);
-          if (w == null) return null;
-          return Math.max(0, Math.round(w));
+          if (w != null) return Math.max(0, Math.round(w));
+          const fallback = typeof defaultWeightGrams !== 'undefined' ? defaultWeightGrams : null;
+          if (fallback) return Math.max(0, Math.round(Number(fallback)));
+          return null;
         })(),
         regular_price: num(t.regularPrice) ?? num(regular) ?? 0,
         sale_price: num(t.salePrice),
@@ -1929,13 +2210,10 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
       packer_address: (sameAsManufacturer ? companyAddress : packerAddress).trim() || null,
       keywords: parsedKeywords,
       ...(() => {
-        const effectiveBrandName =
-          typeof brandName !== 'undefined' && brandName !== 'Unbranded'
-            ? brandName
-            : typeof brand !== 'undefined'
-            ? brand
-            : '';
-        const effectiveCompany = (companyName || '').trim() || effectiveBrandName;
+        const effectiveBrand =
+          (typeof brandName !== 'undefined' && brandName && brandName !== 'Unbranded' ? brandName : '') ||
+          (typeof brand !== 'undefined' && brand && brand !== 'Unbranded' ? brand : '');
+        const effectiveBrandOrCompany = effectiveBrand.trim() || (companyName || '').trim() || '';
         const effectiveCategory =
           typeof category !== 'undefined' && category?.name
             ? (typeof subCategoryId !== 'undefined' && subCategoryId
@@ -1948,7 +2226,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
         const autoManufacturerSku = additionalDetails.manufacturer_sku?.trim()
           ? additionalDetails.manufacturer_sku.trim()
           : typeof generateManufacturerSku === 'function'
-          ? generateManufacturerSku(effectiveCompany, 1)
+          ? generateManufacturerSku(effectiveBrandOrCompany, 1)
           : null;
 
         const autoModelNumber = additionalDetails.model_number?.trim()
@@ -2200,11 +2478,16 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
             <div>
               <div className="flex items-center gap-2.5">
                 <h2 className="text-[20px] font-bold text-gray-900 tracking-tight">
-                  {isEditing ? 'Edit Product' : 'Add New Product'}
+                  {isEditing ? 'Edit Product' : copiedFromInfo ? 'Add Product (Copied Listing)' : 'Add New Product'}
                 </h2>
                 {editId && (
                   <span className="rounded-md bg-orange-50 px-2.5 py-0.5 font-mono text-[11px] font-semibold text-[#F47C35] border border-orange-200">
                     ID: #{editId}
+                  </span>
+                )}
+                {copiedFromInfo && (
+                  <span className="rounded-md bg-indigo-50 px-2.5 py-0.5 font-mono text-[11px] font-semibold text-indigo-700 border border-indigo-200">
+                    Copied from #{copiedFromInfo.id}
                   </span>
                 )}
                 {isLoadingProduct && (
@@ -2217,10 +2500,24 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
               <p className="mt-1 text-[13px] text-gray-500">
                 {isEditing
                   ? 'Update existing product catalog details, pricing, and images'
+                  : copiedFromInfo
+                  ? 'Review copied details, fill in pricing, dimensions, and images for this variant'
                   : 'Configure product catalog details, pricing, and images'}
               </p>
             </div>
             <div className="flex items-center gap-2.5 w-full sm:w-auto">
+              {isEditing && editId && (
+                <button
+                  type="button"
+                  disabled={saving || submitting || isLoadingProduct}
+                  onClick={() => router.push(`/admin/products/add?copyFrom=${editId}`)}
+                  className="hidden sm:inline-flex h-10 sm:h-11 items-center justify-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50 px-3.5 sm:px-4 text-[13px] sm:text-[14px] font-medium text-indigo-700 hover:bg-indigo-100 transition-colors disabled:opacity-60 cursor-pointer"
+                  title="Copy this listing as a new variant"
+                >
+                  <Copy size={15} />
+                  <span>Copy Listing</span>
+                </button>
+              )}
               <button
                 type="button"
                 disabled={saving || submitting || isLoadingProduct}
@@ -2239,6 +2536,28 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
               </button>
             </div>
           </div>
+
+          {copiedFromInfo && (
+            <div className="mt-4 flex items-start gap-3 rounded-xl border border-indigo-200 bg-indigo-50/70 p-4 text-indigo-900 shadow-2xs">
+              <Copy className="mt-0.5 h-5 w-5 text-indigo-600 shrink-0" />
+              <div className="flex-1 text-sm">
+                <p className="font-semibold text-indigo-950">
+                  Copying listing from: <span className="underline decoration-indigo-300">{copiedFromInfo.name}</span> (ID: #{copiedFromInfo.id})
+                </p>
+                <p className="mt-0.5 text-xs text-indigo-700">
+                  Descriptions, brand, categories, and specifications were copied. Pricing, order limits, barcode, dimensions, dates, and images have been left blank for this new variant.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setCopiedFromInfo(null)}
+                className="text-indigo-400 hover:text-indigo-700 cursor-pointer"
+                title="Dismiss notice"
+              >
+                <X size={16} />
+              </button>
+            </div>
+          )}
 
           {error && !previewOpen && (
             <p
@@ -3372,6 +3691,13 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                               (sum, vId) => sum + (selectedOptionsByVariant[vId]?.length || 0),
                               0
                             );
+                            const activeTypesForSummary = selectedVariantTypeIds
+                              .map((vId) => (selectedOptionsByVariant[vId] || []).filter((o) => o.trim()).length)
+                              .filter((count) => count > 0);
+                            const totalCombinationsCount =
+                              activeTypesForSummary.length > 0
+                                ? activeTypesForSummary.reduce((prod, count) => prod * count, 1)
+                                : 0;
 
                             // Combine vt.terms + any selected options into a deduplicated display list
                             const allOptionNames: string[] = [];
@@ -3466,9 +3792,17 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                                 {/* Footer Bar with Selection Summary & "Done" Button */}
                                 <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[#E8E8E8] bg-white px-4 py-3">
                                   <div className="text-[12px] text-[#444]">
-                                    {totalSelectedCount > 0 ? (
+                                    {totalCombinationsCount > 0 ? (
                                       <span>
-                                        <strong className="text-[#111]">{totalSelectedCount}</strong> option(s) selected across variant types.
+                                        <strong className="text-[#111]">{totalSelectedCount}</strong> option(s) selected
+                                        {activeTypesForSummary.length > 1 ? (
+                                          <>
+                                            {' '}across <strong>{activeTypesForSummary.length}</strong> types &rarr;{' '}
+                                            <strong className="text-[#F47C35]">{totalCombinationsCount} combination variant(s)</strong> will be generated.
+                                          </>
+                                        ) : (
+                                          ' across variant types.'
+                                        )}
                                       </span>
                                     ) : (
                                       <span className="text-[#888]">
@@ -3501,7 +3835,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                                       onClick={handleConfirmVariantsDone}
                                       className="h-9 rounded-lg bg-[#F47C35] px-5 text-[13px] font-semibold text-white shadow-xs hover:bg-[#E96F29] transition-colors cursor-pointer"
                                     >
-                                      Done ({totalSelectedCount}) →
+                                      Done ({totalCombinationsCount || totalSelectedCount}) →
                                     </button>
                                   </div>
                                 </div>
@@ -3568,7 +3902,16 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                                     <input
                                       type="text"
                                       value={t.name}
-                                      onChange={(e) => patchTerm(t.key, { name: e.target.value })}
+                                      onChange={(e) => {
+                                        const newName = e.target.value;
+                                        patchTerm(t.key, {
+                                          name: newName,
+                                          attributes: {
+                                            ...t.attributes,
+                                            [t.variantTypeName || 'Size']: newName,
+                                          },
+                                        });
+                                      }}
                                       className="h-8 rounded-md border border-[#D7D7D7] bg-white px-2.5 text-[13px] font-semibold text-[#F47C35] outline-none focus:border-[#F47C35]"
                                     />
                                   </div>
@@ -3637,7 +3980,14 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                                     />
                                   </div>
                                   <div>
-                                    <Label htmlFor={`term-weight-${t.key}`}>Weight (in grams)</Label>
+                                    <div className="flex items-center justify-between">
+                                      <Label htmlFor={`term-weight-${t.key}`}>Weight (in grams)</Label>
+                                      {defaultWeightGrams && !t.weightGrams ? (
+                                        <span className="text-[10px] font-medium text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded">
+                                          Auto-inherited ({defaultWeightGrams}g)
+                                        </span>
+                                      ) : null}
+                                    </div>
                                     <input
                                       id={`term-weight-${t.key}`}
                                       type="number"
@@ -3645,9 +3995,14 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                                       step="1"
                                       value={t.weightGrams}
                                       onChange={(e) => patchTerm(t.key, { weightGrams: e.target.value })}
-                                      placeholder="Eg: 450"
+                                      placeholder={defaultWeightGrams ? `Default: ${defaultWeightGrams}g (from Section 3)` : 'Eg: 450'}
                                       className={termInputBase}
                                     />
+                                    <p className="mt-1 text-[11px] text-slate-500">
+                                      {defaultWeightGrams
+                                        ? `Inherited from Section 3 Package Weight (${defaultWeightGrams}g). Change only if this variant weighs differently.`
+                                        : 'Leave blank to use base product package weight.'}
+                                    </p>
                                   </div>
                                 </div>
 
@@ -4066,7 +4421,8 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
           <AdditionalProductDetails
             values={additionalDetails}
             onChange={setAdditionalDetails}
-            companyName={companyName.trim() || (brandName !== 'Unbranded' ? brandName : '')}
+            brandName={brandName !== 'Unbranded' ? brandName : ''}
+            companyName={companyName.trim()}
             categoryName={(subCategoryId ? category?.subs.find((s) => s.id === subCategoryId)?.name : null) || category?.name || ''}
             productId={editId}
           />

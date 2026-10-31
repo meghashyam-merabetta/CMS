@@ -59,3 +59,40 @@ test('sorting supports names, natural product codes and numeric IDs in both dire
   }
 });
 
+test('multi-attribute variant matrix computes cartesian product and scales dynamically', () => {
+  const sizes = ['M', 'XL'];
+  const colors = ['Black', 'Blue'];
+  const optionLists = [
+    sizes.map((s) => ({ vtName: 'Size', val: s })),
+    colors.map((c) => ({ vtName: 'Color', val: c })),
+  ];
+  const combos = optionLists.reduce(
+    (acc, curr) => acc.flatMap((a) => curr.map((b) => [...a, b])),
+    [[]]
+  );
+  assert.equal(combos.length, 4);
+  const formatted = combos.map((c) => Object.fromEntries(c.map((item) => [item.vtName, item.val])));
+  assert.deepEqual(formatted, [
+    { Size: 'M', Color: 'Black' },
+    { Size: 'M', Color: 'Blue' },
+    { Size: 'XL', Color: 'Black' },
+    { Size: 'XL', Color: 'Blue' },
+  ]);
+
+  // If a 3rd attribute (e.g. Material or Pack) is added in the future:
+  const packs = ['10 pcs', '30 pcs'];
+  const threeWayLists = [
+    sizes.map((s) => ({ vtName: 'Size', val: s })),
+    colors.map((c) => ({ vtName: 'Color', val: c })),
+    packs.map((p) => ({ vtName: 'Pack', val: p })),
+  ];
+  const threeWayCombos = threeWayLists.reduce(
+    (acc, curr) => acc.flatMap((a) => curr.map((b) => [...a, b])),
+    [[]]
+  );
+  assert.equal(threeWayCombos.length, 8);
+  const threeWayFormatted = threeWayCombos.map((c) => Object.fromEntries(c.map((item) => [item.vtName, item.val])));
+  assert.deepEqual(threeWayFormatted[0], { Size: 'M', Color: 'Black', Pack: '10 pcs' });
+  assert.deepEqual(threeWayFormatted[7], { Size: 'XL', Color: 'Blue', Pack: '30 pcs' });
+});
+
