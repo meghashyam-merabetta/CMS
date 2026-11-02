@@ -1,4 +1,6 @@
-# Frontend → Backend: UAT variant image routes unavailable
+# Frontend → Backend: historical UAT variant image route failure
+
+**Deployment follow-up, 2 November 2026:** The final authenticated public smoke test successfully loaded the variant gallery for existing product `998844` and displayed its images. The route-level failure below was observed earlier; it is not reproduced for that current sample. Products `998972`, `998973` and `998970` have since been removed from the API, so their old IDs cannot be used for current verification. Full image write/retry coverage still requires separate authorized integration testing. The frontend fixes are now deployed; see [the deployment report](deployment-report-20261102.md).
 
 Verified on 2 November 2026 using authenticated, read-only catalogue requests through https://cms.merabetta.com. No product, variant, image or storage records were modified.
 
