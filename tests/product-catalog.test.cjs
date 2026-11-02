@@ -85,6 +85,13 @@ test('simple and warehouse-managed products keep their authoritative parent inve
   assert.equal(catalog.summarizeProductInventory({ product_type: 'simple', regular_price: 100 }, [{ stock_quantity: 2, sale_price: null, regular_price: null }]).minPrice, 100);
 });
 
+test('an empty placeholder variant cannot replace a simple product’s own stock and price', () => {
+  const product = { product_type: 'simple', inventory_managed: false, stock_quantity: 40, regular_price: 250 };
+  const placeholder = { id: '219', attributes: {}, variant_name: 'Test', stock_quantity: 0, regular_price: null, sale_price: null };
+  assert.deepEqual(catalog.summarizeProductInventory(product, [placeholder]), { source: 'product', stock: 40, minPrice: 250, maxPrice: 250, activeVariantCount: 0 });
+  assert.equal(catalog.summarizeProductInventory(product, [{ ...placeholder, attributes: { Size: 'M' }, stock_quantity: 5, sale_price: 200 }]).stock, 5);
+});
+
 test('variant search finds saved options, names, IDs and SKUs without treating tax metadata as options', () => {
   const variants = [{ id: '203', variant_name: 'DSM02 (Pack of 15)', sku: 'ARREX-DSM02-1', attributes: { Size: 'DSM02', Colour: 'Blue', ' HSN ': '87131010' } }];
   for (const query of [' dsm02 ', 'pack of 15', '203', 'ARREX-DSM02-1', 'colour: blue']) {

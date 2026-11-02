@@ -18,8 +18,10 @@ export function summarizeProductInventory(product: BackendProduct, variants = pr
     return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
   };
   const parentPrice = product.effective_price ?? product.sale_price ?? product.offer_price ?? product.regular_price ?? product.mrp ?? product.price;
+  const simplePlaceholder = product.product_type === 'simple' && variants?.length === 1
+    && Object.keys(variants[0].attributes || {}).every(key => IGNORED_VARIANT_ATTRIBUTE_KEYS.has(key.trim().toLowerCase()));
   // Warehouse-managed products already return authoritative product inventory.
-  if (product.inventory_managed === true || variants?.length === 0 && product.product_type !== 'variable') {
+  if (product.inventory_managed === true || simplePlaceholder || variants?.length === 0 && product.product_type !== 'variable') {
     const price = amount(parentPrice);
     return { source: 'product', stock: amount(product.stock_quantity ?? product.stock), minPrice: price, maxPrice: price, activeVariantCount: 0 };
   }
