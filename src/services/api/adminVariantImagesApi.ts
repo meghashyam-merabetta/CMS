@@ -19,6 +19,15 @@ export interface VariantGallery {
 export const MAX_VARIANT_IMAGES = 10;
 export const MAX_VARIANT_IMAGE_BYTES = 5 * 1024 * 1024;
 
+export class VariantImageRouteUnavailableError extends Error {
+  readonly status = 404;
+  readonly method = 'GET';
+  constructor(readonly endpoint: string, readonly backendMessage: string) {
+    super('The API does not provide variant image galleries (404: Endpoint not found). The backend team needs to restore the variant-image routes.');
+    this.name = 'VariantImageRouteUnavailableError';
+  }
+}
+
 function id(value: string | number): string {
   if (typeof value === 'number' && !Number.isSafeInteger(value)) throw new Error('Invalid backend image or variant ID.');
   const result = String(value);
@@ -59,7 +68,15 @@ export function validateVariantImages(files: File[], customCount: number, replac
   }
 }
 export async function getVariantGallery(productId: string | number, variantId: string | number): Promise<VariantGallery> {
-  return gallery(await apiFetch(base(productId, variantId), { cache: 'no-store', timeoutMs: 15000 }), productId, variantId);
+  const endpoint = base(productId, variantId);
+  try {
+    return gallery(await apiFetch(endpoint, { cache: 'no-store', timeoutMs: 15000 }), productId, variantId);
+  } catch (failure) {
+    if (failure instanceof Error && 'status' in failure && failure.status === 404 && /^Endpoint not found$/i.test(failure.message.trim())) {
+      throw new VariantImageRouteUnavailableError(endpoint, failure.message);
+    }
+    throw failure;
+  }
 }
 export async function setVariantImageMode(productId: string | number, variantId: string | number, inherit: boolean): Promise<VariantGallery> {
   return gallery(await apiFetch(base(productId, variantId), { method: 'PATCH', body: JSON.stringify({ use_product_images: inherit }) }), productId, variantId);

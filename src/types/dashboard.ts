@@ -82,6 +82,13 @@ export interface ProductRecord {
   catalogCode?: string;
   variantSummary?: string;
   variantCount?: number;
+  inventorySummary?: {
+    source: 'product' | 'variants' | 'unavailable';
+    stock: number | null;
+    minPrice: number | null;
+    maxPrice: number | null;
+    activeVariantCount: number;
+  };
   productType?: 'simple' | 'variable';
   catalogWarning?: string;
   name: string;

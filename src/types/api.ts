@@ -112,6 +112,7 @@ export interface ProductSpecificationsFields extends AdditionalProductDetails {
 }
 
 export interface BackendProduct extends ProductSpecificationsFields {
+  inventory_managed?: boolean;
   id?: number | string;
   product_id?: number | string;
   brand_id?: number | string | null;

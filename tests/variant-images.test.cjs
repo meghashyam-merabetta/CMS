@@ -51,6 +51,24 @@ function server() {
 }
 const refresh = async () => {};
 
+test('a missing gallery route is reported as a backend capability error without image fallback', async () => {
+  const original = Object.assign(new Error('Endpoint not found'), { status: 404 });
+  const api = loadTypeScript(require.resolve('../src/services/api/adminVariantImagesApi.ts'), async () => { throw original; });
+  await assert.rejects(api.getVariantGallery('998973', '219'), failure => {
+    assert.equal(failure.name, 'VariantImageRouteUnavailableError');
+    assert.equal(failure.status, 404);
+    assert.equal(failure.method, 'GET');
+    assert.equal(failure.endpoint, '/api/admin/products/998973/variants/219/images');
+    assert.equal(failure.backendMessage, 'Endpoint not found');
+    assert.match(failure.message, /backend team needs to restore/);
+    return true;
+  });
+  for (const error of [Object.assign(new Error('Variant not found'), { status: 404 }), Object.assign(new Error('Authentication required'), { status: 401 }), new Error('Connection failed')]) {
+    const service = loadTypeScript(require.resolve('../src/services/api/adminVariantImagesApi.ts'), async () => { throw error; });
+    await assert.rejects(service.getVariantGallery('998973', '219'), failure => failure === error);
+  }
+});
+
 test('M/L/XL galleries stay isolated and load by exact backend IDs', async () => {
   const s = server();
   for (const [id, size] of [['1', 'M'], ['2', 'L'], ['3', 'XL']]) {

@@ -1,6 +1,7 @@
 'use client';
 
 import type { ChangeEvent, InvalidEvent } from 'react';
+import AccessoriesFeatureFields from './AccessoriesFeatureFields';
 import {
   PRODUCT_DETAIL_FIELDS,
   ProductDetailField,
@@ -56,6 +57,7 @@ export default function AdditionalProductDetails({
     <p className="text-sm text-gray-600">Add product identity, specifications, sale dates and delivery details where applicable.</p>
     {groups.map((group) => <details key={group} open={(PRODUCT_DETAIL_FIELDS as readonly ProductDetailField[]).some((field) => field.group === group && field.required && !values[field.key as ProductDetailKey]?.trim())} className="rounded-xl border border-gray-200 bg-white p-4">
       <summary className="cursor-pointer font-semibold text-[#0D2B53]">{group}</summary>
+      {group === 'Accessories & features' ? <AccessoriesFeatureFields key={productId ?? 'new'} values={values} onChange={onChange} /> :
       <div className="mt-4 grid gap-4 sm:grid-cols-2">
         {(PRODUCT_DETAIL_FIELDS as readonly (ProductDetailField & { key: ProductDetailKey })[]).filter((field) => field.group === group && !EXCLUDED_DETAIL_FIELDS.has(field.key)).map((field) => {
           const id = `detail-${field.key}`;
@@ -121,7 +123,7 @@ export default function AdditionalProductDetails({
             </select> : field.type === 'textarea' ? <textarea {...common} className={`${inputClass} min-h-24 py-2`} /> : <input {...common} type={field.type ?? 'text'} min={field.min} max={field.max} step={field.step} />}
           </div>;
         })}
-      </div>
+      </div>}
     </details>)}
   </section>;
 }

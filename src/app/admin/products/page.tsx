@@ -41,7 +41,7 @@ import {
 } from '@/services/api/adminProductsApi';
 import { getAdminCategories, getAllAdminCategories } from '@/services/api/adminCategoriesApi';
 import ProductVariantsList from '@/components/products/ProductVariantsList';
-import { compareProductRecords, summarizeProductVariants, variantMatchesSearch } from '@/lib/productCatalog';
+import { compareProductRecords, summarizeProductVariants, summarizeProductInventory, variantMatchesSearch } from '@/lib/productCatalog';
 import { collectAllPages } from '@/lib/pagination';
 import { getAllAdminBrands } from '@/services/api/adminBrandsApi';
 import { BackendProduct, BackendCategory, BackendBrand, ProductStatus } from '@/types/api';
@@ -110,6 +110,7 @@ function mapBackendProductToRecord(
     catalogCode: bp.product_code || undefined,
     variantSummary: summarizeProductVariants(bp.variants || []),
     variantCount: bp.variants?.length,
+    inventorySummary: summarizeProductInventory(bp),
     productType: bp.product_type,
     name,
     brand: brandLabel,
@@ -438,10 +439,11 @@ export default function ProductManagementPage() {
         !result.image ? getAdminProductImages(record.id).then((images) => {
           result.image = images.find((image) => image.is_primary)?.image_url || images[0]?.image_url;
         }).catch(() => warnings.push('Images could not be loaded')) : Promise.resolve(),
-        backend?.variants === undefined && backend?.product_type !== 'simple'
+        backend?.variants === undefined && backend?.inventory_managed !== true
           ? getAllAdminProductVariants(record.id).then((variants) => {
             result.variantSummary = summarizeProductVariants(variants);
             result.variantCount = variants.length;
+            result.inventorySummary = summarizeProductInventory(backend!, variants);
           }).catch(() => warnings.push('Variants could not be loaded')) : Promise.resolve(),
       ]);
       result.catalogWarning = warnings.join('. ');
@@ -718,7 +720,8 @@ export default function ProductManagementPage() {
   const currencyFormatter = new Intl.NumberFormat('en-IN', {
     style: 'currency',
     currency: 'INR',
-    maximumFractionDigits: 0,
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2,
   });
 
   return (
@@ -947,6 +950,10 @@ export default function ProductManagementPage() {
                 </tr>
               ) : (
                 paginatedProducts.map((p) => {
+                  const inventory = p.inventorySummary;
+                  const stock = inventory?.stock ?? null;
+                  const minPrice = inventory?.minPrice ?? null;
+                  const maxPrice = inventory?.maxPrice ?? null;
                   return (
                     <React.Fragment key={p.id}>
                     <tr
@@ -1008,18 +1015,20 @@ export default function ProductManagementPage() {
                       <td className="px-3">
                         <span
                           className={`font-semibold ${
-                            p.stock > 10
+                            stock == null ? 'text-slate-500' : stock > 10
                               ? 'text-emerald-700'
-                              : p.stock > 0
+                              : stock > 0
                               ? 'text-amber-700'
                               : 'text-rose-600'
                           }`}
                         >
-                          {p.stock > 0 ? `${p.stock} units` : 'Out of stock'}
+                          {stock == null ? 'Unavailable' : stock > 0 ? `${stock.toLocaleString('en-IN')} units` : 'Out of stock'}
                         </span>
+                        {inventory?.source === 'variants' && <div className="mt-1 text-[10px] text-gray-500">Across {inventory.activeVariantCount} active variants</div>}
                       </td>
                       <td className="px-3 font-semibold text-slate-900">
-                        {currencyFormatter.format(p.price)}
+                        {minPrice == null || maxPrice == null ? 'Unavailable' : minPrice === maxPrice ? currencyFormatter.format(minPrice) : `${currencyFormatter.format(minPrice)}–${currencyFormatter.format(maxPrice)}`}
+                        {inventory?.source === 'variants' && <div className="mt-1 text-[10px] font-normal text-gray-500">Variant prices</div>}
                       </td>
                       <td className="px-3">
                         <span

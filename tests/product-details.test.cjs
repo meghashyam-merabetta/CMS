@@ -74,6 +74,30 @@ test('the section renders labelled controls and the preview shows entered values
   assert.match(summary, />No</);
 });
 
+test('accessory and feature fields start optional, retain saved false values, and clear through the real PATCH payload', async () => {
+  const React = require('react'); const { renderToStaticMarkup } = require('react-dom/server');
+  const Component = loadTypeScript(require.resolve('../src/components/products/AccessoriesFeatureFields.tsx')).default;
+  const empty = renderToStaticMarkup(React.createElement(Component, { values: {}, onChange() {} }));
+  assert.match(empty, /Select a field/);
+  assert.doesNotMatch(empty, /id="detail-battery_required"/);
+  assert.doesNotMatch(empty, /id="detail-battery_consumption"/);
+  const initial = { battery_required: 'false', battery_consumption: '12 W', cosmetic_features: 'Adjustable straps' };
+  const saved = renderToStaticMarkup(React.createElement(Component, { values: initial, onChange() {} }));
+  assert.match(saved, /id="detail-battery_required"/);
+  assert.match(saved, /value="false" selected=""/);
+  assert.match(saved, /value="12 W"/);
+  const bodies = [];
+  const api = loadTypeScript(require.resolve('../src/services/api/adminProductsApi.ts'), async (_url, options) => {
+    bodies.push(JSON.parse(options.body)); return { data: { product_id: 123 } };
+  });
+  await api.updateAdminProduct(123, details.serializeProductDetails(initial));
+  await api.updateAdminProduct(123, details.serializeProductDetails({ battery_required: '', battery_consumption: '', cosmetic_features: 'Adjustable straps' }, initial));
+  assert.equal(bodies[0].battery_required, false);
+  assert.equal(bodies[1].battery_required, null); assert.equal(bodies[1].battery_consumption, null);
+  assert.equal(bodies[1].cosmetic_features, 'Adjustable straps');
+  assert.equal(details.readProductDetails(bodies[1]).battery_required, '');
+});
+
 test('expiry dates and shelf-life durations round-trip through the existing backend field', async () => {
   for (const shelf_life of ['2028-10-31', '24 Months', '5 Years', 'No Expiry']) {
     const payload = details.serializeProductDetails({ shelf_life });
