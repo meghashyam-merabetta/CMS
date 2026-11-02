@@ -44,7 +44,7 @@ export default function ProductVariantsList({ productId, productName, refreshVer
           const label = summarizeProductVariants([variant]) || variant.variant_name || variant.sku;
           const stock = variant.stock_quantity != null && Number.isFinite(Number(variant.stock_quantity)) ? Number(variant.stock_quantity) : null;
           return <tr key={String(variant.id)} className="border-b align-top last:border-0">
-            <td className="p-2"><p className="font-semibold">{label}</p><p>Variant #{variant.id}</p>{variant.variant_name && <p>{variant.variant_name}</p>}{variant.is_active === false && <p className="text-red-700">Inactive variant</p>}</td>
+            <td className="p-2"><p className="font-semibold">{label}</p><p>{variant.individual_product_id != null ? `Product PRD-${variant.individual_product_id}` : `Legacy variant #${variant.id}`}</p>{variant.variant_name && <p>{variant.variant_name}</p>}{variant.is_active === false && <p className="text-red-700">Inactive variant</p>}</td>
             <td className="p-2">
               {gallery?.primary_image ? <>
                 {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -61,6 +61,6 @@ export default function ProductVariantsList({ productId, productName, refreshVer
         })}</tbody>
       </table>
     </div>)}
-    <p className="text-xs text-gray-500">Variants share the product description. Their images, SKU, pricing and stock are shown separately. A saved variant appears under its product, not as a new product ID. Save Changes in the editor to update SKU, price and stock; image changes save immediately.</p>
+    <p className="text-xs text-gray-500">Variants share the product description. Their images, SKU, pricing and stock are shown separately. Each converted or newly saved configuration has its own product ID and stays grouped here for editing. Legacy entries show their variant ID until conversion is complete. Save Changes in the editor to update SKU, price and stock; image changes save immediately.</p>
   </section>;
 }
