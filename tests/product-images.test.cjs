@@ -112,7 +112,7 @@ function saveEnv() {
     validateAdminProductRequestSize,
     uncertainImageUpload: { current: false },
     productLoadError: '', lookupError: '',
-    additionalDetails: {}, initialAdditionalDetails: {}, validateProductDetails,
+    additionalDetails: { license_number: 'LIC-123' }, initialAdditionalDetails: {}, validateProductDetails,
     setInitialAdditionalDetails(value) { env.initialAdditionalDetails = value; },
     images: [{ key: 'local', file: file(), src: 'blob:local' }],
     serverImages: [], creates: 0, updates: 0, uploads: 0,
@@ -216,6 +216,51 @@ test('variant deletion failure stops save instead of reporting success', async (
   assert.deepEqual(env.initialVariantIds, [1]);
 });
 
+test('one save creates a variant then uploads its staged images using the returned ID, with no repeat on the next save', async () => {
+  const env = variantEnv();
+  env.terms = [{ key: 'large', variantTypeName: 'Size', name: 'LARGE', sku: '', variantName: '', unitCount: '', barcode: '', weightGrams: '', regularPrice: '100', salePrice: '', stockQuantity: '4', pendingImages: [new File(['a'], 'large.png', { type: 'image/png' }), new File(['b'], 'back.png', { type: 'image/png' })] }];
+  const calls = []; const images = [];
+  env.variantImageEditors = { current: new Map() };
+  env.VariantImageEditor = loadTypeScript(require.resolve('../src/lib/variantImageEditor.ts'), async (url, options = {}) => {
+    assert.equal(url, '/api/admin/products/123/variants/93/images');
+    if (options.method === 'POST') {
+      calls.push('image');
+      assert.ok(options.headers['Idempotency-Key']);
+      assert.equal(options.body.getAll('uploadimage').length, 1);
+      images.push({ id: String(images.length + 1), image_url: 'https://images/' + options.body.get('uploadimage').name });
+    }
+    return { data: { product_id: '123', variant_id: '93', use_product_images: false, effective_source: 'variant', custom_images: [...images], effective_images: [...images], primary_image: images[0] || null } };
+  }).VariantImageEditor;
+  env.createAdminProductVariant = async () => { calls.push('create variant'); return { id: '93' }; };
+  env.updateAdminProductVariant = async () => { calls.push('patch variant'); };
+  env.flushQueuedVariantImages = editorHandler('flushQueuedVariantImages', env);
+  const sync = editorHandler('syncProductVariants', env);
+  await sync(123);
+  assert.deepEqual(calls, ['create variant', 'image', 'image']);
+  assert.equal(env.terms[0].backendVariantId, '93');
+  assert.deepEqual(env.terms[0].pendingImages, []);
+  await sync(123);
+  assert.deepEqual(calls, ['create variant', 'image', 'image', 'patch variant']);
+});
+
+test('staged-image failures preserve files until the retry controller owns them, then preserve the original action key', async () => {
+  const env = variantEnv();
+  env.terms = [{ key: 'large', variantTypeName: 'Size', name: 'LARGE', pendingImages: [new File(['a'], 'large.png', { type: 'image/png' })] }];
+  const controller = { pending: null, load: async () => { throw Error('Offline'); }, upload: async () => {} };
+  env.variantImageEditors = { current: new Map([['123:93', controller]]) };
+  env.setPreviewOpen = () => {}; env.setTab = value => { env.tab = value; }; env.setOpenTerm = value => { env.openTerm = value; };
+  const flush = editorHandler('flushQueuedVariantImages', env);
+  await assert.rejects(flush(123, '93', env.terms[0]), /selected images are retained/);
+  assert.equal(env.terms[0].pendingImages.length, 1);
+  controller.load = async () => {};
+  controller.upload = async files => { controller.pending = { files, key: 'original-key' }; throw Error('Response lost'); };
+  await assert.rejects(flush(123, '93', env.terms[0]), /Retry image operation/);
+  assert.deepEqual(env.terms[0].pendingImages, []);
+  assert.equal(controller.pending.files.length, 1);
+  assert.equal(controller.pending.key, 'original-key');
+  assert.equal(env.tab, 'terms'); assert.equal(env.openTerm, 'large');
+});
+
 test('variant save retries update variants already created before a later failure', async () => {
   const env = variantEnv();
   const term = (key) => ({ key, name: key, sku: '', variantName: '', unitCount: '', barcode: '', weightGrams: '', regularPrice: '', salePrice: '', stockQuantity: '' });
@@ -295,6 +340,8 @@ test('loading saved variants keeps case-distinct attribute types and options sep
   const state = {};
   const env = new Proxy({
     readProductDetails,
+    requestedVariantId: null,
+    variantImageEditors: { current: new Map() },
     getAdminProductById: async () => ({ product_name: 'Test', slug: 'test', product_type: 'variable' }),
     getAdminProductImages: async () => [],
     getAllAdminProductVariants: async () => variants,
@@ -313,6 +360,40 @@ test('loading saved variants keeps case-distinct attribute types and options sep
   ]);
   assert.deepEqual(state.terms.map((term) => term.variantTypeName), ['Size', 'Size', 'size']);
   assert.deepEqual(state.terms[0].attributes, { Size: 'Blue', size: 'blue' });
+});
+
+test('variant links open the exact saved backend ID and never silently select another variant', async () => {
+  for (const requestedVariantId of ['203', '999']) {
+    const state = {};
+    const env = new Proxy({
+      readProductDetails, requestedVariantId,
+      variantImageEditors: { current: new Map() },
+      getAdminProductById: async () => ({ product_name: 'Wheelchair', slug: 'wheelchair', product_type: 'variable' }),
+      getAdminProductImages: async () => [],
+      getAllAdminProductVariants: async () => [
+        { id: 204, attributes: { Size: 'XXXL' } },
+        { id: 203, attributes: { Size: 'DSM02' } },
+      ],
+      getAllAdminVariantAttributes: async () => [{ id: 10, name: 'Size', values: ['XXXL', 'DSM02'] }],
+      setVariantTypesList: value => { state.types = typeof value === 'function' ? value(state.types || []) : value; },
+      setTerms: value => { state.terms = value; },
+      setOpenTerm: value => { state.open = value; },
+      setTab: value => { state.tab = value; },
+      setError: value => { state.error = value; },
+    }, {
+      has: (target, key) => key in target || typeof key === 'string' && key.startsWith('set'),
+      get: (target, key) => key in target ? target[key] : typeof key === 'string' && key.startsWith('set') ? () => {} : undefined,
+    });
+    await editorHandler('loadProduct', env)('998844');
+    assert.equal(state.tab, 'terms');
+    if (requestedVariantId === '203') {
+      assert.equal(state.open, state.terms.find(term => String(term.backendVariantId) === '203').key);
+      assert.equal(state.error, undefined);
+    } else {
+      assert.equal(state.open, null);
+      assert.match(state.error, /selected variant was not found/);
+    }
+  }
 });
 
 test('products with 7–10 saved images can be saved and replaced but cannot gain images', async () => {
@@ -371,7 +452,7 @@ function pricingEnv() {
   ].map((name) => [name, '']));
   Object.assign(env, {
     name: 'Test', regular: '100', sale: '80', offer: '20', pricingMode: 'percent', productType: 'SIMPLE', images: [], terms: [], details: [],
-    additionalDetails: {}, initialAdditionalDetails: {}, serializeProductDetails,
+    additionalDetails: { license_number: 'LIC-123' }, initialAdditionalDetails: {}, serializeProductDetails,
     specialDiscountEnabled: false, festivalOfferEnabled: false, sameAsManufacturer: false, weightUnit: 'g', dimensionUnit: 'cm',
     generateProductSlug: loadService(() => {}).generateProductSlug,
     setPricingMode(value) { env.pricingMode = value; }, setRegular(value) { env.regular = value; },
@@ -854,6 +935,107 @@ test('syncProductVariants safely ignores 404 on deletion and self-heals 404 on u
   assert.equal(env.terms[0].backendVariantId, 200);
 });
 
+test('relocated expiry field uses the current saved value for both product types', () => {
+  const env = pricingEnv();
+  env.additionalDetails.shelf_life = '12 Months';
+  env.initialAdditionalDetails.shelf_life = '12 Months';
+  for (const type of ['SIMPLE', 'VARIABLE']) {
+    env.productType = type;
+    for (const value of ['2028-10-31', '24 Months', 'No Expiry', '']) {
+      env.shelfLife = value;
+      const payload = editorHandler('buildApiPayload', env)('active');
+      assert.equal(payload.shelf_life, value || null);
+    }
+  }
+});
+
+test('variant image owners survive shared-size colour combinations and Done confirmation', async () => {
+  const env = variantEnv();
+  const term = (id, colour) => ({ key: String(id), backendVariantId: id, variantTypeId: 'size', variantTypeName: 'Size', name: 'M', attributes: { Size: 'M', Colour: colour }, sku: `SKU-${id}`, variantName: '', unitCount: '', barcode: '', weightGrams: '', regularPrice: '500', salePrice: '450', stockQuantity: '7' });
+  env.terms = [term('11', 'Blue'), term('12', 'Black')];
+  Object.assign(env, { initialVariantIds: ['11', '12'], selectedVariantTypeIds: ['size'], selectedOptionsByVariant: { size: ['M'] }, variantTypesList: [{ id: 'size', name: 'Size', terms: [{ id: 'm', name: 'M' }] }], setError() {}, setTerms(value) { env.terms = value; }, setOpenTerm() {}, setVariantDoneNotice() {}, setTab() {} });
+  editorHandler('handleConfirmVariantsDone', env)();assert.deepEqual(env.terms.map(t => t.backendVariantId), ['11', '12']);
+  const writes = [];
+  env.updateAdminProductVariant = async (_p, id) => { writes.push(id); };
+  env.deleteAdminProductVariant = async () => assert.fail('Do not remove the other colour and its images');
+  env.createAdminProductVariant = async () => assert.fail('Keep the original backend image owner');
+  await editorHandler('syncProductVariants', env)(123);await editorHandler('syncProductVariants', env)(123);
+  assert.deepEqual(writes, ['11', '12', '11', '12']);
+});
+
+test('duplicate product-code errors highlight the field without changing entered data', () => {
+  const conflict = editorHandler('isProductCodeConflict', {});
+  for (const message of ['product code already in use', 'product_code already in use', 'duplicate key violates products_product_code_key']) assert.equal(conflict(message), true);
+  assert.equal(conflict('SKU already in use'), false);
+  const state = { productCode: 'JOY-01', images: ['selected-file'], name: 'New product' };
+  const env = { isProductCodeConflict: conflict, setPreviewOpen: value => { state.preview = value; }, setTab: value => { state.tab = value; }, setError: value => { state.error = value; }, requestAnimationFrame: callback => callback(), document: { getElementById: id => { assert.equal(id, 'product-code');return { scrollIntoView() {}, focus() { state.focused = true; } }; } } };
+  editorHandler('showSaveError', env)(new Error('product code already in use'), 'Save failed');
+  assert.equal(state.preview, false);assert.equal(state.tab, 'inventory');assert.equal(state.focused, true);
+  assert.match(state.error, /All Products and choose Edit/);assert.match(state.error, /optional Product Code blank/);
+  assert.equal(state.productCode, 'JOY-01');assert.deepEqual(state.images, ['selected-file']);
+  editorHandler('showSaveError', env)(new Error('Image upload failed'), 'Save failed');assert.equal(state.error, 'Image upload failed');
+});
+
+test('the merged size/colour matrix preserves saved image owners and staged files', () => {
+  const env = variantEnv();
+  const pendingImages = [new File(['a'], 'large-black.png', { type: 'image/png' })];
+  env.terms = [{ key: 'saved', backendVariantId: '203', variantTypeId: 'size', variantTypeName: 'Size', name: 'L', attributes: { Size: 'L', Colour: 'Black' }, pendingImages }];
+  Object.assign(env, {
+    selectedVariantTypeIds: ['size', 'colour'],
+    selectedOptionsByVariant: { size: ['M', 'L'], colour: ['Blue', 'Black'] },
+    variantTypesList: [{ id: 'size', name: 'Size', terms: [] }, { id: 'colour', name: 'Colour', terms: [] }],
+    defaultWeightGrams: '250', unitCount: '', barcode: '', uid: (() => { let count = 0; return () => String(++count); })(),
+    setError() {}, setTerms(value) { env.terms = value; }, setOpenTerm() {}, setVariantDoneNotice() {}, setTab() {},
+  });
+  editorHandler('handleConfirmVariantsDone', env)();
+  assert.equal(env.terms.length, 4);
+  assert.equal(new Set(env.terms.map(t => JSON.stringify(t.attributes))).size, 4);
+  const saved = env.terms.find(term => term.backendVariantId === '203');
+  assert.equal(saved.key, 'saved'); assert.equal(saved.pendingImages, pendingImages);
+  assert.deepEqual(saved.attributes, { Size: 'L', Colour: 'Black' });
+  assert.equal(env.terms.filter(term => term.backendVariantId == null).length, 3);
+});
+
+test('a custom variant field and user-entered options persist through the existing attribute and variant APIs', async () => {
+  const env = variantEnv(); let sequence = 0;
+  Object.assign(env, {
+    customVariantTypeName: 'Material', variantTypesList: [], selectedVariantTypeIds: [], selectedOptionsByVariant: {}, customOptionInputByVariant: {},
+    uid: () => String(++sequence), unitCount: '', barcode: '', defaultWeightGrams: '',
+    setVariantTypesList(update) { env.variantTypesList = update(env.variantTypesList); },
+    setSelectedVariantTypeIds(update) { env.selectedVariantTypeIds = update(env.selectedVariantTypeIds); },
+    setSelectedOptionsByVariant(update) { env.selectedOptionsByVariant = update(env.selectedOptionsByVariant); },
+    setCustomOptionInputByVariant(update) { env.customOptionInputByVariant = update(env.customOptionInputByVariant); },
+    setActiveVariantTabId(value) { env.active = value; }, setCustomVariantTypeName(value) { env.customVariantTypeName = value; },
+    setShowNewVariantField() {}, setError(value) { env.error = value; }, setVariantDoneNotice() {}, setTab() {}, setOpenTerm() {},
+    setTerms(value) { env.terms = value; },
+  });
+  editorHandler('handleAddCustomVariantType', env)();
+  assert.deepEqual(env.variantTypesList[0].terms, []); // No fabricated Option 1.
+  env.customOptionInputByVariant[env.active] = 'Cotton, Steel';
+  editorHandler('handleAddOptionToVariant', env)(env.active);
+  editorHandler('handleConfirmVariantsDone', env)();
+  const attributes = [], payloads = [];
+  env.createAdminVariantAttribute = async payload => { attributes.push(payload); };
+  env.createAdminProductVariant = async (_id, payload) => { payloads.push(payload); return { id: payloads.length }; };
+  await editorHandler('syncProductVariants', env)(123);
+  assert.deepEqual(attributes, [{ name: 'Material', values: ['Cotton', 'Steel'] }]);
+  assert.deepEqual(payloads.map(value => value.attributes), [{ Material: 'Cotton' }, { Material: 'Steel' }]);
+});
+
+test('custom field names reuse existing backend definitions and reject names that cannot round-trip', () => {
+  const env = {
+    customVariantTypeName: ' size ', variantTypesList: [{ id: 'backend-size', name: 'Size', terms: [{ name: 'M' }] }], terms: [],
+    setVariantTypesList() { assert.fail('Do not duplicate Size'); },
+    setSelectedVariantTypeIds(update) { env.selected = update([]); }, setSelectedOptionsByVariant(update) { env.options = update({ 'backend-size': ['M'] }); },
+    setActiveVariantTabId(value) { env.active = value; }, setCustomVariantTypeName() {}, setShowNewVariantField() {}, setError(value) { env.error = value; },
+  };
+  const add = editorHandler('handleAddCustomVariantType', env); add();
+  assert.deepEqual(env.selected, ['backend-size']); assert.deepEqual(env.options['backend-size'], ['M']);
+  for (const invalid of ['', 'Size, Colour', 'x'.repeat(101), 'hsn_code', '__proto__']) {
+    env.customVariantTypeName = invalid; add(); assert.ok(env.error);
+  }
+});
+
 test('variant weight auto-inherits from defaultWeightGrams when empty and respects explicit weight', async () => {
   const env = variantEnv();
   env.defaultWeightGrams = '370';
@@ -873,4 +1055,3 @@ test('variant weight auto-inherits from defaultWeightGrams when empty and respec
   assert.equal(createdPayloads[0].weight_grams, 370, 'Empty variant weight inherits defaultWeightGrams');
   assert.equal(createdPayloads[1].weight_grams, 500, 'Explicit variant weight is preserved');
 });
-

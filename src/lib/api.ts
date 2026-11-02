@@ -13,6 +13,13 @@ export interface RequestOptions extends RequestInit {
   timeoutMs?: number;
 }
 
+export class ApiError extends Error {
+  constructor(message: string, public readonly status: number) {
+    super(message);
+    this.name = 'ApiError';
+  }
+}
+
 export async function apiFetch<T>(
   endpoint: string,
   options: RequestOptions = {}
@@ -93,7 +100,7 @@ export async function apiFetch<T>(
     } catch {
       // fallback to default message if response has no JSON
     }
-    throw new Error(errorMessage);
+    throw new ApiError(errorMessage, res.status);
   }
 
   if (responseType === 'blob') {

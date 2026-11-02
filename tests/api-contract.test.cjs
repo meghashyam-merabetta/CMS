@@ -59,3 +59,8 @@ test('a server-side 422 with details includes validation path and message in err
     /Validation failed.*weight_grams.*expected int/
   );
 });
+
+test('API failures retain their HTTP status without losing the backend message', async (t) => {
+  t.mock.method(global, 'fetch', async () => new Response(JSON.stringify({ error: 'Image bytes do not match MIME' }), { status: 400 }));
+  await assert.rejects(apiFetch('/api/admin/products/55/variants/1/images'), error => error.status === 400 && error.message === 'Image bytes do not match MIME');
+});

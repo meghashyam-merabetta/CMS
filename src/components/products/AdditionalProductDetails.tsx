@@ -1,6 +1,7 @@
 'use client';
 
 import type { ChangeEvent, InvalidEvent } from 'react';
+import AccessoriesFeatureFields from './AccessoriesFeatureFields';
 import {
   PRODUCT_DETAIL_FIELDS,
   ProductDetailField,
@@ -54,8 +55,9 @@ export default function AdditionalProductDetails({
   return <section className="mt-6 space-y-4 rounded-2xl bg-[#F7F7F7] p-5">
     <h3 className="text-lg font-semibold">Additional Product Details</h3>
     <p className="text-sm text-gray-600">Add product identity, specifications, sale dates and delivery details where applicable.</p>
-    {groups.map((group) => <details key={group} className="rounded-xl border border-gray-200 bg-white p-4">
+    {groups.map((group) => <details key={group} open={(PRODUCT_DETAIL_FIELDS as readonly ProductDetailField[]).some((field) => field.group === group && field.required && !values[field.key as ProductDetailKey]?.trim())} className="rounded-xl border border-gray-200 bg-white p-4">
       <summary className="cursor-pointer font-semibold text-[#0D2B53]">{group}</summary>
+      {group === 'Accessories & features' ? <AccessoriesFeatureFields key={productId ?? 'new'} values={values} onChange={onChange} /> :
       <div className="mt-4 grid gap-4 sm:grid-cols-2">
         {(PRODUCT_DETAIL_FIELDS as readonly (ProductDetailField & { key: ProductDetailKey })[]).filter((field) => field.group === group && !EXCLUDED_DETAIL_FIELDS.has(field.key)).map((field) => {
           const id = `detail-${field.key}`;
@@ -63,7 +65,7 @@ export default function AdditionalProductDetails({
           const isAutoModel = field.key === 'model_number';
 
           const common = {
-            id, value: values[field.key] ?? '',
+            id, value: values[field.key] ?? '', required: field.required,
             onChange: (event: ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => onChange({ ...values, [field.key]: event.target.value }),
             onInvalid: (event: InvalidEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
               const section = event.currentTarget.closest('details');
@@ -74,12 +76,12 @@ export default function AdditionalProductDetails({
               ? 'e.g. MB-AX-001 or MB-JE-001 (auto-generated if blank)'
               : isAutoModel
               ? 'e.g. MD-WHE-998844 (auto-generated if blank)'
-              : undefined,
+              : field.placeholder,
           };
 
           return <div key={field.key} className="flex flex-col text-sm font-medium text-gray-700">
             <div className="flex items-center justify-between">
-              <label htmlFor={id} className="cursor-pointer">{field.label}</label>
+              <label htmlFor={id} className="cursor-pointer">{field.label}{field.required && <span className="ml-1 text-red-600" aria-hidden="true">*</span>}</label>
               {isAutoSku && (
                 <button
                   type="button"
@@ -121,7 +123,7 @@ export default function AdditionalProductDetails({
             </select> : field.type === 'textarea' ? <textarea {...common} className={`${inputClass} min-h-24 py-2`} /> : <input {...common} type={field.type ?? 'text'} min={field.min} max={field.max} step={field.step} />}
           </div>;
         })}
-      </div>
+      </div>}
     </details>)}
   </section>;
 }

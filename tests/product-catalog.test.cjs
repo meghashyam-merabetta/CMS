@@ -52,6 +52,55 @@ test('product summaries distinguish size and colour combinations', () => {
   assert.match(summary, /Size: L \/ Colour: Red/);
 });
 
+test('parent inventory uses saved variant stock and price range even when its product type says simple', () => {
+  const parent = { product_type: 'simple', inventory_managed: false, stock_quantity: 0, regular_price: null };
+  const variants = [997.2, 999, 699].map((price, index) => ({ id: String(index), stock_quantity: 1000, regular_price: '1000.00', sale_price: String(price), is_active: true }));
+  assert.deepEqual(catalog.summarizeProductInventory(parent, variants), { source: 'variants', stock: 3000, minPrice: 699, maxPrice: 999, activeVariantCount: 3 });
+  assert.equal(parent.stock_quantity, 0); // Display aggregation must not alter saved parent inventory.
+});
+
+test('variant summaries exclude inactive rows, prefer effective prices and preserve legitimate zero prices', () => {
+  const variants = [
+    { stock_quantity: 8, regular_price: 100, sale_price: 90, effective_price: 80, is_active: true },
+    { stock_quantity: 2, regular_price: 100, sale_price: 0, is_active: true },
+    { stock_quantity: 900, sale_price: 900, is_active: false },
+  ];
+  assert.deepEqual(catalog.summarizeProductInventory({}, variants), { source: 'variants', stock: 10, minPrice: 0, maxPrice: 80, activeVariantCount: 2 });
+});
+
+test('unknown or malformed variant data never becomes false zero stock or a fabricated price range', () => {
+  assert.deepEqual(catalog.summarizeProductInventory({ product_type: 'variable', stock_quantity: 0, regular_price: 0 }), { source: 'unavailable', stock: null, minPrice: null, maxPrice: null, activeVariantCount: 0 });
+  for (const value of [undefined, '', 'bad', -1]) {
+    const result = catalog.summarizeProductInventory({}, [{ stock_quantity: value, sale_price: value, is_active: true }, { stock_quantity: 3, sale_price: 100, is_active: true }]);
+    assert.equal(result.stock, null); assert.equal(result.minPrice, null); assert.equal(result.maxPrice, null);
+  }
+  const empty = catalog.summarizeProductInventory({ product_type: 'variable' }, []);
+  assert.equal(empty.stock, 0); assert.equal(empty.minPrice, null);
+});
+
+test('simple and warehouse-managed products keep their authoritative parent inventory and pricing', () => {
+  const product = { product_type: 'simple', stock_quantity: 50, effective_price: '42.50' };
+  assert.deepEqual(catalog.summarizeProductInventory(product, []), { source: 'product', stock: 50, minPrice: 42.5, maxPrice: 42.5, activeVariantCount: 0 });
+  assert.equal(catalog.summarizeProductInventory({ ...product, inventory_managed: true }, [{ stock_quantity: 9000, regular_price: 9000 }]).stock, 50);
+  assert.equal(catalog.summarizeProductInventory({ product_type: 'simple', regular_price: 100 }, [{ stock_quantity: 2, sale_price: null, regular_price: null }]).minPrice, 100);
+});
+
+test('an empty placeholder variant cannot replace a simple product’s own stock and price', () => {
+  const product = { product_type: 'simple', inventory_managed: false, stock_quantity: 40, regular_price: 250 };
+  const placeholder = { id: '219', attributes: {}, variant_name: 'Test', stock_quantity: 0, regular_price: null, sale_price: null };
+  assert.deepEqual(catalog.summarizeProductInventory(product, [placeholder]), { source: 'product', stock: 40, minPrice: 250, maxPrice: 250, activeVariantCount: 0 });
+  assert.equal(catalog.summarizeProductInventory(product, [{ ...placeholder, attributes: { Size: 'M' }, stock_quantity: 5, sale_price: 200 }]).stock, 5);
+});
+
+test('variant search finds saved options, names, IDs and SKUs without treating tax metadata as options', () => {
+  const variants = [{ id: '203', variant_name: 'DSM02 (Pack of 15)', sku: 'ARREX-DSM02-1', attributes: { Size: 'DSM02', Colour: 'Blue', ' HSN ': '87131010' } }];
+  for (const query of [' dsm02 ', 'pack of 15', '203', 'ARREX-DSM02-1', 'colour: blue']) {
+    assert.equal(catalog.variantMatchesSearch(variants, query), true, query);
+  }
+  for (const query of ['', 'XXXL', '87131010']) assert.equal(catalog.variantMatchesSearch(variants, query), false, query);
+  assert.equal(catalog.variantMatchesSearch([], 'DSM02'), false);
+});
+
 test('sorting supports names, natural product codes and numeric IDs in both directions', () => {
   const rows = [{ id: '10', name: 'Zebra', catalogCode: 'P2' }, { id: '2', name: 'apple', catalogCode: 'P10' }];
   for (const [field, order, expected] of [['product_name', 'asc', '2'], ['product_code', 'asc', '10'], ['product_id', 'asc', '2'], ['product_id', 'desc', '10']]) {

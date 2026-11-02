@@ -44,6 +44,8 @@ import {
 } from '@/services/api/adminVariantAttributesApi';
 import { ProductStatus, WeightUnit, DimensionUnit } from '@/types/api';
 import { mergeVariantAttributes } from '@/lib/productCatalog';
+import VariantImageGallery from './VariantImageGallery';
+import { VariantImageEditor } from '@/lib/variantImageEditor';
 import AdditionalProductDetails, { ProductDetailSummary } from './AdditionalProductDetails';
 import {
   readProductDetails,
@@ -109,6 +111,10 @@ function offerPercentFrom(regular: string, sale: string): string {
 
 function uid() {
   return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
+}
+
+function isProductCodeConflict(message: string): boolean {
+  return /product[\s_-]*code.*(?:already|in use|unique|duplicate)|(?:unique|duplicate).*product[\s_-]*code/i.test(message);
 }
 
 function parseDetails(text: string): string[] {
@@ -304,6 +310,7 @@ interface Term {
   key: string;
   termId: string;
   backendVariantId?: string | number;
+  pendingImages?: File[];
   attributes?: Record<string, string>;
   variantTypeId: string;
   variantTypeName: string;
@@ -347,15 +354,6 @@ const PACKAGE_TYPE_PRESETS = [
   'Tube',
   'Canister',
   'Carton',
-];
-const SHELF_LIFE_PRESETS = [
-  '6 Months',
-  '12 Months',
-  '18 Months',
-  '24 Months',
-  '36 Months',
-  '60 Months',
-  'No Expiry',
 ];
 const MATERIAL_PRESETS = [
   'Non-woven Cotton',
@@ -463,6 +461,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const requestedEditId = searchParams?.get('id') ?? null;
+  const requestedVariantId = searchParams?.get('variantId') ?? null;
   const requestedCopyFromId = searchParams?.get('copyFrom') ?? null;
   const [createdProductId, setCreatedProductId] = useState<string | null>(null);
   const createdProductIdRef = useRef<string | null>(null);
@@ -566,11 +565,15 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
   const [selectedVariantTypeIds, setSelectedVariantTypeIds] = useState<string[]>([]);
   const [activeVariantTabId, setActiveVariantTabId] = useState<string>('');
   const [customVariantTypeName, setCustomVariantTypeName] = useState('');
+  const [showNewVariantField, setShowNewVariantField] = useState(false);
   const [customOptionInputByVariant, setCustomOptionInputByVariant] = useState<Record<string, string>>({});
   const [activeOptionByVariant, setActiveOptionByVariant] = useState<Record<string, string>>({});
   const [selectedOptionsByVariant, setSelectedOptionsByVariant] = useState<Record<string, string[]>>({});
   const [variantDoneNotice, setVariantDoneNotice] = useState<string>('');
   const [terms, setTerms] = useState<Term[]>([]);
+  const [variantImagesBusy, setVariantImagesBusy] = useState(false);
+  const [variantGalleryRefresh, setVariantGalleryRefresh] = useState(0);
+  const variantImageEditors = useRef(new Map<string, VariantImageEditor>());
   const [openTerm, setOpenTerm] = useState<string | null>(null);
   const [images, setImages] = useState<GalleryImage[]>([]);
 
@@ -734,6 +737,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
       setProductLoadError('');
       setImages([]);
       setTerms([]);
+      variantImageEditors.current.clear();
       setInitialVariantIds([]);
       setSelectedVariantTypeIds([]);
       setActiveVariantTabId('');
@@ -1053,13 +1057,8 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                 });
               }
 
-              // Deduplicate loaded terms by full attribute combination so all combinations are loaded
-              const comboKey = validEntries.length > 0
-                ? validEntries
-                    .map(([k, val]) => `${String(k).trim()}:${String(val).trim()}`)
-                    .sort()
-                    .join('::')
-                : `${canonicalId}::${attrVal.trim()}`;
+              // Retain each backend variant ID and its image gallery.
+              const comboKey = String(v.id);
               if (seenTermCombo.has(comboKey)) {
                 return;
               }
@@ -1146,8 +1145,12 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
             setActiveVariantTabId(vtIdsArr[0] || '');
             setSelectedOptionsByVariant(loadedSelectedOpts);
             setTerms(loadedTerms);
-            if (loadedTerms[0]) {
-              setOpenTerm(loadedTerms[0].key);
+            const requestedTerm = requestedVariantId ? loadedTerms.find(term => String(term.backendVariantId) === requestedVariantId) : loadedTerms[0];
+            setOpenTerm(requestedTerm?.key ?? null);
+            if (requestedVariantId) {
+              setTab('terms');
+              if (requestedTerm) setActiveVariantTabId(requestedTerm.variantTypeId);
+              else setError('The selected variant was not found. Refresh the Products list or choose another saved variant.');
             }
           }
         }
@@ -1341,7 +1344,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
     } else if (requestedCopyFromId) {
       void loadProductForCopy(requestedCopyFromId);
     }
-  }, [requestedEditId, requestedCopyFromId]);
+  }, [requestedEditId, requestedCopyFromId, requestedVariantId]);
 
   const fileRef = useRef<HTMLInputElement>(null);
   const imagesRef = useRef<GalleryImage[]>([]);
@@ -1388,6 +1391,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
     }
     const currentAdditional = {
       ...additionalDetails,
+      ...(typeof shelfLife !== 'undefined' ? { shelf_life: shelfLife } : {}),
       ...(typeof productLength !== 'undefined' ? { product_length: productLength } : {}),
       ...(typeof productBreadth !== 'undefined' ? { product_breadth: productBreadth } : {}),
       ...(typeof productHeight !== 'undefined' ? { product_height: productHeight } : {}),
@@ -1674,6 +1678,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
 
   async function handleRemoveTerm(termToRemove: Term) {
     setError('');
+    if (variantImageEditor(termToRemove.backendVariantId)?.pending) { setError('Finish the pending image operation before removing this variant.'); return; }
     const remainingAll = terms.filter((x) => x.key !== termToRemove.key);
     const remainingForVt = remainingAll.filter(
       (x) => x.variantTypeId === termToRemove.variantTypeId
@@ -1712,6 +1717,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
     setError('');
     setVariantDoneNotice('');
     const isAlreadySelected = selectedVariantTypeIds.includes(id);
+    if (isAlreadySelected && terms.some(term => term.variantTypeId === id && variantImageEditor(term.backendVariantId)?.pending)) { setError('Finish pending variant image operations before removing this type.'); return; }
     if (isAlreadySelected) {
       const remainingIds = selectedVariantTypeIds.filter((x) => x !== id);
       setSelectedVariantTypeIds(remainingIds);
@@ -1751,6 +1757,10 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
 
   function selectVariantFromDropdown(id: string) {
     if (!id) return;
+    if (id === '__add_variant_field__') {
+      setShowNewVariantField(true);
+      return;
+    }
     if (selectedVariantTypeIds.includes(id)) {
       setActiveVariantTabId(id);
       return;
@@ -1821,35 +1831,24 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
         attributes[item.vtName] = item.optName;
       }
 
-      const comboKey = Object.entries(attributes)
-        .map(([k, v]) => `${k.trim().toLowerCase()}:${v.trim().toLowerCase()}`)
-        .sort()
-        .join('::');
-
+      const comboKey = JSON.stringify(Object.entries(attributes).sort(([a], [b]) => a.localeCompare(b)));
       if (seenCombos.has(comboKey)) continue;
       seenCombos.add(comboKey);
 
-      // Reuse existing Term if already present so saved price/SKU/stock/backendVariantId are preserved
-      const existingTerm = terms.find((t) => {
-        const tAttrs = mergeVariantAttributes(
-          t.attributes,
-          (t.variantTypeName || 'Size').trim(),
-          t.name.trim()
-        );
-        const tKey = Object.entries(tAttrs)
-          .map(([k, v]) => `${k.trim().toLowerCase()}:${v.trim().toLowerCase()}`)
-          .sort()
-          .join('::');
-        return tKey === comboKey;
+      // Preserve saved IDs, queued files and extra attributes when only a subset
+      // of types is selected. Size M / Blue and Size M / Black remain distinct.
+      const existingTerms = terms.filter(t => {
+        const saved = mergeVariantAttributes(t.attributes, (t.variantTypeName || 'Size').trim(), t.name.trim());
+        return Object.entries(attributes).every(([key, value]) => saved[key] === value);
       });
-
-      if (existingTerm) {
-        nextTerms.push({
-          ...existingTerm,
-          attributes,
+      if (existingTerms.length) {
+        nextTerms.push(...existingTerms.map(term => ({
+          ...term,
+          attributes: { ...mergeVariantAttributes(term.attributes, (term.variantTypeName || 'Size').trim(), term.name.trim()), ...attributes },
+          variantTypeId: primaryItem.vtId,
           variantTypeName: primaryItem.vtName,
           name: primaryItem.optName,
-        });
+        })));
       } else {
         const vtOpt = primaryItem.vtName
           ? variantTypesList
@@ -1900,25 +1899,29 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
   }
 
   function handleAddCustomVariantType() {
-    const trimmed = customVariantTypeName.replace(/,/g, ' ').trim();
-    if (!trimmed) return;
-    const newId = trimmed.toLowerCase();
-    const defaultTermKey = `${newId}-opt-1`;
-    const newVt: VariantType = {
-      id: newId,
-      name: trimmed,
-      terms: [{ id: defaultTermKey, name: 'Option 1' }],
-    };
-    setVariantTypesList((prev) =>
-      prev.some((v) => v.id === newId) ? prev : [...prev, newVt]
-    );
+    const trimmed = customVariantTypeName.trim();
+    if (!trimmed || trimmed.length > 100 || trimmed.includes(',')) {
+      setError('Enter one variant field name, up to 100 characters, without commas.');
+      return;
+    }
+    if (['hsn', 'hsn_code', 'gst_rate', 'gst_percent', 'source_attributes', '__proto__', 'constructor', 'prototype'].includes(trimmed.toLowerCase())) {
+      setError('This field name is reserved. Choose another variant field name.');
+      return;
+    }
+    // Reuse the existing definition and its exact ID instead of adding another Size/size.
+    const existing = variantTypesList.find(v => v.name.trim() === trimmed)
+      ?? variantTypesList.find(v => v.name.trim().toLowerCase() === trimmed.toLowerCase());
+    const newId = existing?.id ?? `custom-${uid()}`;
+    if (!existing) setVariantTypesList(prev => [...prev, { id: newId, name: trimmed, terms: [] }]);
     setSelectedVariantTypeIds((prev) => (prev.includes(newId) ? prev : [...prev, newId]));
     setActiveVariantTabId(newId);
     setSelectedOptionsByVariant((prev) => ({
       ...prev,
-      [newId]: prev[newId] && prev[newId].length > 0 ? prev[newId] : ['Option 1'],
+      [newId]: prev[newId] ?? terms.filter(term => term.variantTypeId === newId).map(term => term.name),
     }));
     setCustomVariantTypeName('');
+    setShowNewVariantField(false);
+    setError('');
   }
 
   function handleAddOptionToVariant(variantId: string) {
@@ -1979,19 +1982,16 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
   async function syncProductVariants(targetProductId: string | number) {
     if (productType !== 'VARIABLE' && terms.length === 0 && initialVariantIds.length === 0) return;
 
-    // Deduplicate terms by full attribute combination so duplicate attribute combinations are never sent
+    // Preserve full size/colour combinations and their backend IDs.
     const uniqueTerms: Term[] = [];
     const seenAttrCombos = new Set<string>();
     for (const t of terms) {
       const attrName = (t.variantTypeName || 'Size').trim();
       const optVal = t.name.trim();
-      if (!optVal) continue;
-      const mergedAttrs = mergeVariantAttributes(t.attributes, attrName, optVal);
-      const comboKey = Object.entries(mergedAttrs)
-        .map(([k, v]) => `${k.trim()}:${v.trim()}`)
-        .sort()
-        .join('::');
-      if (seenAttrCombos.has(comboKey)) continue;
+      if (!optVal) throw new Error('Variant option names cannot be empty. Enter a name before saving.');
+      const attributes = mergeVariantAttributes(t.attributes, attrName, optVal);
+      const comboKey = JSON.stringify(Object.entries(attributes).map(([name, value]) => [name.trim(), value.trim()]).sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0));
+      if (seenAttrCombos.has(comboKey)) throw new Error('Two variants have the same complete attribute combination. Change or remove one before saving.');
       seenAttrCombos.add(comboKey);
       uniqueTerms.push(t);
     }
@@ -2097,6 +2097,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
         is_active: true,
       };
 
+      let savedVariantId = t.backendVariantId;
       if (t.backendVariantId != null) {
         try {
           await updateAdminProductVariant(targetProductId, t.backendVariantId, variantPayload);
@@ -2109,6 +2110,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
             const created = await createAdminProductVariant(targetProductId, variantPayload);
             if (created?.id == null) throw new Error('The server did not return the saved variant ID.');
             patchTerm(t.key, { backendVariantId: created.id });
+            savedVariantId = created.id;
             setInitialVariantIds((prev) => [...prev, created.id]);
           } else {
             throw err;
@@ -2118,8 +2120,32 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
         const created = await createAdminProductVariant(targetProductId, variantPayload);
         if (created?.id == null) throw new Error('The server did not return the saved variant ID.');
         patchTerm(t.key, { backendVariantId: created.id });
+        savedVariantId = created.id;
         setInitialVariantIds((prev) => [...prev, created.id]);
       }
+      if (t.pendingImages?.length && savedVariantId != null) {
+        await flushQueuedVariantImages(targetProductId, savedVariantId, t);
+      }
+    }
+  }
+
+  async function flushQueuedVariantImages(productId: string | number, variantId: string | number, term: Term) {
+    const key = `${productId}:${variantId}`;
+    if (!variantImageEditors.current.has(key)) variantImageEditors.current.set(key, new VariantImageEditor(productId, variantId));
+    const editor = variantImageEditors.current.get(key)!;
+    try {
+      await editor.load();
+      await editor.upload(term.pendingImages || [], async () => {});
+      patchTerm(term.key, { pendingImages: [] });
+    } catch (failure) {
+      // Once the controller owns an upload it retains remaining files and retry keys.
+      // Keeping a second queue would upload successful files twice on the next save.
+      if (editor.pending) patchTerm(term.key, { pendingImages: [] });
+      setPreviewOpen(false);
+      setTab('terms');
+      setOpenTerm(term.key);
+      const reason = failure instanceof Error ? failure.message : 'Image upload failed.';
+      throw new Error(`Product and ${term.variantTypeName}: ${term.name} were saved, but its images need attention: ${reason} ${editor.pending ? 'Use Retry image operation below; completed images will not upload again.' : 'Your selected images are retained. Retry saving to finish uploading them.'}`);
     }
   }
 
@@ -2199,7 +2225,6 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
       material: material.trim() || null,
       colour: colour.trim() || null,
       package_type: packageType.trim() || null,
-      shelf_life: shelfLife.trim() || null,
       water_resistant:
         waterResistant === 'true' ? true : waterResistant === 'false' ? false : null,
       hazardous_clause: hazardousClause.trim() || null,
@@ -2238,6 +2263,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
         const detailsObj = serializeProductDetails(
           {
             ...additionalDetails,
+            shelf_life: shelfLife,
             ...(autoManufacturerSku ? { manufacturer_sku: autoManufacturerSku } : {}),
             ...(autoModelNumber ? { model_number: autoModelNumber } : {}),
             ...(typeof productLength !== 'undefined' ? { product_length: productLength } : {}),
@@ -2290,6 +2316,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
             : {}),
         };
       })(),
+      shelf_life: shelfLife.trim() || null,
       reusable: typeof reusable !== 'undefined' ? (reusable as boolean | null) : null,
       has_accessories: typeof hasAccessories !== 'undefined' ? Boolean(hasAccessories) : false,
       accessories:
@@ -2406,7 +2433,46 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
     }
   }
 
+  function variantImageEditor(variantId: string | number | undefined): VariantImageEditor | undefined {
+    if (editId == null || variantId == null) return undefined;
+    const key = `${editId}:${variantId}`;
+    if (!variantImageEditors.current.has(key)) variantImageEditors.current.set(key, new VariantImageEditor(editId, variantId));
+    return variantImageEditors.current.get(key);
+  }
+
+  async function refreshSharedVariantImages() {
+    if (editId == null) throw new Error('Save the product before sharing images.');
+    const stored = await getAdminProductImages(editId);
+    setImages(previous => [
+      ...stored.map((image, index) => ({ key: `existing-${image.id}`, src: image.image_url, name: `Image ${index + 1}`, size: 0, backendImageId: String(image.id), isPrimary: image.is_primary })),
+      ...previous.filter(image => image.file),
+    ]);
+    // Invalidate every cached variant; each tab reads its new inherited gallery.
+    for (const editor of variantImageEditors.current.values()) editor.gallery = null;
+    setVariantGalleryRefresh(version => version + 1);
+  }
+
+  function showSaveError(failure: unknown, fallback: string) {
+    const message = failure instanceof Error ? failure.message : fallback;
+    if (isProductCodeConflict(message)) {
+      setPreviewOpen(false);
+      setTab('inventory');
+      setError(`${message}. Enter a different Product Code for a new product, or open the existing product from All Products and choose Edit. You can also leave the optional Product Code blank.`);
+      requestAnimationFrame(() => {
+        const field = document.getElementById('product-code');
+        field?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        field?.focus({ preventScroll: true });
+      });
+      return;
+    }
+    setError(message);
+  }
+
   async function saveDraft() {
+    if (variantImagesBusy || Array.from(variantImageEditors.current.values()).some(editor => editor.pending)) {
+      setError('Finish or retry the pending variant image operation before saving the product.');
+      return;
+    }
     if (saveInProgress.current || deletingImageKey || settingPrimaryKey || replacingImage) return;
     saveInProgress.current = true;
     setSaving(true);
@@ -2422,7 +2488,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
         router.refresh();
       }, 1200);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unable to save the product draft.');
+      showSaveError(err, 'Unable to save the product draft.');
     } finally {
       saveInProgress.current = false;
       setSaving(false);
@@ -2430,6 +2496,10 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
   }
 
   async function confirmPublish() {
+    if (variantImagesBusy || Array.from(variantImageEditors.current.values()).some(editor => editor.pending)) {
+      setError('Finish or retry the pending variant image operation before saving the product.');
+      return;
+    }
     if (saveInProgress.current || deletingImageKey || settingPrimaryKey || replacingImage) return;
     saveInProgress.current = true;
     setSubmitting(true);
@@ -2447,7 +2517,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
         router.refresh();
       }, 1500);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unable to publish the product.');
+      showSaveError(err, 'Unable to publish the product.');
     } finally {
       saveInProgress.current = false;
       setSubmitting(false);
@@ -2473,7 +2543,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
             setPreviewOpen(true);
           }}
         >
-          <fieldset disabled={saving || submitting || isLoadingProduct || Boolean(deletingImageKey || settingPrimaryKey) || replacingImage} className="contents">
+          <fieldset disabled={variantImagesBusy || saving || submitting || isLoadingProduct || Boolean(deletingImageKey || settingPrimaryKey) || replacingImage} className="contents">
           <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between border-b border-[#F0F0F0] pb-4">
             <div>
               <div className="flex items-center gap-2.5">
@@ -2707,11 +2777,17 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                           <input
                             id="product-code"
                             value={productCode}
-                            onChange={(e) => setProductCode(e.target.value)}
+                            onChange={(e) => {
+                              setProductCode(e.target.value);
+                              if (isProductCodeConflict(error)) setError('');
+                            }}
+                            aria-invalid={isProductCodeConflict(error)}
+                            aria-describedby="product-code-help"
                             maxLength={100}
                             placeholder="Eg: JOY-01"
-                            className={INPUT_CLASS}
+                            className={`${INPUT_CLASS} ${isProductCodeConflict(error) ? 'border-red-500' : ''}`}
                           />
+                          <p id="product-code-help" className="mt-1 text-xs text-gray-500">Optional. Must be unique when provided. To update an existing product, open it from All Products and choose Edit.</p>
                         </div>
                         <div>
                           <Label htmlFor="sku">SKU</Label>
@@ -2955,16 +3031,6 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                               onChange={setPackageType}
                               presets={PACKAGE_TYPE_PRESETS}
                               placeholder="Enter custom package type"
-                            />
-                          </div>
-                          <div>
-                            <Label htmlFor="spec-shelf-life">Shelf Life</Label>
-                            <PresetChipsWithCustom
-                              id="spec-shelf-life"
-                              value={shelfLife}
-                              onChange={setShelfLife}
-                              presets={SHELF_LIFE_PRESETS}
-                              placeholder="Enter custom shelf life (e.g. 24 Months)"
                             />
                           </div>
                           <div>
@@ -3634,14 +3700,29 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                             id="product-variant"
                             value=""
                             placeholder="Select Variant"
-                            options={variantTypesList.map((v) => ({
+                            options={[...variantTypesList.map((v) => ({
                               value: v.id,
                               label: selectedVariantTypeIds.includes(v.id) ? `✓ ${v.name}` : v.name,
-                            }))}
+                            })), { value: '__add_variant_field__', label: '+ Add new field' }]}
                             onChange={selectVariantFromDropdown}
                           />
                         </div>
                       </div>
+
+                      {showNewVariantField && <div className="mt-4 space-y-3 rounded-xl border border-orange-200 bg-orange-50/40 p-4">
+                        <Label htmlFor="new-variant-field">New variant field</Label>
+                        <div className="flex flex-wrap gap-2">
+                          <input id="new-variant-field" autoFocus maxLength={100} value={customVariantTypeName}
+                            onChange={event => setCustomVariantTypeName(event.target.value)} placeholder="e.g. Material or Capacity"
+                            onKeyDown={event => {
+                              if (event.key === 'Enter') { event.preventDefault(); handleAddCustomVariantType(); }
+                              if (event.key === 'Escape') { event.preventDefault(); setShowNewVariantField(false); setCustomVariantTypeName(''); }
+                            }} className={`${INPUT_CLASS} min-w-48 flex-1`} />
+                          <button type="button" onClick={handleAddCustomVariantType} className="rounded-lg bg-[#F47C35] px-4 py-2 text-sm font-semibold text-white hover:bg-[#E96F29]">Add field</button>
+                          <button type="button" onClick={() => { setShowNewVariantField(false); setCustomVariantTypeName(''); }} className="rounded-lg border bg-white px-4 py-2 text-sm">Cancel</button>
+                        </div>
+                        <p className="text-xs text-gray-600">Add a field, enter its options below, then click Done and save the product.</p>
+                      </div>}
 
                       {selectedVariantTypeIds.length > 0 ? (
                         <div className="mt-5">
@@ -3857,7 +3938,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                         <div>
                           <h4 className="text-[15px] font-semibold">Terms & Per-Size Pack Configuration</h4>
                           <p className="text-[12px] text-gray-500">
-                            Configure Unit Count (per pack), SKU, price, weight, and stock for each size/option tab.
+                            Configure images, unit count, SKU, price, weight and stock for each size/colour combination.
                           </p>
                         </div>
                       </div>
@@ -3932,6 +4013,28 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                                       className={INPUT_CLASS} />
                                   </div>
                                 ))}
+
+                                <VariantImageGallery
+                                  key={`${editId ?? 'new'}:${t.backendVariantId ?? t.key}`}
+                                  editor={variantImageEditor(t.backendVariantId)}
+                                  pendingFiles={t.pendingImages}
+                                  onPendingFilesChange={files => patchTerm(t.key, { pendingImages: files })}
+                                  enabled={process.env.NEXT_PUBLIC_VARIANT_IMAGES_ENABLED === 'true'}
+                                  label={`${t.variantTypeName}: ${t.name}${Object.entries(t.attributes || {}).filter(([name]) => name !== t.variantTypeName && !['hsn', 'hsn_code', 'gst_rate', 'gst_percent', 'source_attributes'].includes(name.toLowerCase())).map(([name, value]) => ` / ${name}: ${value}`).join('')}`}
+                                  disabled={saving || submitting || isLoadingProduct || Boolean(deletingImageKey || settingPrimaryKey) || replacingImage}
+                                  refreshVersion={`${variantGalleryRefresh}:${images.map(image => `${image.backendImageId}:${image.src}:${image.isPrimary}`).join('|')}`}
+                                  shareBlocked={images.some(image => image.file)
+                                    ? 'Save product image changes before applying a variant gallery to all variants.'
+                                    : Array.from(variantImageEditors.current.values()).some(editor => String(editor.variantId) !== String(t.backendVariantId) && editor.pending)
+                                    ? 'Finish the other variant’s pending image operation before sharing.' : undefined}
+                                  onShared={refreshSharedVariantImages}
+                                  onBusyChange={busy => {
+                                    setVariantImagesBusy(busy);
+                                    if (!busy && !terms.some(term => term.pendingImages?.length) && !Array.from(variantImageEditors.current.values()).some(editor => editor.pending)) {
+                                      setError(current => current.startsWith('Product and ') && current.includes('were saved, but its images need attention:') ? '' : current);
+                                    }
+                                  }}
+                                />
 
                                 {/* Unit Count (per pack) for this Size/Option */}
                                 <div className="rounded-xl border border-[#EAEAEA] bg-white p-3.5">
@@ -4100,9 +4203,11 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                                   <textarea
                                     id={`term-description-${t.key}`}
                                     value={t.description}
-                                    onChange={(e) => patchTerm(t.key, { description: e.target.value })}
+                                    disabled
+                                    aria-describedby={`term-description-help-${t.key}`}
                                     className="min-h-[90px] w-full rounded-lg border border-[#D7D7D7] bg-white p-4 text-[14px] outline-none focus:border-[#F47C35]"
                                   />
+                                  <p id={`term-description-help-${t.key}`} className="mt-1 text-xs text-gray-500">Separate variant notes are not supported yet. Product descriptions are shared; SKU, price, stock and images can differ by variant.</p>
                                 </div>
                                 <button
                                   type="button"
@@ -4419,8 +4524,8 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
             </div>
           </div>
           <AdditionalProductDetails
-            values={additionalDetails}
-            onChange={setAdditionalDetails}
+            values={{ ...additionalDetails, shelf_life: shelfLife }}
+            onChange={(values) => { setAdditionalDetails(values); setShelfLife(values.shelf_life ?? ''); }}
             brandName={brandName !== 'Unbranded' ? brandName : ''}
             companyName={companyName.trim()}
             categoryName={(subCategoryId ? category?.subs.find((s) => s.id === subCategoryId)?.name : null) || category?.name || ''}
@@ -4584,7 +4689,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                     </dl>
                   </div>
 
-                  <ProductDetailSummary values={additionalDetails} />
+                  <ProductDetailSummary values={{ ...additionalDetails, shelf_life: shelfLife }} />
                   {error && (
                     <p
                       role="alert"
@@ -4598,7 +4703,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                 <footer className="flex-shrink-0 border-t border-gray-100 bg-gray-50 px-5 sm:px-6 py-3 sm:py-4 flex flex-col-reverse sm:flex-row sm:justify-end gap-2 sm:gap-3">
                   <button
                     type="button"
-                    disabled={submitting}
+                    disabled={submitting || variantImagesBusy}
                     onClick={() => {
                       setPreviewOpen(false);
                       setError('');
@@ -4609,7 +4714,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                   </button>
                   <button
                     type="button"
-                    disabled={submitting}
+                    disabled={submitting || variantImagesBusy}
                     onClick={() => void confirmPublish()}
                     className="h-10 sm:h-11 w-full sm:w-auto flex items-center justify-center gap-2 rounded-lg bg-[#F47C35] px-6 text-[13px] sm:text-[14px] font-semibold text-white hover:bg-[#E96F29] disabled:opacity-60 shadow-sm transition-colors cursor-pointer"
                   >

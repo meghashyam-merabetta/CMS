@@ -7,6 +7,8 @@ export interface ProductDetailField {
   min?: number;
   max?: number;
   step?: string;
+  required?: boolean;
+  placeholder?: string;
 }
 
 export const PRODUCT_DETAIL_FIELDS = [
@@ -14,12 +16,12 @@ export const PRODUCT_DETAIL_FIELDS = [
   {"key": "brand_type", "label": "Brand Classification", "group": "Product identity", "type": "select", "options": ["company", "generic"]},
   {"key": "is_customisable", "label": "Customisable", "group": "Product identity", "type": "select", "options": ["true", "false"]},
   {"key": "model_number", "label": "Model Number", "group": "Product identity"},
-  {"key": "manufacturer_contact_name", "label": "Manufacturer Contact Person", "group": "Manufacturer & repacker"},
-  {"key": "manufacturer_phone", "label": "Manufacturer Phone", "group": "Manufacturer & repacker", "type": "tel"},
-  {"key": "manufacturer_email", "label": "Manufacturer Email", "group": "Manufacturer & repacker", "type": "email"},
-  {"key": "license_number", "label": "Manufacturer Licence Number", "group": "Manufacturer & repacker"},
-  {"key": "repacker_name", "label": "Repacker Name", "group": "Manufacturer & repacker"},
-  {"key": "repacker_address", "label": "Repacker Address", "group": "Manufacturer & repacker", "type": "textarea"},
+  {"key": "manufacturer_contact_name", "label": "Manufacturer Contact Person", "group": "Manufacturer/Distributor/Stockist details"},
+  {"key": "manufacturer_phone", "label": "Manufacturer Phone", "group": "Manufacturer/Distributor/Stockist details", "type": "tel"},
+  {"key": "manufacturer_email", "label": "Manufacturer Email", "group": "Manufacturer/Distributor/Stockist details", "type": "email"},
+  {"key": "license_number", "label": "Manufacturer Licence Number", "group": "Manufacturer/Distributor/Stockist details", "required": true},
+  {"key": "repacker_name", "label": "Repacker Name", "group": "Manufacturer/Distributor/Stockist details"},
+  {"key": "repacker_address", "label": "Repacker Address", "group": "Manufacturer/Distributor/Stockist details", "type": "textarea"},
   {"key": "age_min", "label": "Minimum Age", "group": "Audience & use", "type": "number", "min": 0, "step": "1"},
   {"key": "age_max", "label": "Maximum Age", "group": "Audience & use", "type": "number", "min": 0, "step": "1"},
   {"key": "age_unit", "label": "Age Unit", "group": "Audience & use", "type": "select", "options": ["years", "months"]},
@@ -42,6 +44,7 @@ export const PRODUCT_DETAIL_FIELDS = [
   {"key": "product_height", "label": "Actual Product Height", "group": "Product dimensions & dates", "type": "number", "min": 0, "step": "0.01"},
   {"key": "product_dimension_unit", "label": "Actual Dimension Unit", "group": "Product dimensions & dates", "type": "select", "options": ["cm", "mm", "in"]},
   {"key": "manufacturing_date", "label": "Manufacturing Date", "group": "Product dimensions & dates", "type": "date"},
+  {"key": "shelf_life", "label": "Expiry Date / Months", "group": "Product dimensions & dates", "placeholder": "YYYY-MM-DD, 24 Months, or No Expiry"},
   {"key": "fulfillment_channel", "label": "Fulfillment Channel", "group": "Sales & delivery", "type": "select", "options": ["merabetta", "self"]},
   {"key": "seller_handling_days", "label": "Seller Handling Time (days)", "group": "Sales & delivery", "type": "number", "min": 0, "step": "1"},
   {"key": "business_offer_percent", "label": "Business Offer (%)", "group": "Sales & delivery", "type": "number", "min": 0, "step": "0.01", "max": 100},
@@ -83,6 +86,7 @@ export function serializeProductDetails(values: ProductDetailValues, initial: Pr
 export function validateProductDetails(values: ProductDetailValues): string {
   for (const field of PRODUCT_DETAIL_FIELDS as readonly (ProductDetailField & { key: ProductDetailKey })[]) {
     const value = values[field.key]?.trim();
+    if (field.required && !value) return `${field.label} is required.`;
     if (!value) continue;
     if (field.type === 'number' && (!Number.isFinite(Number(value)) || Number(value) < (field.min ?? 0) || Number(value) > (field.max ?? Infinity) || (field.step === '1' && !Number.isInteger(Number(value))))) {
       return `${field.label} must be a valid ${field.step === '1' ? 'whole ' : ''}number${field.max != null ? ` between ${field.min ?? 0} and ${field.max}` : ` of at least ${field.min ?? 0}`}.`;
