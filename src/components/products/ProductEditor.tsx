@@ -325,6 +325,7 @@ interface Term {
   pricingMode?: 'manual' | 'percent';
   salePrice: string;
   stockQuantity: string;
+  initialStockQuantity?: string;
   description: string;
   image: GalleryImage | null;
 }
@@ -504,6 +505,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
   const [festivalOfferPercent, setFestivalOfferPercent] = useState('0');
   const [serverEffectivePrice, setServerEffectivePrice] = useState<string>('');
   const [stock, setStock] = useState('0');
+  const initialStockRef = useRef<string | null>(null);
 
   // Specifications state (Page 7 of Handoff)
   const [targetAudience, setTargetAudience] = useState('');
@@ -621,7 +623,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
               });
             }
             for (const attr of validAttrDefs) {
-              const attrId = (attr.name || 'size').trim().toLowerCase();
+              const attrId = (attr.name || 'Size').trim();
               const vals = Array.isArray(attr.values) ? attr.values : [];
               const prevEntry = merged.get(attrId);
               const existingTerms = prevEntry ? [...prevEntry.terms] : [];
@@ -629,7 +631,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                 const cleanVal = String(val || '').trim();
                 if (
                   cleanVal &&
-                  !existingTerms.some((t) => t.name.toLowerCase() === cleanVal.toLowerCase())
+                  !existingTerms.some((t) => t.name === cleanVal)
                 ) {
                   existingTerms.push({
                     id: `${attrId}-opt-${existingTerms.length}`,
@@ -785,6 +787,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
           setMinQty(String(prod.min_order_quantity ?? 1));
           setMaxQty(prod.max_order_quantity != null ? String(prod.max_order_quantity) : '');
           setStock(String(prod.stock_quantity ?? prod.stock ?? 0));
+          initialStockRef.current = String(prod.stock_quantity ?? prod.stock ?? 0);
 
           const regVal = prod.regular_price ?? prod.mrp ?? prod.price;
           const saleVal = prod.sale_price ?? prod.offer_price;
@@ -1110,6 +1113,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                     : '',
                 salePrice: v.sale_price != null ? String(v.sale_price) : '',
                 stockQuantity: String(v.stock_quantity ?? 0),
+                initialStockQuantity: String(v.stock_quantity ?? 0),
                 description: '',
                 image: null,
               });
@@ -1651,23 +1655,23 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
   function patchTerm(key: string, patch: Partial<Term>) {
     const target = terms.find((t) => t.key === key);
     if (target && typeof patch.name === 'string' && patch.name.trim()) {
-      const oldName = target.name.trim().toLowerCase();
+      const oldName = target.name.trim();
       const newName = patch.name.trim();
       const vId = target.variantTypeId;
       setSelectedOptionsByVariant((prev) => {
         const list = prev[vId] || [];
-        const updated = list.map((o) => (o.trim().toLowerCase() === oldName ? newName : o));
+        const updated = list.map((o) => (o.trim() === oldName ? newName : o));
         return { ...prev, [vId]: updated };
       });
       setVariantTypesList((prev) =>
         prev.map((vt) => {
           if (vt.id !== vId) return vt;
-          const exists = vt.terms.some((x) => x.name.trim().toLowerCase() === newName.toLowerCase());
+          const exists = vt.terms.some((x) => x.name.trim() === newName);
           if (exists) return vt;
           return {
             ...vt,
             terms: vt.terms.map((x) =>
-              x.name.trim().toLowerCase() === oldName ? { ...x, name: newName } : x
+              x.name.trim() === oldName ? { ...x, name: newName } : x
             ),
           };
         })
@@ -1689,7 +1693,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
       return {
         ...prev,
         [termToRemove.variantTypeId]: currentList.filter(
-          (opt) => opt.trim().toLowerCase() !== termToRemove.name.trim().toLowerCase()
+          (opt) => opt.trim() !== termToRemove.name.trim()
         ),
       };
     });
@@ -1775,9 +1779,9 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
     setVariantDoneNotice('');
     setSelectedOptionsByVariant((prev) => {
       const current = prev[variantId] || [];
-      const exists = current.some((o) => o.trim().toLowerCase() === clean.toLowerCase());
+      const exists = current.some((o) => o.trim() === clean);
       const nextList = exists
-        ? current.filter((o) => o.trim().toLowerCase() !== clean.toLowerCase())
+        ? current.filter((o) => o.trim() !== clean)
         : [...current, clean];
       return { ...prev, [variantId]: nextList };
     });
@@ -1854,7 +1858,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
           ? variantTypesList
               .find((v) => v.id === primaryItem.vtId)
               ?.terms.find(
-                (x) => x.name.trim().toLowerCase() === primaryItem.optName.toLowerCase()
+                (x) => x.name.trim() === primaryItem.optName
               )
           : null;
         const termId = vtOpt?.id || `${primaryItem.vtId}-opt-${uid()}`;
@@ -1886,14 +1890,38 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
       return;
     }
 
-    setTerms(nextTerms);
-    setOpenTerm((prev) =>
-      prev && nextTerms.some((t) => t.key === prev) ? prev : nextTerms[0]?.key ?? null
-    );
+    // Merge newly confirmed terms with existing terms so previously configured options are preserved
+    const mergedTerms: Term[] = [...terms];
+    for (const nt of nextTerms) {
+      const ntKey = Object.entries(
+        mergeVariantAttributes(nt.attributes, nt.variantTypeName || 'Size', nt.name)
+      )
+        .map(([k, v]) => JSON.stringify([k.trim(), v.trim()]))
+        .sort()
+        .join('::');
+      const idx = mergedTerms.findIndex((et) => {
+        const etKey = Object.entries(
+          mergeVariantAttributes(et.attributes, et.variantTypeName || 'Size', et.name)
+        )
+          .map(([k, v]) => JSON.stringify([k.trim(), v.trim()]))
+          .sort()
+          .join('::');
+        return etKey === ntKey;
+      });
+      if (idx >= 0) {
+        mergedTerms[idx] = { ...mergedTerms[idx], ...nt };
+      } else {
+        mergedTerms.push(nt);
+      }
+    }
+
+    setTerms(mergedTerms);
+    const targetKey = nextTerms[0]?.key || mergedTerms[0]?.key || null;
+    setOpenTerm(targetKey);
     const noticeText =
-      activeTypes.length > 1
-        ? `${nextTerms.length} variant combination(s) generated across ${activeTypes.length} types.`
-        : `${nextTerms.length} option(s) synced to Terms.`;
+      mergedTerms.length > 1
+        ? `${mergedTerms.length} options configured in Terms.`
+        : `${mergedTerms.length} option synced to Terms.`;
     setVariantDoneNotice(noticeText);
     setTab('terms');
   }
@@ -1908,9 +1936,8 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
       setError('This field name is reserved. Choose another variant field name.');
       return;
     }
-    // Reuse the existing definition and its exact ID instead of adding another Size/size.
-    const existing = variantTypesList.find(v => v.name.trim() === trimmed)
-      ?? variantTypesList.find(v => v.name.trim().toLowerCase() === trimmed.toLowerCase());
+    // Reuse only an exact name match; Size and size are distinct definitions.
+    const existing = variantTypesList.find(v => v.name.trim() === trimmed);
     const newId = existing?.id ?? `custom-${uid()}`;
     if (!existing) setVariantTypesList(prev => [...prev, { id: newId, name: trimmed, terms: [] }]);
     setSelectedVariantTypeIds((prev) => (prev.includes(newId) ? prev : [...prev, newId]));
@@ -1947,7 +1974,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
         const newTerms = [...item.terms];
         for (const name of rawNames) {
           const alreadyInList = newTerms.some(
-            (t) => t.name.trim().toLowerCase() === name.toLowerCase()
+            (t) => t.name.trim() === name
           );
           if (!alreadyInList) {
             newTerms.push({ id: `${variantId}-opt-${uid()}`, name });
@@ -1965,7 +1992,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
       const current = prev[variantId] || [];
       const updated = [...current];
       for (const name of rawNames) {
-        if (!updated.some((o) => o.trim().toLowerCase() === name.toLowerCase())) {
+        if (!updated.some((o) => o.trim() === name)) {
           updated.push(name);
         }
       }
@@ -2012,10 +2039,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
     }
     for (const [key, attribute] of groupedByAttr) {
       const existing =
-        liveAttrs.find((item) => (item.name || '').trim() === key) ||
-        liveAttrs.find(
-          (item) => (item.name || '').trim().toLowerCase() === key.toLowerCase()
-        );
+        liveAttrs.find((item) => (item.name || '').trim() === key);
       if (!existing) {
         await createAdminVariantAttribute({ name: attribute.name, values: [...attribute.values] });
       } else {
@@ -2091,9 +2115,9 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
           if (fallback) return Math.max(0, Math.round(Number(fallback)));
           return null;
         })(),
-        regular_price: num(t.regularPrice) ?? num(regular) ?? 0,
+        regular_price: num(t.regularPrice) ?? num(regular),
         sale_price: num(t.salePrice),
-        stock_quantity: Math.max(0, Math.floor(num(t.stockQuantity) ?? 0)),
+        ...(t.backendVariantId != null && t.initialStockQuantity !== undefined && t.stockQuantity === t.initialStockQuantity ? {} : { stock_quantity: Math.max(0, Math.floor(num(t.stockQuantity) ?? 0)) }),
         is_active: true,
       };
 
@@ -2107,7 +2131,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
             (err instanceof Error && /not found/i.test(err.message));
           if (is404) {
             // Variant record was deleted or not found on the server; recreate it transparently
-            const created = await createAdminProductVariant(targetProductId, variantPayload);
+            const created = await createAdminProductVariant(targetProductId, { ...variantPayload, stock_quantity: Math.max(0, Math.floor(num(t.stockQuantity) ?? 0)) });
             if (created?.id == null) throw new Error('The server did not return the saved variant ID.');
             patchTerm(t.key, { backendVariantId: created.id });
             savedVariantId = created.id;
@@ -2117,12 +2141,13 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
           }
         }
       } else {
-        const created = await createAdminProductVariant(targetProductId, variantPayload);
+        const created = await createAdminProductVariant(targetProductId, { ...variantPayload, stock_quantity: Math.max(0, Math.floor(num(t.stockQuantity) ?? 0)) });
         if (created?.id == null) throw new Error('The server did not return the saved variant ID.');
         patchTerm(t.key, { backendVariantId: created.id });
         savedVariantId = created.id;
         setInitialVariantIds((prev) => [...prev, created.id]);
       }
+      patchTerm(t.key, { initialStockQuantity: t.stockQuantity });
       if (t.pendingImages?.length && savedVariantId != null) {
         await flushQueuedVariantImages(targetProductId, savedVariantId, t);
       }
@@ -2358,7 +2383,11 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
 
   async function persistProduct(targetStatus: ProductStatus) {
     // Save metadata first so a later upload failure cannot create a second product.
-    const { images: _files, ...payload } = buildApiPayload(targetStatus);
+    const { images: _files, ...metadata } = buildApiPayload(targetStatus);
+    const { stock_quantity: _stock, ...withoutStock } = metadata;
+    const payload = editId != null && initialStockRef.current !== null && stock === initialStockRef.current
+      ? withoutStock
+      : metadata;
     validateAdminProductRequestSize(payload, editId == null);
     let savedId: string | number | null = editId;
     if (savedId != null) {
@@ -2400,6 +2429,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
         }
       }
     }
+    initialStockRef.current = stock;
     setInitialAdditionalDetails({ ...additionalDetails });
 
     // Persist each successful upload immediately, before variants or the next file
@@ -3410,10 +3440,10 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                         </div>
                       </div>
 
-                      {/* 4. Manufacturer, Packer & Search Keywords */}
+                      {/* 4. Origin and Search Keywords */}
                       <div className="rounded-xl border border-[#EAEAEA] bg-[#FAFAFA] p-4 space-y-4">
                         <h5 className="text-[13px] font-bold uppercase tracking-wider text-[#0D2B53]">
-                          4. Origin, Manufacturer, Packer & Search Keywords
+                          4. Origin and Search Keywords
                         </h5>
                         <div>
                           <Label htmlFor="spec-manufactured-in">Country of Origin (Manufactured In)</Label>
@@ -3425,81 +3455,6 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                             placeholder="Enter country of origin"
                           />
                         </div>
-
-                        <div className="grid gap-4 md:grid-cols-2">
-                          <div>
-                            <Label htmlFor="spec-company-name">Manufacturer / Company Name</Label>
-                            <input
-                              id="spec-company-name"
-                              value={companyName}
-                              onChange={(e) => {
-                                const val = e.target.value;
-                                setCompanyName(val);
-                                if (sameAsManufacturer) setPackerName(val);
-                              }}
-                              placeholder="Eg: Merabetta Healthcare Pvt. Ltd."
-                              className={INPUT_CLASS}
-                            />
-                          </div>
-                          <div>
-                            <Label htmlFor="spec-company-address">Manufacturer Address</Label>
-                            <input
-                              id="spec-company-address"
-                              value={companyAddress}
-                              onChange={(e) => {
-                                const val = e.target.value;
-                                setCompanyAddress(val);
-                                if (sameAsManufacturer) setPackerAddress(val);
-                              }}
-                              placeholder="Eg: Plot 14, Industrial Area, Pune"
-                              className={INPUT_CLASS}
-                            />
-                          </div>
-                        </div>
-
-                        <div className="pt-1">
-                          <label className="inline-flex items-center gap-2 text-[13px] font-semibold text-[#0D2B53] cursor-pointer">
-                            <input
-                              type="checkbox"
-                              checked={sameAsManufacturer}
-                              onChange={(e) => {
-                                const checked = e.target.checked;
-                                setSameAsManufacturer(checked);
-                                if (checked) {
-                                  setPackerName(companyName);
-                                  setPackerAddress(companyAddress);
-                                }
-                              }}
-                              className="h-4 w-4 accent-[#F47C35]"
-                            />
-                            <span>Packer details are same as Manufacturer</span>
-                          </label>
-                        </div>
-
-                        {!sameAsManufacturer && (
-                          <div className="grid gap-4 md:grid-cols-2">
-                            <div>
-                              <Label htmlFor="spec-packer-name">Packer Name</Label>
-                              <input
-                                id="spec-packer-name"
-                                value={packerName}
-                                onChange={(e) => setPackerName(e.target.value)}
-                                placeholder="Enter packer company name"
-                                className={INPUT_CLASS}
-                              />
-                            </div>
-                            <div>
-                              <Label htmlFor="spec-packer-address">Packer Address</Label>
-                              <input
-                                id="spec-packer-address"
-                                value={packerAddress}
-                                onChange={(e) => setPackerAddress(e.target.value)}
-                                placeholder="Enter packer full address"
-                                className={INPUT_CLASS}
-                              />
-                            </div>
-                          </div>
-                        )}
 
                         <div>
                           <Label htmlFor="spec-keywords">Search Keywords</Label>
@@ -3782,18 +3737,18 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
 
                             // Combine vt.terms + any selected options into a deduplicated display list
                             const allOptionNames: string[] = [];
-                            const seenLower = new Set<string>();
+                            const seenOptions = new Set<string>();
                             for (const item of vt.terms) {
                               const clean = item.name.trim();
-                              if (clean && !seenLower.has(clean.toLowerCase())) {
-                                seenLower.add(clean.toLowerCase());
+                              if (clean && !seenOptions.has(clean)) {
+                                seenOptions.add(clean);
                                 allOptionNames.push(clean);
                               }
                             }
                             for (const opt of selectedForCurrent) {
                               const clean = opt.trim();
-                              if (clean && !seenLower.has(clean.toLowerCase())) {
-                                seenLower.add(clean.toLowerCase());
+                              if (clean && !seenOptions.has(clean)) {
+                                seenOptions.add(clean);
                                 allOptionNames.push(clean);
                               }
                             }
@@ -3803,10 +3758,10 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                                 <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
                                   <div>
                                     <span className="text-[13px] font-semibold text-[#111]">
-                                      {vt.name} — Select Options ({selectedForCurrent.length} selected)
+                                      {vt.name} — Select Option {selectedForCurrent[0] ? `(${selectedForCurrent[0]})` : ''}
                                     </span>
                                     <p className="text-[11px] text-[#666]">
-                                      Click options below to select or unselect them, then click <strong>Done</strong> to show only selected options in Terms.
+                                      Select an option from the dropdown below, then click <strong>Done</strong> to configure details in Terms.
                                     </p>
                                   </div>
                                   <div className="inline-flex items-center gap-1.5">
@@ -3838,56 +3793,67 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                                   </div>
                                 </div>
 
-                                {/* Selectable Option Chips */}
-                                <div className="flex flex-wrap items-center gap-2">
-                                  {allOptionNames.map((optName) => {
-                                    const isSelected = selectedForCurrent.some(
-                                      (o) => o.trim().toLowerCase() === optName.toLowerCase()
-                                    );
-                                    return (
-                                      <button
-                                        key={optName}
-                                        type="button"
-                                        onClick={() => toggleOptionSelection(currentVId, optName)}
-                                        className={`inline-flex h-9 items-center gap-1.5 rounded-lg border px-3.5 text-[12px] font-semibold transition cursor-pointer ${
-                                          isSelected
-                                            ? 'border-[#F47C35] bg-[#FFF4EE] text-[#F47C35] shadow-2xs'
-                                            : 'border-[#E2E2E2] bg-white text-[#555] hover:bg-gray-50'
-                                        }`}
-                                      >
-                                        <span
-                                          className={`flex h-4 w-4 items-center justify-center rounded border text-[10px] ${
-                                            isSelected
-                                              ? 'border-[#F47C35] bg-[#F47C35] text-white'
-                                              : 'border-[#CCC] bg-white text-transparent'
-                                          }`}
-                                        >
-                                          ✓
-                                        </span>
-                                        <span>{optName}</span>
-                                      </button>
-                                    );
-                                  })}
+                                {/* Dropdown to select the one option */}
+                                <div className="mt-3 max-w-sm">
+                                  <label
+                                    htmlFor={`select-option-${currentVId}`}
+                                    className="block text-[12px] font-medium text-gray-700 mb-1"
+                                  >
+                                    Select {vt.name} Option:
+                                  </label>
+                                  <Select
+                                    id={`select-option-${currentVId}`}
+                                    value={selectedForCurrent[0] || ''}
+                                    placeholder={`Select ${vt.name} Option`}
+                                    options={allOptionNames.map((optName) => ({
+                                      value: optName,
+                                      label: optName,
+                                    }))}
+                                    onChange={(val) => {
+                                      setError('');
+                                      setVariantDoneNotice('');
+                                      setSelectedOptionsByVariant((prev) => ({
+                                        ...prev,
+                                        [currentVId]: val ? [val] : [],
+                                      }));
+                                    }}
+                                  />
                                 </div>
+
+                                {selectedForCurrent[0] && (
+                                  <div className="mt-3 flex items-center gap-2">
+                                    <span className="text-[12px] font-medium text-gray-600">
+                                      Selected Option:
+                                    </span>
+                                    <span className="inline-flex items-center gap-1.5 rounded-lg border border-[#F47C35] bg-[#FFF4EE] px-3 py-1 text-[13px] font-semibold text-[#F47C35]">
+                                      <span>✓ {selectedForCurrent[0]}</span>
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          setSelectedOptionsByVariant((prev) => ({
+                                            ...prev,
+                                            [currentVId]: [],
+                                          }))
+                                        }
+                                        className="ml-1 text-[13px] text-gray-400 hover:text-red-500 cursor-pointer"
+                                        title="Clear selection"
+                                      >
+                                        ×
+                                      </button>
+                                    </span>
+                                  </div>
+                                )}
 
                                 {/* Footer Bar with Selection Summary & "Done" Button */}
                                 <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[#E8E8E8] bg-white px-4 py-3">
                                   <div className="text-[12px] text-[#444]">
-                                    {totalCombinationsCount > 0 ? (
+                                    {selectedForCurrent.length > 0 ? (
                                       <span>
-                                        <strong className="text-[#111]">{totalSelectedCount}</strong> option(s) selected
-                                        {activeTypesForSummary.length > 1 ? (
-                                          <>
-                                            {' '}across <strong>{activeTypesForSummary.length}</strong> types &rarr;{' '}
-                                            <strong className="text-[#F47C35]">{totalCombinationsCount} combination variant(s)</strong> will be generated.
-                                          </>
-                                        ) : (
-                                          ' across variant types.'
-                                        )}
+                                        Option <strong className="text-[#F47C35]">{selectedForCurrent[0]}</strong> selected for <strong>{vt.name}</strong>. Click <strong>Done</strong> to configure details.
                                       </span>
                                     ) : (
                                       <span className="text-[#888]">
-                                        No options selected yet. Click the options above to select them.
+                                        Please select an option from the dropdown above.
                                       </span>
                                     )}
                                     {variantDoneNotice && (
@@ -3916,7 +3882,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                                       onClick={handleConfirmVariantsDone}
                                       className="h-9 rounded-lg bg-[#F47C35] px-5 text-[13px] font-semibold text-white shadow-xs hover:bg-[#E96F29] transition-colors cursor-pointer"
                                     >
-                                      Done ({totalCombinationsCount || totalSelectedCount}) →
+                                      Done ({selectedForCurrent.length}) →
                                     </button>
                                   </div>
                                 </div>
@@ -3938,7 +3904,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                         <div>
                           <h4 className="text-[15px] font-semibold">Terms & Per-Size Pack Configuration</h4>
                           <p className="text-[12px] text-gray-500">
-                            Configure images, unit count, SKU, price, weight and stock for each size/colour combination.
+                            Configure images, unit count, SKU and weight for each size/option tab.
                           </p>
                         </div>
                       </div>
@@ -3947,7 +3913,12 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                           {/* Separate Option Tabs Bar */}
                           <div className="flex flex-wrap gap-2 border-b border-[#E7E7E7] pb-3">
                             {terms.map((t, idx) => {
-                              const open = openTerm === t.key;
+                              const activeTermKey = requestedVariantId != null
+                                ? openTerm
+                                : openTerm && terms.some((item) => item.key === openTerm)
+                                  ? openTerm
+                                  : terms[0]?.key;
+                              const open = activeTermKey === t.key;
                               return (
                                 <button
                                   key={t.key}
@@ -3960,7 +3931,13 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                                   }`}
                                 >
                                   <span className="text-[11px] opacity-70">#{idx + 1}</span>
-                                  <span>{t.variantTypeName ? `${t.variantTypeName}: ${t.name}` : t.name}{Object.entries(t.attributes || {}).filter(([attribute]) => attribute !== t.variantTypeName).map(([, value]) => ` / ${value}`).join('')}</span>
+                                  <span>
+                                    {t.variantTypeName ? `${t.variantTypeName}: ${t.name}` : t.name}
+                                    {Object.entries(t.attributes || {})
+                                      .filter(([attribute]) => attribute !== t.variantTypeName)
+                                      .map(([, value]) => ` / ${value}`)
+                                      .join('')}
+                                  </span>
                                   {t.unitCount && (
                                     <span className="rounded bg-orange-100 px-1.5 py-0.5 text-[10px] font-bold text-[#F47C35]">
                                       {t.unitCount} pcs
@@ -3972,7 +3949,12 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                           </div>
 
                           {terms.map((t) => {
-                            if (openTerm !== t.key) return null;
+                            const activeTermKey = requestedVariantId != null
+                              ? openTerm
+                              : openTerm && terms.some((item) => item.key === openTerm)
+                                ? openTerm
+                                : terms[0]?.key;
+                            if (activeTermKey !== t.key) return null;
                             return (
                               <div key={t.key} className="mt-4 rounded-xl border border-[#E7E7E7] bg-[#FAFAFA] p-4 space-y-4">
                                 <div className="flex items-center justify-between border-b border-[#EEE] pb-3">
@@ -4109,110 +4091,12 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                                   </div>
                                 </div>
 
-                                <div>
-                                  <Label htmlFor={`term-offer-${t.key}`}>Offer Percent (%)</Label>
-                                  <input
-                                    id={`term-offer-${t.key}`}
-                                    type="number"
-                                    min="0"
-                                    max="100"
-                                    step="0.01"
-                                    value={t.offerPercent}
-                                    onChange={(e) => {
-                                      const nextOffer = e.target.value;
-                                      patchTerm(t.key, {
-                                        offerPercent: nextOffer,
-                                        pricingMode: nextOffer.trim() ? 'percent' : 'manual',
-                                        salePrice: salePriceFrom(t.regularPrice, nextOffer),
-                                      });
-                                    }}
-                                    placeholder="Eg: 10"
-                                    className={termInputBase}
-                                  />
-                                </div>
-                                <div className="grid gap-4 md:grid-cols-2">
-                                  <div>
-                                    <Label htmlFor={`term-regular-${t.key}`} required>
-                                      Regular Price (MRP)
-                                    </Label>
-                                    <input
-                                      id={`term-regular-${t.key}`}
-                                      type="number"
-                                      min="0.01"
-                                      step="0.01"
-                                      value={t.regularPrice}
-                                      onChange={(e) => {
-                                        const nextReg = e.target.value;
-                                        if (t.pricingMode === 'percent' && t.offerPercent.trim()) {
-                                          patchTerm(t.key, {
-                                            regularPrice: nextReg,
-                                            salePrice: salePriceFrom(nextReg, t.offerPercent),
-                                          });
-                                        } else if (t.salePrice.trim()) {
-                                          patchTerm(t.key, {
-                                            regularPrice: nextReg,
-                                            offerPercent: offerPercentFrom(nextReg, t.salePrice),
-                                          });
-                                        } else {
-                                          patchTerm(t.key, { regularPrice: nextReg });
-                                        }
-                                      }}
-                                      placeholder="Eg: 1000"
-                                      className={termInputBase}
-                                    />
-                                  </div>
-                                  <div>
-                                    <Label htmlFor={`term-sale-${t.key}`}>Sale Price (Offer Price)</Label>
-                                    <input
-                                      id={`term-sale-${t.key}`}
-                                      type="number"
-                                      min="0"
-                                      step="0.01"
-                                      value={t.salePrice}
-                                      onChange={(e) => {
-                                        const nextSale = e.target.value;
-                                        patchTerm(t.key, {
-                                          salePrice: nextSale,
-                                          pricingMode: 'manual',
-                                          offerPercent: offerPercentFrom(t.regularPrice, nextSale),
-                                        });
-                                      }}
-                                      placeholder="Eg: 900"
-                                      className={termInputBase}
-                                    />
-                                  </div>
-                                </div>
-                                <div>
-                                  <Label htmlFor={`term-stock-${t.key}`} required>
-                                    Stock Quantity
-                                  </Label>
-                                  <input
-                                    id={`term-stock-${t.key}`}
-                                    type="number"
-                                    min="0"
-                                    step="1"
-                                    value={t.stockQuantity}
-                                    onChange={(e) => patchTerm(t.key, { stockQuantity: e.target.value })}
-                                    className={termInputBase}
-                                  />
-                                </div>
-                                <div>
-                                  <Label htmlFor={`term-description-${t.key}`}>
-                                    Option Notes / Description (optional)
-                                  </Label>
-                                  <textarea
-                                    id={`term-description-${t.key}`}
-                                    value={t.description}
-                                    disabled
-                                    aria-describedby={`term-description-help-${t.key}`}
-                                    className="min-h-[90px] w-full rounded-lg border border-[#D7D7D7] bg-white p-4 text-[14px] outline-none focus:border-[#F47C35]"
-                                  />
-                                  <p id={`term-description-help-${t.key}`} className="mt-1 text-xs text-gray-500">Separate variant notes are not supported yet. Product descriptions are shared; SKU, price, stock and images can differ by variant.</p>
-                                </div>
                                 <button
                                   type="button"
-                                  onClick={() => setOpenTerm(null)}
-                                  className="h-10 rounded-lg bg-[#F47C35] px-6 text-[13px] font-semibold text-white cursor-pointer"
+                                  onClick={() => {
+                                    setVariantDoneNotice(`Option "${t.name}" details confirmed.`);
+                                  }}
+                                  className="h-10 rounded-lg bg-[#F47C35] px-6 text-[13px] font-semibold text-white cursor-pointer hover:bg-[#E96F29] transition-colors"
                                 >
                                   Done
                                 </button>

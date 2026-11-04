@@ -108,7 +108,7 @@ test('upload service checks fresh server count before posting, including gallery
 
 function saveEnv() {
   const env = {
-    editId: null, productType: 'VARIABLE', createdProductIdRef: { current: null },
+    editId: null, initialStockRef: { current: null }, stock: '0', productType: 'VARIABLE', createdProductIdRef: { current: null },
     validateAdminProductRequestSize,
     uncertainImageUpload: { current: false },
     productLoadError: '', lookupError: '',
@@ -341,7 +341,7 @@ test('loading saved variants keeps case-distinct attribute types and options sep
   const env = new Proxy({
     readProductDetails,
     requestedVariantId: null,
-    variantImageEditors: { current: new Map() },
+    variantImageEditors: { current: new Map() }, initialStockRef: { current: null },
     getAdminProductById: async () => ({ product_name: 'Test', slug: 'test', product_type: 'variable' }),
     getAdminProductImages: async () => [],
     getAllAdminProductVariants: async () => variants,
@@ -367,7 +367,7 @@ test('variant links open the exact saved backend ID and never silently select an
     const state = {};
     const env = new Proxy({
       readProductDetails, requestedVariantId,
-      variantImageEditors: { current: new Map() },
+      variantImageEditors: { current: new Map() }, initialStockRef: { current: null },
       getAdminProductById: async () => ({ product_name: 'Wheelchair', slug: 'wheelchair', product_type: 'variable' }),
       getAdminProductImages: async () => [],
       getAllAdminProductVariants: async () => [
@@ -1024,7 +1024,7 @@ test('a custom variant field and user-entered options persist through the existi
 
 test('custom field names reuse existing backend definitions and reject names that cannot round-trip', () => {
   const env = {
-    customVariantTypeName: ' size ', variantTypesList: [{ id: 'backend-size', name: 'Size', terms: [{ name: 'M' }] }], terms: [],
+    customVariantTypeName: ' Size ', variantTypesList: [{ id: 'backend-size', name: 'Size', terms: [{ name: 'M' }] }], terms: [],
     setVariantTypesList() { assert.fail('Do not duplicate Size'); },
     setSelectedVariantTypeIds(update) { env.selected = update([]); }, setSelectedOptionsByVariant(update) { env.options = update({ 'backend-size': ['M'] }); },
     setActiveVariantTabId(value) { env.active = value; }, setCustomVariantTypeName() {}, setShowNewVariantField() {}, setError(value) { env.error = value; },
@@ -1054,4 +1054,73 @@ test('variant weight auto-inherits from defaultWeightGrams when empty and respec
   assert.equal(createdPayloads.length, 2);
   assert.equal(createdPayloads[0].weight_grams, 370, 'Empty variant weight inherits defaultWeightGrams');
   assert.equal(createdPayloads[1].weight_grams, 500, 'Explicit variant weight is preserved');
+});
+
+
+test('case-distinct custom field names create separate definitions', () => {
+  const env = {
+    customVariantTypeName: 'size', variantTypesList: [{ id: 'upper', name: 'Size', terms: [] }], terms: [], uid: () => 'lower',
+    setVariantTypesList(update) { env.variantTypesList = update(env.variantTypesList); },
+    setSelectedVariantTypeIds(update) { env.selected = update([]); },
+    setSelectedOptionsByVariant(update) { env.options = update({}); },
+    setActiveVariantTabId() {}, setCustomVariantTypeName() {}, setShowNewVariantField() {}, setError() {},
+  };
+  editorHandler('handleAddCustomVariantType', env)();
+  assert.deepEqual(env.variantTypesList.map(v => v.name), ['Size', 'size']);
+  assert.deepEqual(env.selected, ['custom-lower']);
+});
+
+test('editing variant prices does not reset warehouse stock unless stock was edited', async () => {
+  for (const quantity of ['13', '12']) {
+    const env = variantEnv();
+    env.terms = [{ key: 'saved', backendVariantId: 1, name: 'M', variantTypeName: 'Size', sku: 'TEST', variantName: '', unitCount: '', barcode: '', weightGrams: '', regularPrice: '100', salePrice: '75', stockQuantity: quantity, initialStockQuantity: '13' }];
+    let saved;
+    env.updateAdminProductVariant = async (_p, _v, payload) => { saved = payload; };
+    await editorHandler('syncProductVariants', env)(123);
+    assert.equal(saved.sale_price, 75);
+    assert.equal(Object.hasOwn(saved, 'stock_quantity'), quantity !== '13');
+    if (quantity === '12') assert.equal(saved.stock_quantity, 12);
+    assert.equal(env.terms[0].initialStockQuantity, quantity);
+  }
+});
+
+test('recreating a missing variant still initializes its stock', async () => {
+  const env = variantEnv();
+  env.terms = [{ key: 'saved', backendVariantId: 1, name: 'M', variantTypeName: 'Size', sku: 'TEST', variantName: '', unitCount: '', barcode: '', weightGrams: '', regularPrice: '100', salePrice: '', stockQuantity: '13', initialStockQuantity: '13' }];
+  env.updateAdminProductVariant = async () => { throw Object.assign(new Error('Not found'), { status: 404 }); };
+  env.createAdminProductVariant = async (_id, payload) => { assert.equal(payload.stock_quantity, 13); return { id: 2 }; };
+  await editorHandler('syncProductVariants', env)(123);
+  assert.equal(env.terms[0].backendVariantId, 2);
+});
+
+test('editing product metadata preserves stock that was not edited', async () => {
+  const env = saveEnv();
+  env.editId = '123'; env.images = []; env.terms = []; env.initialVariantIds = [];
+  env.stock = '15'; env.initialStockRef.current = '15';
+  env.buildApiPayload = () => ({ product_name: 'Renamed', product_type: 'simple', stock_quantity: Number(env.stock) });
+  const bodies = [];
+  env.updateAdminProduct = async (_id, payload) => { bodies.push(payload); };
+  const persist = editorHandler('persistProduct', env);
+  await persist('active');
+  assert.equal(Object.hasOwn(bodies[0], 'stock_quantity'), false);
+  env.stock = '16';
+  await persist('active');
+  assert.equal(bodies[1].stock_quantity, 16);
+});
+
+test('confirming another dropdown option preserves saved options and case-distinct IDs', () => {
+  const env = variantEnv();
+  env.terms = [{ key: 'saved', backendVariantId: '203', variantTypeId: 'colour', variantTypeName: 'Colour', name: 'Blue', attributes: { Colour: 'Blue' } }];
+  Object.assign(env, {
+    selectedVariantTypeIds: ['colour'], selectedOptionsByVariant: { colour: ['blue'] },
+    variantTypesList: [{ id: 'colour', name: 'Colour', terms: [] }],
+    defaultWeightGrams: '', unitCount: '', barcode: '', uid: () => 'new',
+    setError() {}, setTerms(value) { env.terms = value; }, setOpenTerm() {}, setVariantDoneNotice() {}, setTab() {},
+  });
+  editorHandler('handleConfirmVariantsDone', env)();
+  assert.equal(env.terms.length, 2);
+  assert.equal(env.terms[0].backendVariantId, '203');
+  assert.deepEqual(env.terms.map(term => term.attributes), [{ Colour: 'Blue' }, { Colour: 'blue' }]);
+  editorHandler('handleConfirmVariantsDone', env)();
+  assert.equal(env.terms.length, 2);
 });

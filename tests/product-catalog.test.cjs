@@ -145,3 +145,10 @@ test('multi-attribute variant matrix computes cartesian product and scales dynam
   assert.deepEqual(threeWayFormatted[7], { Size: 'XL', Color: 'Blue', Pack: '30 pcs' });
 });
 
+
+
+test('a converted single variant uses its own inventory and prices rather than legacy parent stock', () => {
+ const parent={product_type:'simple',inventory_managed:false,stock_quantity:0,regular_price:null};
+ const variants=[{id:'111',individual_product_id:'1001',stock_quantity:13,regular_price:'100',sale_price:'75',is_active:true,attributes:{source_attributes:'Skullcap'}}];
+ assert.deepEqual(catalog.summarizeProductInventory(parent,variants),{source:'variants',stock:13,minPrice:75,maxPrice:75,activeVariantCount:1});
+});
