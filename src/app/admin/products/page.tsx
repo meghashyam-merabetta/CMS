@@ -40,7 +40,8 @@ import {
   BackendProductImageRecord,
 } from '@/services/api/adminProductsApi';
 import { getAdminCategories, getAllAdminCategories } from '@/services/api/adminCategoriesApi';
-import { compareProductRecords, summarizeProductVariants } from '@/lib/productCatalog';
+import ProductVariantsList from '@/components/products/ProductVariantsList';
+import { compareProductRecords, summarizeProductVariants, summarizeProductInventory, variantMatchesSearch } from '@/lib/productCatalog';
 import { collectAllPages } from '@/lib/pagination';
 import { getAllAdminBrands } from '@/services/api/adminBrandsApi';
 import { BackendProduct, BackendCategory, BackendBrand, ProductStatus } from '@/types/api';
@@ -108,6 +109,9 @@ function mapBackendProductToRecord(
     productCode: `PRD-${String(prodId).padStart(4, '0')}`,
     catalogCode: bp.product_code || undefined,
     variantSummary: summarizeProductVariants(bp.variants || []),
+    variantCount: bp.variants?.length,
+    inventorySummary: summarizeProductInventory(bp),
+    productType: bp.product_type,
     name,
     brand: brandLabel,
     category: categoryName,
@@ -126,6 +130,8 @@ function mapBackendProductToRecord(
 export default function ProductManagementPage() {
   const router = useRouter();
   const [products, setProducts] = useState<ProductRecord[]>([]);
+  const [expandedVariants, setExpandedVariants] = useState<Set<string>>(new Set());
+  const [variantListRefresh, setVariantListRefresh] = useState(0);
   const [categories, setCategories] = useState<BackendCategory[]>([]);
   const [brands, setBrands] = useState<BackendBrand[]>([]);
   const [totalCount, setTotalCount] = useState<number>(0);
@@ -433,9 +439,11 @@ export default function ProductManagementPage() {
         !result.image ? getAdminProductImages(record.id).then((images) => {
           result.image = images.find((image) => image.is_primary)?.image_url || images[0]?.image_url;
         }).catch(() => warnings.push('Images could not be loaded')) : Promise.resolve(),
-        backend?.variants === undefined && backend?.product_type !== 'simple'
+        backend?.variants === undefined && backend?.inventory_managed !== true
           ? getAllAdminProductVariants(record.id).then((variants) => {
             result.variantSummary = summarizeProductVariants(variants);
+            result.variantCount = variants.length;
+            result.inventorySummary = summarizeProductInventory(backend!, variants);
           }).catch(() => warnings.push('Variants could not be loaded')) : Promise.resolve(),
       ]);
       result.catalogWarning = warnings.join('. ');
@@ -493,6 +501,7 @@ export default function ProductManagementPage() {
           const enriched = await enrichVisibleProducts(initialMapped, items);
           if (requestId !== requestIdRef.current) return;
           setProducts(enriched);
+          setVariantListRefresh(version => version + 1);
           setTotalCount(total);
           setIsLive(true);
           return;
@@ -554,7 +563,8 @@ export default function ProductManagementPage() {
               brandMatch ||
               catMatch ||
               mfgSkuMatch ||
-              modelNoMatch
+              modelNoMatch ||
+              variantMatchesSearch(bp.variants || [], rawQ)
             );
           })
           .map(({ record }) => record)
@@ -564,6 +574,7 @@ export default function ProductManagementPage() {
         const enriched = await enrichVisibleProducts(matchedMapped.slice(startIdx, startIdx + pageSize), allBackendItems);
         if (requestId !== requestIdRef.current) return;
         setProducts(enriched);
+        setVariantListRefresh(version => version + 1);
         setTotalCount(matchedMapped.length);
         setIsLive(true);
       } catch (err: any) {
@@ -709,7 +720,8 @@ export default function ProductManagementPage() {
   const currencyFormatter = new Intl.NumberFormat('en-IN', {
     style: 'currency',
     currency: 'INR',
-    maximumFractionDigits: 0,
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2,
   });
 
   return (
@@ -809,7 +821,7 @@ export default function ProductManagementPage() {
               setSearchQuery(e.target.value);
               setCurrentPage(0);
             }}
-            placeholder="Search by ID, name, brand, SKU, model"
+            placeholder="Search ID, name, brand, variant, SKU or model"
             className="h-11 w-full rounded-lg border border-[#D6DCE5] pr-4 pl-10 text-[13px] outline-none transition focus:border-[#F47C35]"
           />
         </label>
@@ -938,9 +950,13 @@ export default function ProductManagementPage() {
                 </tr>
               ) : (
                 paginatedProducts.map((p) => {
+                  const inventory = p.inventorySummary;
+                  const stock = inventory?.stock ?? null;
+                  const minPrice = inventory?.minPrice ?? null;
+                  const maxPrice = inventory?.maxPrice ?? null;
                   return (
+                    <React.Fragment key={p.id}>
                     <tr
-                      key={p.id}
                       className="h-[50px] border-b border-[#ECECEC] last:border-b-0 hover:bg-[#FAFAFA] transition-colors"
                     >
                       <td className="px-3 font-mono font-medium text-slate-800">
@@ -985,6 +1001,13 @@ export default function ProductManagementPage() {
                             )}
                           </div>
                         )}
+                        {p.variantSummary && <div className="mt-1 text-[11px] font-normal text-gray-500">{p.variantSummary}</div>}
+                        {(p.productType === 'variable' || Boolean(p.variantCount)) && <button type="button"
+                          aria-expanded={expandedVariants.has(p.id)} aria-controls={`product-variants-${p.id}`}
+                          onClick={() => setExpandedVariants(previous => { const next = new Set(previous); if (next.has(p.id)) next.delete(p.id); else next.add(p.id); return next; })}
+                          className="mt-2 text-xs font-semibold text-purple-800 underline">
+                          {expandedVariants.has(p.id) ? 'Hide variants' : `View variants${p.variantCount != null ? ` (${p.variantCount})` : ''}`}
+                        </button>}
                         {p.catalogWarning && <div role="status" className="mt-1 text-[11px] font-normal text-amber-700">{p.catalogWarning}. Refresh to retry.</div>}
                       </td>
                       <td className="px-3 text-[#606060]">{p.category}</td>
@@ -992,18 +1015,20 @@ export default function ProductManagementPage() {
                       <td className="px-3">
                         <span
                           className={`font-semibold ${
-                            p.stock > 10
+                            stock == null ? 'text-slate-500' : stock > 10
                               ? 'text-emerald-700'
-                              : p.stock > 0
+                              : stock > 0
                               ? 'text-amber-700'
                               : 'text-rose-600'
                           }`}
                         >
-                          {p.stock > 0 ? `${p.stock} units` : 'Out of stock'}
+                          {stock == null ? 'Unavailable' : stock > 0 ? `${stock.toLocaleString('en-IN')} units` : 'Out of stock'}
                         </span>
+                        {inventory?.source === 'variants' && <div className="mt-1 text-[10px] text-gray-500">Across {inventory.activeVariantCount} active variants</div>}
                       </td>
                       <td className="px-3 font-semibold text-slate-900">
-                        {currencyFormatter.format(p.price)}
+                        {minPrice == null || maxPrice == null ? 'Unavailable' : minPrice === maxPrice ? currencyFormatter.format(minPrice) : `${currencyFormatter.format(minPrice)}–${currencyFormatter.format(maxPrice)}`}
+                        {inventory?.source === 'variants' && <div className="mt-1 text-[10px] font-normal text-gray-500">Variant prices</div>}
                       </td>
                       <td className="px-3">
                         <span
@@ -1052,6 +1077,10 @@ export default function ProductManagementPage() {
                         </div>
                       </td>
                     </tr>
+                    {expandedVariants.has(p.id) && <tr id={`product-variants-${p.id}`}><td colSpan={9} className="p-3">
+                      <ProductVariantsList productId={p.id} productName={p.name} refreshVersion={variantListRefresh} />
+                    </td></tr>}
+                    </React.Fragment>
                   );
                 })
               )}

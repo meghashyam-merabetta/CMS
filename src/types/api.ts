@@ -42,6 +42,8 @@ export interface BackendProductImage {
 }
 
 export interface BackendProductVariant {
+  individual_product_id?: number | string | null;
+  group_product_id?: number | string | null;
   id: number | string;
   product_id: number | string;
   sku: string;
@@ -112,6 +114,7 @@ export interface ProductSpecificationsFields extends AdditionalProductDetails {
 }
 
 export interface BackendProduct extends ProductSpecificationsFields {
+  inventory_managed?: boolean;
   id?: number | string;
   product_id?: number | string;
   brand_id?: number | string | null;
