@@ -2117,7 +2117,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
         })(),
         regular_price: num(t.regularPrice) ?? num(regular) ?? 0,
         sale_price: num(t.salePrice),
-        stock_quantity: Math.max(0, Math.floor(num(t.stockQuantity) ?? 0)),
+        // stock_quantity: Math.max(0, Math.floor(num(t.stockQuantity) ?? 0)),
         is_active: true,
       };
 
