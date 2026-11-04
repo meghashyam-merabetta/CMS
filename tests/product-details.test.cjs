@@ -54,7 +54,8 @@ test('the section renders labelled controls and the preview shows entered values
   const html = renderToStaticMarkup(React.createElement(ui.default, { values, onChange() {} }));
   assert.match(html, /Additional Product Details/);
   assert.match(html, /Manufacturer SKU/);
-  assert.match(html, /Product Net Weight/);
+  assert.doesNotMatch(html, /Product dimensions &amp; dates/);
+  assert.doesNotMatch(html, /Product Net Weight/);
   assert.doesNotMatch(html, /for="detail-product_length"/);
   assert.match(html, /Sale Starts/);
   assert.match(html, /Battery Required/);

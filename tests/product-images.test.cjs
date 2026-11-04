@@ -520,13 +520,11 @@ test('individual item dimensions inside package remain separate from package dim
   env.packageHeight = '10';
   env.dimensionUnit = 'cm';
 
-  // Use input handlers for item dimensions
-  const lenHandler = editorInputHandler('spec-item-len', env);
-  const breadthHandler = editorInputHandler('spec-item-breadth', env);
-  const heightHandler = editorInputHandler('spec-item-height', env);
-
-  lenHandler({ target: { value: '15' } });
-  breadthHandler({ target: { value: '8' } });
+  // Set item dimensions directly (UI inputs removed, but state still drives API payload)
+  env.productLength = '15';
+  env.productBreadth = '8';
+  env.additionalDetails.product_length = '15';
+  env.additionalDetails.product_breadth = '8';
   assert.equal(env.productLength, '15');
   assert.equal(env.productBreadth, '8');
   assert.equal(env.packageLength, '30'); // Package dimension unchanged
@@ -542,7 +540,8 @@ test('individual item dimensions inside package remain separate from package dim
   assert.equal(validateBasics(), ''); // Valid even when item height is empty (optional)
 
   // Set optional height
-  heightHandler({ target: { value: '2.5' } });
+  env.productHeight = '2.5';
+  env.additionalDetails.product_height = '2.5';
   assert.equal(env.productHeight, '2.5');
 
   // Verify buildApiPayload includes both package and item dimensions independently

@@ -146,7 +146,7 @@ function Select({
 }: {
   id: string;
   value: string;
-  placeholder: string;
+  placeholder?: string;
   options: { value: string; label: string }[];
   onChange: (v: string) => void;
   disabled?: boolean;
@@ -162,7 +162,7 @@ function Select({
           value ? 'text-[#292929]' : 'text-[#A6A6A6]'
         }`}
       >
-        <option value="">{placeholder}</option>
+        {placeholder ? <option value="">{placeholder}</option> : null}
         {options.map((o) => (
           <option key={o.value} value={o.value}>
             {o.label}
@@ -480,7 +480,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
   const [name, setName] = useState('');
   const [slug, setSlug] = useState('');
   const [slugTouched, setSlugTouched] = useState(false);
-  const [productStatus, setProductStatus] = useState<ProductStatus>('active');
+  const [productStatus, setProductStatus] = useState<ProductStatus>('draft');
   const [shortDescription, setShortDescription] = useState('');
   const [description, setDescription] = useState('');
   const [detailsText, setDetailsText] = useState('');
@@ -755,7 +755,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
           setName(prodName);
           setSlug(prod.slug || generateProductSlug(prodName));
           setSlugTouched(true);
-          setProductStatus(prod.product_status || 'active');
+          setProductStatus((prod.product_status as ProductStatus) || 'draft');
           setShortDescription(prod.short_description || '');
           setDescription(prod.description || '');
           if (prod.brand_id != null) {
@@ -2622,14 +2622,11 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                   <Select
                     id="product-status"
                     value={productStatus}
-                    placeholder="Select status"
                     options={[
-                      { value: 'active', label: 'Active (Published)' },
-                      { value: 'draft', label: 'Draft' },
                       { value: 'inactive', label: 'Inactive' },
-                      { value: 'archived', label: 'Archived' },
+                      { value: 'draft', label: 'Draft' },
                     ]}
-                    onChange={(v) => setProductStatus((v || 'active') as ProductStatus)}
+                    onChange={(v) => setProductStatus((v || 'draft') as ProductStatus)}
                   />
                 </div>
                 <div>
@@ -2682,21 +2679,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
               {/* Product type + tabs */}
               <div className="mt-6 rounded-2xl bg-[#F7F7F7] p-4">
                 <div className="flex items-center justify-between gap-5">
-                  <h3 className="text-[17px] font-semibold text-[#111]">Product Type:</h3>
-                  <div className="w-[220px]">
-                    <Select
-                      id="product-type"
-                      value={productType}
-                      placeholder="Select product type"
-                      options={[
-                        { value: 'SIMPLE', label: 'Simple Product' },
-                        { value: 'VARIABLE', label: 'Variable Product' },
-                      ]}
-                      onChange={(v) => {
-                        setProductType(v as 'SIMPLE' | 'VARIABLE');
-                      }}
-                    />
-                  </div>
+                  <h3 className="text-[17px] font-semibold text-[#111]">Product Type</h3>
                 </div>
 
                 <div className="mt-5 grid grid-cols-2 gap-3 md:grid-cols-4">
@@ -3155,223 +3138,10 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                         </div>
                       </div>
 
-                      {/* 3. Package Dimensions, Weight & Default Pack Count */}
+                      {/* 3. Origin and Search Keywords */}
                       <div className="rounded-xl border border-[#EAEAEA] bg-[#FAFAFA] p-4 space-y-4">
                         <h5 className="text-[13px] font-bold uppercase tracking-wider text-[#0D2B53]">
-                          3. Package Dimensions, Weight & Pack Count
-                        </h5>
-                        <div className="grid gap-4 md:grid-cols-2">
-                          <div>
-                            <Label htmlFor="spec-unit-count">
-                              Unit Count (per pack)
-                              {productType === 'VARIABLE' && (
-                                <span className="ml-1.5 text-[11px] font-normal text-[#F47C35]">
-                                  (Also configurable per size in Terms tab)
-                                </span>
-                              )}
-                            </Label>
-                            <PresetChipsWithCustom
-                              id="spec-unit-count"
-                              value={unitCount}
-                              onChange={setUnitCount}
-                              presets={UNIT_COUNT_PRESETS}
-                              suffix=" pcs"
-                              type="number"
-                              placeholder="Enter custom unit count per pack (e.g. 10)"
-                            />
-                          </div>
-                          <div>
-                            <Label htmlFor="spec-weight">Package Weight</Label>
-                            <div className="flex gap-2">
-                              <input
-                                id="spec-weight"
-                                type="number"
-                                min="0"
-                                step="0.01"
-                                value={weight}
-                                onChange={(e) => setWeight(e.target.value)}
-                                placeholder="Eg: 500"
-                                className={INPUT_CLASS}
-                              />
-                              <div className="inline-flex rounded-lg border border-[#D7D7D7] bg-white p-1">
-                                {(['g', 'kg'] as WeightUnit[]).map((u) => (
-                                  <button
-                                    key={u}
-                                    type="button"
-                                    onClick={() => setWeightUnit(u)}
-                                    className={`px-3 text-[13px] font-semibold rounded-md transition cursor-pointer ${
-                                      weightUnit === u
-                                        ? 'bg-[#F47C35] text-white'
-                                        : 'text-gray-600 hover:bg-gray-50'
-                                    }`}
-                                  >
-                                    {u}
-                                  </button>
-                                ))}
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-
-                        <div className="grid gap-3 sm:grid-cols-4">
-                          <div>
-                            <Label htmlFor="spec-len">Length</Label>
-                            <input
-                              id="spec-len"
-                              type="number"
-                              min="0"
-                              step="0.01"
-                              placeholder="L"
-                              value={packageLength}
-                              onChange={(e) => setPackageLength(e.target.value)}
-                              className={INPUT_CLASS}
-                            />
-                          </div>
-                          <div>
-                            <Label htmlFor="spec-breadth">Breadth</Label>
-                            <input
-                              id="spec-breadth"
-                              type="number"
-                              min="0"
-                              step="0.01"
-                              placeholder="B"
-                              value={packageBreadth}
-                              onChange={(e) => setPackageBreadth(e.target.value)}
-                              className={INPUT_CLASS}
-                            />
-                          </div>
-                          <div>
-                            <Label htmlFor="spec-height">Height</Label>
-                            <input
-                              id="spec-height"
-                              type="number"
-                              min="0"
-                              step="0.01"
-                              placeholder="H"
-                              value={packageHeight}
-                              onChange={(e) => setPackageHeight(e.target.value)}
-                              className={INPUT_CLASS}
-                            />
-                          </div>
-                          <div>
-                            <Label htmlFor="spec-dim-unit">Dimension Unit</Label>
-                            <div className="flex h-12 rounded-lg border border-[#D7D7D7] bg-white p-1">
-                              {(['cm', 'mm', 'in'] as DimensionUnit[]).map((u) => (
-                                <button
-                                  key={u}
-                                  type="button"
-                                  onClick={() => setDimensionUnit(u)}
-                                  className={`flex-1 text-[13px] font-semibold rounded-md transition cursor-pointer ${
-                                    dimensionUnit === u
-                                      ? 'bg-[#F47C35] text-white'
-                                      : 'text-gray-600 hover:bg-gray-50'
-                                  }`}
-                                >
-                                  {u}
-                                </button>
-                              ))}
-                            </div>
-                          </div>
-                        </div>
-
-                        {/* Individual Item Dimensions (Inside Package) */}
-                        <div className="rounded-xl border border-gray-200 bg-white p-3.5 space-y-3">
-                          <div>
-                            <h6 className="text-[13px] font-semibold text-gray-800">
-                              Individual Item Dimensions (Inside Package)
-                            </h6>
-                          </div>
-                          <div className="grid gap-3 sm:grid-cols-4">
-                            <div className="min-w-0">
-                              <Label htmlFor="spec-item-len">
-                                <span className="block truncate whitespace-nowrap">Product Length</span>
-                              </Label>
-                              <input
-                                id="spec-item-len"
-                                type="number"
-                                min="0"
-                                step="0.01"
-                                placeholder="L"
-                                value={productLength}
-                                onChange={(e) => {
-                                  const val = e.target.value;
-                                  setProductLength(val);
-                                  setAdditionalDetails((prev) => ({ ...prev, product_length: val }));
-                                }}
-                                className={INPUT_CLASS}
-                              />
-                            </div>
-                            <div className="min-w-0">
-                              <Label htmlFor="spec-item-breadth">
-                                <span className="block truncate whitespace-nowrap">Product Breadth</span>
-                              </Label>
-                              <input
-                                id="spec-item-breadth"
-                                type="number"
-                                min="0"
-                                step="0.01"
-                                placeholder="B"
-                                value={productBreadth}
-                                onChange={(e) => {
-                                  const val = e.target.value;
-                                  setProductBreadth(val);
-                                  setAdditionalDetails((prev) => ({ ...prev, product_breadth: val }));
-                                }}
-                                className={INPUT_CLASS}
-                              />
-                            </div>
-                            <div className="min-w-0">
-                              <Label htmlFor="spec-item-height">
-                                <span className="block truncate whitespace-nowrap">Product Height</span>
-                              </Label>
-                              <input
-                                id="spec-item-height"
-                                type="number"
-                                min="0"
-                                step="0.01"
-                                placeholder="H (optional)"
-                                value={productHeight}
-                                onChange={(e) => {
-                                  const val = e.target.value;
-                                  setProductHeight(val);
-                                  setAdditionalDetails((prev) => ({ ...prev, product_height: val }));
-                                }}
-                                className={INPUT_CLASS}
-                              />
-                            </div>
-                            <div className="min-w-0">
-                              <Label htmlFor="spec-item-dim-unit">
-                                <span className="block truncate whitespace-nowrap">Product Dimension Unit</span>
-                              </Label>
-                              <div id="spec-item-dim-unit" className="flex h-12 rounded-lg border border-[#D7D7D7] bg-white p-1">
-                                {(['cm', 'mm', 'in'] as const).map((u) => (
-                                  <button
-                                    key={u}
-                                    id={`spec-item-dim-unit-${u}`}
-                                    type="button"
-                                    onClick={() => {
-                                      setProductDimensionUnit(u);
-                                      setAdditionalDetails((prev) => ({ ...prev, product_dimension_unit: u }));
-                                    }}
-                                    className={`flex-1 text-[13px] font-semibold rounded-md transition cursor-pointer ${
-                                      productDimensionUnit === u
-                                        ? 'bg-[#F47C35] text-white'
-                                        : 'text-gray-600 hover:bg-gray-50'
-                                    }`}
-                                  >
-                                    {u}
-                                  </button>
-                                ))}
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* 4. Origin and Search Keywords */}
-                      <div className="rounded-xl border border-[#EAEAEA] bg-[#FAFAFA] p-4 space-y-4">
-                        <h5 className="text-[13px] font-bold uppercase tracking-wider text-[#0D2B53]">
-                          4. Origin and Search Keywords
+                          3. Origin and Search Keywords
                         </h5>
                         <div>
                           <Label htmlFor="spec-manufactured-in">Country of Origin (Manufactured In)</Label>
@@ -3459,10 +3229,10 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                         </div>
                       </div>
 
-                      {/* 5. Gift Options & Gift Wrap Availability */}
+                      {/* 4. Gift Options & Gift Wrap Availability */}
                       <div className="rounded-xl border border-[#EAEAEA] bg-[#FAFAFA] p-4 space-y-4">
                         <h5 className="text-[13px] font-bold uppercase tracking-wider text-[#0D2B53]">
-                          5. Gift Options & Gift Wrap Availability
+                          4. Gift Options & Gift Wrap Availability
                         </h5>
 
                         {/* Gift Options Availability */}
