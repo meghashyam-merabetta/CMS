@@ -42,8 +42,8 @@ export interface BackendProductImage {
 }
 
 export interface BackendProductVariant {
-  individual_product_id?: number | string;
-  group_product_id?: number | string;
+  individual_product_id?: number | string | null;
+  group_product_id?: number | string | null;
   id: number | string;
   product_id: number | string;
   sku: string;
