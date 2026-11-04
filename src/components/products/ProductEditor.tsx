@@ -1887,14 +1887,38 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
       return;
     }
 
-    setTerms(nextTerms);
-    setOpenTerm((prev) =>
-      prev && nextTerms.some((t) => t.key === prev) ? prev : nextTerms[0]?.key ?? null
-    );
+    // Merge newly confirmed terms with existing terms so previously configured options are preserved
+    const mergedTerms: Term[] = [...terms];
+    for (const nt of nextTerms) {
+      const ntKey = Object.entries(
+        mergeVariantAttributes(nt.attributes, nt.variantTypeName || 'Size', nt.name)
+      )
+        .map(([k, v]) => `${k.trim().toLowerCase()}:${v.trim().toLowerCase()}`)
+        .sort()
+        .join('::');
+      const idx = mergedTerms.findIndex((et) => {
+        const etKey = Object.entries(
+          mergeVariantAttributes(et.attributes, et.variantTypeName || 'Size', et.name)
+        )
+          .map(([k, v]) => `${k.trim().toLowerCase()}:${v.trim().toLowerCase()}`)
+          .sort()
+          .join('::');
+        return etKey === ntKey;
+      });
+      if (idx >= 0) {
+        mergedTerms[idx] = { ...mergedTerms[idx], ...nt };
+      } else {
+        mergedTerms.push(nt);
+      }
+    }
+
+    setTerms(mergedTerms);
+    const targetKey = nextTerms[0]?.key || mergedTerms[0]?.key || null;
+    setOpenTerm(targetKey);
     const noticeText =
-      activeTypes.length > 1
-        ? `${nextTerms.length} variant combination(s) generated across ${activeTypes.length} types.`
-        : `${nextTerms.length} option(s) synced to Terms.`;
+      mergedTerms.length > 1
+        ? `${mergedTerms.length} options configured in Terms.`
+        : `${mergedTerms.length} option synced to Terms.`;
     setVariantDoneNotice(noticeText);
     setTab('terms');
   }
@@ -3344,10 +3368,10 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                         </div>
                       </div>
 
-                      {/* 4. Manufacturer, Packer & Search Keywords */}
+                      {/* 4. Origin and Search Keywords */}
                       <div className="rounded-xl border border-[#EAEAEA] bg-[#FAFAFA] p-4 space-y-4">
                         <h5 className="text-[13px] font-bold uppercase tracking-wider text-[#0D2B53]">
-                          4. Origin, Manufacturer, Packer & Search Keywords
+                          4. Origin and Search Keywords
                         </h5>
                         <div>
                           <Label htmlFor="spec-manufactured-in">Country of Origin (Manufactured In)</Label>
@@ -3359,81 +3383,6 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                             placeholder="Enter country of origin"
                           />
                         </div>
-
-                        <div className="grid gap-4 md:grid-cols-2">
-                          <div>
-                            <Label htmlFor="spec-company-name">Manufacturer / Company Name</Label>
-                            <input
-                              id="spec-company-name"
-                              value={companyName}
-                              onChange={(e) => {
-                                const val = e.target.value;
-                                setCompanyName(val);
-                                if (sameAsManufacturer) setPackerName(val);
-                              }}
-                              placeholder="Eg: Merabetta Healthcare Pvt. Ltd."
-                              className={INPUT_CLASS}
-                            />
-                          </div>
-                          <div>
-                            <Label htmlFor="spec-company-address">Manufacturer Address</Label>
-                            <input
-                              id="spec-company-address"
-                              value={companyAddress}
-                              onChange={(e) => {
-                                const val = e.target.value;
-                                setCompanyAddress(val);
-                                if (sameAsManufacturer) setPackerAddress(val);
-                              }}
-                              placeholder="Eg: Plot 14, Industrial Area, Pune"
-                              className={INPUT_CLASS}
-                            />
-                          </div>
-                        </div>
-
-                        <div className="pt-1">
-                          <label className="inline-flex items-center gap-2 text-[13px] font-semibold text-[#0D2B53] cursor-pointer">
-                            <input
-                              type="checkbox"
-                              checked={sameAsManufacturer}
-                              onChange={(e) => {
-                                const checked = e.target.checked;
-                                setSameAsManufacturer(checked);
-                                if (checked) {
-                                  setPackerName(companyName);
-                                  setPackerAddress(companyAddress);
-                                }
-                              }}
-                              className="h-4 w-4 accent-[#F47C35]"
-                            />
-                            <span>Packer details are same as Manufacturer</span>
-                          </label>
-                        </div>
-
-                        {!sameAsManufacturer && (
-                          <div className="grid gap-4 md:grid-cols-2">
-                            <div>
-                              <Label htmlFor="spec-packer-name">Packer Name</Label>
-                              <input
-                                id="spec-packer-name"
-                                value={packerName}
-                                onChange={(e) => setPackerName(e.target.value)}
-                                placeholder="Enter packer company name"
-                                className={INPUT_CLASS}
-                              />
-                            </div>
-                            <div>
-                              <Label htmlFor="spec-packer-address">Packer Address</Label>
-                              <input
-                                id="spec-packer-address"
-                                value={packerAddress}
-                                onChange={(e) => setPackerAddress(e.target.value)}
-                                placeholder="Enter packer full address"
-                                className={INPUT_CLASS}
-                              />
-                            </div>
-                          </div>
-                        )}
 
                         <div>
                           <Label htmlFor="spec-keywords">Search Keywords</Label>
@@ -3722,10 +3671,10 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                                 <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
                                   <div>
                                     <span className="text-[13px] font-semibold text-[#111]">
-                                      {vt.name} — Select Options ({selectedForCurrent.length} selected)
+                                      {vt.name} — Select Option {selectedForCurrent[0] ? `(${selectedForCurrent[0]})` : ''}
                                     </span>
                                     <p className="text-[11px] text-[#666]">
-                                      Click options below to select or unselect them, then click <strong>Done</strong> to show only selected options in Terms.
+                                      Select an option from the dropdown below, then click <strong>Done</strong> to configure details in Terms.
                                     </p>
                                   </div>
                                   <div className="inline-flex items-center gap-1.5">
@@ -3757,56 +3706,67 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                                   </div>
                                 </div>
 
-                                {/* Selectable Option Chips */}
-                                <div className="flex flex-wrap items-center gap-2">
-                                  {allOptionNames.map((optName) => {
-                                    const isSelected = selectedForCurrent.some(
-                                      (o) => o.trim().toLowerCase() === optName.toLowerCase()
-                                    );
-                                    return (
-                                      <button
-                                        key={optName}
-                                        type="button"
-                                        onClick={() => toggleOptionSelection(currentVId, optName)}
-                                        className={`inline-flex h-9 items-center gap-1.5 rounded-lg border px-3.5 text-[12px] font-semibold transition cursor-pointer ${
-                                          isSelected
-                                            ? 'border-[#F47C35] bg-[#FFF4EE] text-[#F47C35] shadow-2xs'
-                                            : 'border-[#E2E2E2] bg-white text-[#555] hover:bg-gray-50'
-                                        }`}
-                                      >
-                                        <span
-                                          className={`flex h-4 w-4 items-center justify-center rounded border text-[10px] ${
-                                            isSelected
-                                              ? 'border-[#F47C35] bg-[#F47C35] text-white'
-                                              : 'border-[#CCC] bg-white text-transparent'
-                                          }`}
-                                        >
-                                          ✓
-                                        </span>
-                                        <span>{optName}</span>
-                                      </button>
-                                    );
-                                  })}
+                                {/* Dropdown to select the one option */}
+                                <div className="mt-3 max-w-sm">
+                                  <label
+                                    htmlFor={`select-option-${currentVId}`}
+                                    className="block text-[12px] font-medium text-gray-700 mb-1"
+                                  >
+                                    Select {vt.name} Option:
+                                  </label>
+                                  <Select
+                                    id={`select-option-${currentVId}`}
+                                    value={selectedForCurrent[0] || ''}
+                                    placeholder={`Select ${vt.name} Option`}
+                                    options={allOptionNames.map((optName) => ({
+                                      value: optName,
+                                      label: optName,
+                                    }))}
+                                    onChange={(val) => {
+                                      setError('');
+                                      setVariantDoneNotice('');
+                                      setSelectedOptionsByVariant((prev) => ({
+                                        ...prev,
+                                        [currentVId]: val ? [val] : [],
+                                      }));
+                                    }}
+                                  />
                                 </div>
+
+                                {selectedForCurrent[0] && (
+                                  <div className="mt-3 flex items-center gap-2">
+                                    <span className="text-[12px] font-medium text-gray-600">
+                                      Selected Option:
+                                    </span>
+                                    <span className="inline-flex items-center gap-1.5 rounded-lg border border-[#F47C35] bg-[#FFF4EE] px-3 py-1 text-[13px] font-semibold text-[#F47C35]">
+                                      <span>✓ {selectedForCurrent[0]}</span>
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          setSelectedOptionsByVariant((prev) => ({
+                                            ...prev,
+                                            [currentVId]: [],
+                                          }))
+                                        }
+                                        className="ml-1 text-[13px] text-gray-400 hover:text-red-500 cursor-pointer"
+                                        title="Clear selection"
+                                      >
+                                        ×
+                                      </button>
+                                    </span>
+                                  </div>
+                                )}
 
                                 {/* Footer Bar with Selection Summary & "Done" Button */}
                                 <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[#E8E8E8] bg-white px-4 py-3">
                                   <div className="text-[12px] text-[#444]">
-                                    {totalCombinationsCount > 0 ? (
+                                    {selectedForCurrent.length > 0 ? (
                                       <span>
-                                        <strong className="text-[#111]">{totalSelectedCount}</strong> option(s) selected
-                                        {activeTypesForSummary.length > 1 ? (
-                                          <>
-                                            {' '}across <strong>{activeTypesForSummary.length}</strong> types &rarr;{' '}
-                                            <strong className="text-[#F47C35]">{totalCombinationsCount} combination variant(s)</strong> will be generated.
-                                          </>
-                                        ) : (
-                                          ' across variant types.'
-                                        )}
+                                        Option <strong className="text-[#F47C35]">{selectedForCurrent[0]}</strong> selected for <strong>{vt.name}</strong>. Click <strong>Done</strong> to configure details.
                                       </span>
                                     ) : (
                                       <span className="text-[#888]">
-                                        No options selected yet. Click the options above to select them.
+                                        Please select an option from the dropdown above.
                                       </span>
                                     )}
                                     {variantDoneNotice && (
@@ -3835,7 +3795,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                                       onClick={handleConfirmVariantsDone}
                                       className="h-9 rounded-lg bg-[#F47C35] px-5 text-[13px] font-semibold text-white shadow-xs hover:bg-[#E96F29] transition-colors cursor-pointer"
                                     >
-                                      Done ({totalCombinationsCount || totalSelectedCount}) →
+                                      Done ({selectedForCurrent.length}) →
                                     </button>
                                   </div>
                                 </div>
@@ -3857,7 +3817,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                         <div>
                           <h4 className="text-[15px] font-semibold">Terms & Per-Size Pack Configuration</h4>
                           <p className="text-[12px] text-gray-500">
-                            Configure Unit Count (per pack), SKU, price, weight, and stock for each size/option tab.
+                            Configure Unit Count (per pack), SKU, and weight for each size/option tab.
                           </p>
                         </div>
                       </div>
@@ -3866,7 +3826,11 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                           {/* Separate Option Tabs Bar */}
                           <div className="flex flex-wrap gap-2 border-b border-[#E7E7E7] pb-3">
                             {terms.map((t, idx) => {
-                              const open = openTerm === t.key;
+                              const activeTermKey =
+                                openTerm && terms.some((item) => item.key === openTerm)
+                                  ? openTerm
+                                  : terms[0]?.key;
+                              const open = activeTermKey === t.key;
                               return (
                                 <button
                                   key={t.key}
@@ -3879,7 +3843,13 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                                   }`}
                                 >
                                   <span className="text-[11px] opacity-70">#{idx + 1}</span>
-                                  <span>{t.variantTypeName ? `${t.variantTypeName}: ${t.name}` : t.name}{Object.entries(t.attributes || {}).filter(([attribute]) => attribute !== t.variantTypeName).map(([, value]) => ` / ${value}`).join('')}</span>
+                                  <span>
+                                    {t.variantTypeName ? `${t.variantTypeName}: ${t.name}` : t.name}
+                                    {Object.entries(t.attributes || {})
+                                      .filter(([attribute]) => attribute !== t.variantTypeName)
+                                      .map(([, value]) => ` / ${value}`)
+                                      .join('')}
+                                  </span>
                                   {t.unitCount && (
                                     <span className="rounded bg-orange-100 px-1.5 py-0.5 text-[10px] font-bold text-[#F47C35]">
                                       {t.unitCount} pcs
@@ -3891,7 +3861,11 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                           </div>
 
                           {terms.map((t) => {
-                            if (openTerm !== t.key) return null;
+                            const activeTermKey =
+                              openTerm && terms.some((item) => item.key === openTerm)
+                                ? openTerm
+                                : terms[0]?.key;
+                            if (activeTermKey !== t.key) return null;
                             return (
                               <div key={t.key} className="mt-4 rounded-xl border border-[#E7E7E7] bg-[#FAFAFA] p-4 space-y-4">
                                 <div className="flex items-center justify-between border-b border-[#EEE] pb-3">
@@ -4006,108 +3980,12 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                                   </div>
                                 </div>
 
-                                <div>
-                                  <Label htmlFor={`term-offer-${t.key}`}>Offer Percent (%)</Label>
-                                  <input
-                                    id={`term-offer-${t.key}`}
-                                    type="number"
-                                    min="0"
-                                    max="100"
-                                    step="0.01"
-                                    value={t.offerPercent}
-                                    onChange={(e) => {
-                                      const nextOffer = e.target.value;
-                                      patchTerm(t.key, {
-                                        offerPercent: nextOffer,
-                                        pricingMode: nextOffer.trim() ? 'percent' : 'manual',
-                                        salePrice: salePriceFrom(t.regularPrice, nextOffer),
-                                      });
-                                    }}
-                                    placeholder="Eg: 10"
-                                    className={termInputBase}
-                                  />
-                                </div>
-                                <div className="grid gap-4 md:grid-cols-2">
-                                  <div>
-                                    <Label htmlFor={`term-regular-${t.key}`} required>
-                                      Regular Price (MRP)
-                                    </Label>
-                                    <input
-                                      id={`term-regular-${t.key}`}
-                                      type="number"
-                                      min="0.01"
-                                      step="0.01"
-                                      value={t.regularPrice}
-                                      onChange={(e) => {
-                                        const nextReg = e.target.value;
-                                        if (t.pricingMode === 'percent' && t.offerPercent.trim()) {
-                                          patchTerm(t.key, {
-                                            regularPrice: nextReg,
-                                            salePrice: salePriceFrom(nextReg, t.offerPercent),
-                                          });
-                                        } else if (t.salePrice.trim()) {
-                                          patchTerm(t.key, {
-                                            regularPrice: nextReg,
-                                            offerPercent: offerPercentFrom(nextReg, t.salePrice),
-                                          });
-                                        } else {
-                                          patchTerm(t.key, { regularPrice: nextReg });
-                                        }
-                                      }}
-                                      placeholder="Eg: 1000"
-                                      className={termInputBase}
-                                    />
-                                  </div>
-                                  <div>
-                                    <Label htmlFor={`term-sale-${t.key}`}>Sale Price (Offer Price)</Label>
-                                    <input
-                                      id={`term-sale-${t.key}`}
-                                      type="number"
-                                      min="0"
-                                      step="0.01"
-                                      value={t.salePrice}
-                                      onChange={(e) => {
-                                        const nextSale = e.target.value;
-                                        patchTerm(t.key, {
-                                          salePrice: nextSale,
-                                          pricingMode: 'manual',
-                                          offerPercent: offerPercentFrom(t.regularPrice, nextSale),
-                                        });
-                                      }}
-                                      placeholder="Eg: 900"
-                                      className={termInputBase}
-                                    />
-                                  </div>
-                                </div>
-                                <div>
-                                  <Label htmlFor={`term-stock-${t.key}`} required>
-                                    Stock Quantity
-                                  </Label>
-                                  <input
-                                    id={`term-stock-${t.key}`}
-                                    type="number"
-                                    min="0"
-                                    step="1"
-                                    value={t.stockQuantity}
-                                    onChange={(e) => patchTerm(t.key, { stockQuantity: e.target.value })}
-                                    className={termInputBase}
-                                  />
-                                </div>
-                                <div>
-                                  <Label htmlFor={`term-description-${t.key}`}>
-                                    Option Notes / Description (optional)
-                                  </Label>
-                                  <textarea
-                                    id={`term-description-${t.key}`}
-                                    value={t.description}
-                                    onChange={(e) => patchTerm(t.key, { description: e.target.value })}
-                                    className="min-h-[90px] w-full rounded-lg border border-[#D7D7D7] bg-white p-4 text-[14px] outline-none focus:border-[#F47C35]"
-                                  />
-                                </div>
                                 <button
                                   type="button"
-                                  onClick={() => setOpenTerm(null)}
-                                  className="h-10 rounded-lg bg-[#F47C35] px-6 text-[13px] font-semibold text-white cursor-pointer"
+                                  onClick={() => {
+                                    setVariantDoneNotice(`Option "${t.name}" details confirmed.`);
+                                  }}
+                                  className="h-10 rounded-lg bg-[#F47C35] px-6 text-[13px] font-semibold text-white cursor-pointer hover:bg-[#E96F29] transition-colors"
                                 >
                                   Done
                                 </button>
