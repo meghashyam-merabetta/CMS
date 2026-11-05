@@ -935,53 +935,88 @@ export async function deleteAdminProductImage(
 }
 
 /* ========================================================================== */
-/* DEPRECATED VARIANT STUBS (No product_variants table in native catalog)     */
+/* PER-PRODUCT VARIANTS CRUD                                                  */
 /* ========================================================================== */
 
 export async function getAdminProductVariants(
-  _productId: number | string,
-  _params?: { limit?: number; offset?: number }
+  productId: number | string,
+  params?: { limit?: number; offset?: number }
 ): Promise<BackendProductVariant[]> {
-  return [];
+  const res = await apiFetch<ApiResponse<BackendProductVariant[]>>(
+    `${ADMIN_PRODUCTS_ENDPOINT}/${productId}/variants`,
+    { params: params as any, cache: 'no-store' }
+  );
+  return Array.isArray(res?.data) ? res.data : [];
 }
 
 export async function getAllAdminProductVariants(
-  _productId: number | string
+  productId: number | string
 ): Promise<BackendProductVariant[]> {
-  return [];
+  const variants: BackendProductVariant[] = [];
+  const seenIds = new Set<string>();
+  const limit = 100;
+  let offset = 0;
+
+  while (true) {
+    const res = await apiFetch<ApiResponse<BackendProductVariant[]>>(
+      `${ADMIN_PRODUCTS_ENDPOINT}/${productId}/variants`,
+      { params: { limit, offset }, cache: 'no-store' }
+    );
+    if (!Array.isArray(res?.data)) {
+      throw new Error('Unable to read the product variants. Please try again.');
+    }
+
+    for (const variant of res.data) {
+      if (variant.id == null || seenIds.has(String(variant.id))) {
+        throw new Error('Unable to load all product variants. Please try again.');
+      }
+      seenIds.add(String(variant.id));
+      variants.push(variant);
+    }
+
+    offset += res.data.length;
+    const hasMore = res.pagination
+      ? res.pagination.hasMore || offset < res.pagination.total
+      : res.data.length === limit;
+    if (!hasMore) return variants;
+    if (res.data.length === 0) {
+      throw new Error('Unable to load all product variants. Please try again.');
+    }
+  }
 }
 
 export async function removeAllAdminProductVariants(
-  _productId: number | string
+  productId: number | string
 ): Promise<void> {
-  // No-op in native schema
+  const variants = await getAllAdminProductVariants(productId);
+  for (const variant of variants) {
+    await deleteAdminProductVariant(productId, variant.id);
+  }
+
+  if ((await getAllAdminProductVariants(productId)).length > 0) {
+    throw new Error('Product variants still exist. Please retry saving.');
+  }
 }
 export async function getAdminProductVariantById(
   productId: number | string,
   variantId: number | string
 ): Promise<BackendProductVariant> {
-  return {
-    id: variantId,
-    product_id: productId,
-    sku: '',
-    attributes: {},
-    stock_quantity: 0,
-    is_active: true,
-  };
+  const res = await apiFetch<ApiResponse<BackendProductVariant>>(
+    `${ADMIN_PRODUCTS_ENDPOINT}/${productId}/variants/${variantId}`,
+    { cache: 'no-store' }
+  );
+  return (res as any)?.data ?? res;
 }
 
 export async function createAdminProductVariant(
   productId: number | string,
   payload: CreateProductVariantPayload
 ): Promise<BackendProductVariant> {
-  return {
-    id: Date.now(),
-    product_id: productId,
-    sku: payload.sku,
-    attributes: payload.attributes,
-    stock_quantity: payload.stock_quantity ?? 0,
-    is_active: payload.is_active ?? true,
-  };
+  const res = await apiFetch<ApiResponse<BackendProductVariant>>(
+    `${ADMIN_PRODUCTS_ENDPOINT}/${productId}/variants`,
+    { method: 'POST', body: JSON.stringify(payload) }
+  );
+  return (res as any)?.data ?? res;
 }
 
 export async function updateAdminProductVariant(
@@ -989,19 +1024,19 @@ export async function updateAdminProductVariant(
   variantId: number | string,
   payload: UpdateProductVariantPayload
 ): Promise<BackendProductVariant> {
-  return {
-    id: variantId,
-    product_id: productId,
-    sku: payload.sku ?? '',
-    attributes: payload.attributes ?? {},
-    stock_quantity: payload.stock_quantity ?? 0,
-    is_active: payload.is_active ?? true,
-  };
+  const res = await apiFetch<ApiResponse<BackendProductVariant>>(
+    `${ADMIN_PRODUCTS_ENDPOINT}/${productId}/variants/${variantId}`,
+    { method: 'PATCH', body: JSON.stringify(payload) }
+  );
+  return (res as any)?.data ?? res;
 }
 
 export async function deleteAdminProductVariant(
-  _productId: number | string,
-  _variantId: number | string
+  productId: number | string,
+  variantId: number | string
 ): Promise<void> {
-  // No-op in native schema
+  await apiFetch(`${ADMIN_PRODUCTS_ENDPOINT}/${productId}/variants/${variantId}`, {
+    method: 'DELETE',
+    body: JSON.stringify({}),
+  });
 }

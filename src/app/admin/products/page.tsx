@@ -41,7 +41,6 @@ import {
   BackendProductImageRecord,
 } from '@/services/api/adminProductsApi';
 import { getAdminCategories, getAllAdminCategories } from '@/services/api/adminCategoriesApi';
-import ProductVariantsList from '@/components/products/ProductVariantsList';
 import { compareProductRecords, summarizeProductVariants, summarizeProductInventory, variantMatchesSearch } from '@/lib/productCatalog';
 import { collectAllPages } from '@/lib/pagination';
 import { getAllAdminBrands } from '@/services/api/adminBrandsApi';
@@ -166,8 +165,6 @@ function mapBackendProductToRecord(
 export default function ProductManagementPage() {
   const router = useRouter();
   const [products, setProducts] = useState<ProductRecord[]>([]);
-  const [expandedVariants, setExpandedVariants] = useState<Set<string>>(new Set());
-  const [variantListRefresh, setVariantListRefresh] = useState(0);
   const [categories, setCategories] = useState<BackendCategory[]>([]);
   const [brands, setBrands] = useState<BackendBrand[]>([]);
   const [totalCount, setTotalCount] = useState<number>(0);
@@ -507,32 +504,55 @@ export default function ProductManagementPage() {
         }
       }
 
-      await Promise.all([
-        !result.image ? getAdminProductImages(record.id).then((images) => {
-          result.image = images.find((image) => image.is_primary)?.image_url || images[0]?.image_url;
-        }).catch(() => warnings.push('Images could not be loaded')) : Promise.resolve(),
-        backend?.variants === undefined && backend?.inventory_managed !== true
-          ? getAllAdminProductVariants(record.id).then((variants) => {
-            result.variantSummary = summarizeProductVariants(variants);
-            result.variantCount = variants.length;
-            result.inventorySummary = summarizeProductInventory(backend!, variants);
-          }).catch(() => warnings.push('Variants could not be loaded')) : Promise.resolve(),
-        getAdminProductInventory(record.id).then((rows) => {
-            if (rows.length === 0) return;
-            const available = rows.reduce((sum, row) => {
-              const value = Number(row.available_quantity);
-              return sum + (Number.isFinite(value) && value >= 0 ? value : 0);
-            }, 0);
-            result.stock = available;
-            result.inventorySummary = {
-              source: 'product',
-              stock: available,
-              minPrice: result.inventorySummary?.minPrice ?? result.price,
-              maxPrice: result.inventorySummary?.maxPrice ?? result.price,
-              activeVariantCount: 0,
-            };
-          }).catch(() => warnings.push('Warehouse stock could not be loaded')),
+      const [imagesResult, variantsResult, inventoryResult] = await Promise.allSettled([
+        result.image ? Promise.resolve([]) : getAdminProductImages(record.id),
+        getAllAdminProductVariants(record.id),
+        getAdminProductInventory(record.id),
       ]);
+
+      if (imagesResult.status === 'fulfilled' && !result.image) {
+        result.image =
+          imagesResult.value.find((image) => image.is_primary)?.image_url ||
+          imagesResult.value[0]?.image_url;
+      } else if (imagesResult.status === 'rejected') {
+        warnings.push('Images could not be loaded');
+      }
+
+      const variants = variantsResult.status === 'fulfilled' ? variantsResult.value : [];
+      if (variantsResult.status === 'rejected') {
+        warnings.push('Variants could not be loaded');
+      } else {
+        result.variantSummary = summarizeProductVariants(variants);
+        result.variantCount = variants.length;
+      }
+
+      const inventoryRows = inventoryResult.status === 'fulfilled' ? inventoryResult.value : [];
+      if (inventoryResult.status === 'rejected') {
+        warnings.push('Warehouse stock could not be loaded');
+      }
+
+      if (variants.length > 0) {
+        // A variable product's visible stock and price come from its saved variants.
+        // Do not let the parent warehouse row overwrite the variant count with zero.
+        result.inventorySummary = summarizeProductInventory(
+          { ...(backend || {}), product_type: 'variable', inventory_managed: false } as BackendProduct,
+          variants
+        );
+        result.stock = result.inventorySummary.stock ?? 0;
+      } else if (inventoryRows.length > 0) {
+        const available = inventoryRows.reduce((sum, row) => {
+          const value = Number(row.available_quantity);
+          return sum + (Number.isFinite(value) && value >= 0 ? value : 0);
+        }, 0);
+        result.stock = available;
+        result.inventorySummary = {
+          source: 'product',
+          stock: available,
+          minPrice: result.inventorySummary?.minPrice ?? result.price,
+          maxPrice: result.inventorySummary?.maxPrice ?? result.price,
+          activeVariantCount: 0,
+        };
+      }
       result.catalogWarning = warnings.join('. ');
       return result;
     }));
@@ -588,7 +608,6 @@ export default function ProductManagementPage() {
           const enriched = await enrichVisibleProducts(initialMapped, items);
           if (requestId !== requestIdRef.current) return;
           setProducts(enriched);
-          setVariantListRefresh(version => version + 1);
           setTotalCount(total);
           setIsLive(true);
           return;
@@ -661,7 +680,6 @@ export default function ProductManagementPage() {
         const enriched = await enrichVisibleProducts(matchedMapped.slice(startIdx, startIdx + pageSize), allBackendItems);
         if (requestId !== requestIdRef.current) return;
         setProducts(enriched);
-        setVariantListRefresh(version => version + 1);
         setTotalCount(matchedMapped.length);
         setIsLive(true);
       } catch (err: any) {
@@ -1089,12 +1107,6 @@ export default function ProductManagementPage() {
                           </div>
                         )}
                         {p.variantSummary && <div className="mt-1 text-[11px] font-normal text-gray-500">{p.variantSummary}</div>}
-                        {(p.productType === 'variable' || Boolean(p.variantCount)) && <button type="button"
-                          aria-expanded={expandedVariants.has(p.id)} aria-controls={`product-variants-${p.id}`}
-                          onClick={() => setExpandedVariants(previous => { const next = new Set(previous); if (next.has(p.id)) next.delete(p.id); else next.add(p.id); return next; })}
-                          className="mt-2 text-xs font-semibold text-purple-800 underline">
-                          {expandedVariants.has(p.id) ? 'Hide variants' : `View variants${p.variantCount != null ? ` (${p.variantCount})` : ''}`}
-                        </button>}
                         {p.catalogWarning && <div role="status" className="mt-1 text-[11px] font-normal text-amber-700">{p.catalogWarning}. Refresh to retry.</div>}
                       </td>
                       <td className="px-3 text-[#606060]">{p.category}</td>
@@ -1164,9 +1176,6 @@ export default function ProductManagementPage() {
                         </div>
                       </td>
                     </tr>
-                    {expandedVariants.has(p.id) && <tr id={`product-variants-${p.id}`}><td colSpan={9} className="p-3">
-                      <ProductVariantsList productId={p.id} productName={p.name} refreshVersion={variantListRefresh} />
-                    </td></tr>}
                     </React.Fragment>
                   );
                 })
