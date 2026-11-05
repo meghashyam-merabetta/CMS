@@ -1,4 +1,8 @@
-import { assertJsonRequestSize } from '@/lib/jsonRequest';
+import {
+  assertJsonRequestSize,
+  MAX_JSON_REQUEST_BYTES,
+  MAX_PRODUCT_JSON_REQUEST_BYTES,
+} from '@/lib/jsonRequest';
 
 const RAW_BASE_URL = (
   process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000'
@@ -68,7 +72,11 @@ export async function apiFetch<T>(
       };
 
   if (!isFormData && typeof rest.body === 'string' && new Headers(requestHeaders).get('Content-Type')?.includes('application/json')) {
-    assertJsonRequestSize(rest.body);
+    const isProductRoute = /^\/?(?:api\/admin\/)?products(?:\b|\/|\?|$)/.test(endpoint);
+    assertJsonRequestSize(
+      rest.body,
+      isProductRoute ? MAX_PRODUCT_JSON_REQUEST_BYTES : MAX_JSON_REQUEST_BYTES
+    );
   }
 
   let signal = rest.signal;

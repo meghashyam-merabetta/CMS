@@ -61,6 +61,5 @@ export default function ProductVariantsList({ productId, productName, refreshVer
         })}</tbody>
       </table>
     </div>)}
-    <p className="text-xs text-gray-500">Variants share the product description. Their images, SKU, pricing and stock are shown separately. Each converted or newly saved configuration has its own product ID and stays grouped here for editing. Legacy entries show their variant ID until conversion is complete. Save Changes in the editor to update SKU, price and stock; image changes save immediately.</p>
   </section>;
 }
