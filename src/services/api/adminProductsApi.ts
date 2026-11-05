@@ -1,24 +1,116 @@
 import { apiFetch } from '@/lib/api';
-import { assertJsonRequestSize } from '@/lib/jsonRequest';
-import { PRODUCT_DETAIL_FIELDS } from '@/lib/productDetails';
 import {
-  BackendProduct,
-  CreateProductPayload,
-  UpdateProductPayload,
-  ProductStatus,
-  PaginationMeta,
+  assertJsonRequestSize,
+  MAX_PRODUCT_JSON_REQUEST_BYTES,
+} from '@/lib/jsonRequest';
+import {
   ApiResponse,
+  BackendProduct,
   BackendProductVariant,
+  CreateProductPayload,
   CreateProductVariantPayload,
+  PaginationMeta,
+  ProductStatus,
+  UpdateProductPayload,
   UpdateProductVariantPayload,
 } from '@/types/api';
+
+/* ========================================================================== */
+/* NATIVE CATALOG SCHEMA TYPES                                                */
+/* ========================================================================== */
+
+export type NewProductType = 'simple' | 'variable' | 'grouped' | 'bundle';
+export type NewProductStatus = 'active' | 'draft' | 'inactive' | 'archived';
+export type NewWeightUnit = 'g' | 'kg' | 'mg' | 'lb' | 'oz';
+export type NewDimensionUnit = 'cm' | 'mm' | 'in' | 'm';
+
+export interface NativeProductDetailsPayload {
+  short_description?: string | null;
+  full_description?: string | null;
+  key_features?: string[];
+  highlights?: string[];
+
+  manufacturer_name?: string | null;
+  manufacturer_part_number?: string | null;
+  country_of_origin?: string | null;
+  imported_by?: string | null;
+  marketed_by?: string | null;
+
+  product_weight?: number | null;
+  weight_unit?: NewWeightUnit | null;
+  product_length?: number | null;
+  product_width?: number | null;
+  product_height?: number | null;
+  dimension_unit?: NewDimensionUnit | null;
+
+  material?: string | null;
+  colour?: string | null;
+  size?: string | null;
+  model_number?: string | null;
+  model_name?: string | null;
+  warranty?: string | null;
+
+  package_contents?: string[];
+  package_weight?: number | null;
+  package_length?: number | null;
+  package_width?: number | null;
+  package_height?: number | null;
+
+  usage_instructions?: string | null;
+  care_instructions?: string | null;
+  safety_information?: string | null;
+  return_policy?: string | null;
+
+  meta_title?: string | null;
+  meta_description?: string | null;
+  meta_keywords?: string | null;
+  canonical_url?: string | null;
+
+  specifications?: Record<string, string>;
+  additional_attributes?: Record<string, string>;
+}
+
+export interface NativeProductWritePayload {
+  product_code: string;
+  product_name: string;
+  slug: string;
+  sku?: string | null;
+  barcode?: string | null;
+  brand_id?: number | string | null;
+  category_id?: number | string | null;
+  subcategory_id?: number | string | null;
+  vendor_id?: number | string | null;
+  product_type?: NewProductType;
+  product_status?: NewProductStatus;
+  mrp?: number | null;
+  selling_price?: number | null;
+  cost_price?: number | null;
+  tax_rate?: number | null;
+  hsn_code?: string | null;
+  stock_quantity?: number | null;
+  min_stock_quantity?: number | null;
+  details?: NativeProductDetailsPayload;
+}
+
+export interface BackendVendor {
+  id?: string | number;
+  vendor_id?: string | number;
+  name?: string;
+  vendor_name?: string;
+  status?: string;
+  is_active?: boolean;
+}
 
 export interface ProductListParams {
   limit?: number;
   offset?: number;
-  category_id?: number;
-  brand_id?: number;
+  category_id?: number | string;
+  subcategory_id?: number | string;
+  brand_id?: number | string;
+  vendor_id?: number | string;
+  product_group_code?: string;
   product_status?: ProductStatus;
+  is_active?: boolean;
   search?: string;
   sort_by?: 'product_id' | 'product_name' | 'product_code' | 'sku';
   sort_order?: 'asc' | 'desc';
@@ -31,14 +123,66 @@ export interface AdminProductsResponse {
 }
 
 export const ADMIN_PRODUCTS_ENDPOINT = '/api/admin/products';
+export const ADMIN_VENDORS_ENDPOINT = '/api/admin/vendors';
 
 export const PRODUCT_IMAGE_FIELD_NAME =
   process.env.NEXT_PUBLIC_PRODUCT_IMAGE_FIELD || 'uploadimage';
 
 export const MAX_PRODUCT_IMAGES = 6;
+export const MAX_BACKEND_PRODUCT_IMAGES = 10;
 export const MAX_PRODUCT_IMAGE_BYTES = 5 * 1024 * 1024;
 export const MAX_TOTAL_IMAGE_BYTES = 10 * 1024 * 1024;
 export const ALLOWED_PRODUCT_IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/webp'];
+
+/* ========================================================================== */
+/* HELPERS: IDEMPOTENCY, SAFE INTEGERS, DECIMALS, SLUGS & IMAGES              */
+/* ========================================================================== */
+
+/**
+ * Generates an Idempotency-Key matching 1–128 chars of [A-Za-z0-9._:-]
+ */
+export function generateIdempotencyKey(prefix = 'prod'): string {
+  const randomPart =
+    typeof globalThis.crypto?.randomUUID === 'function'
+      ? globalThis.crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;
+  return `${prefix}:${randomPart}`.slice(0, 128);
+}
+
+/**
+ * Request IDs must be positive safe JSON integers; convert only after checking Number.isSafeInteger
+ */
+export function toSafePositiveInt(val: unknown): number | null {
+  if (val === null || val === undefined || val === '') return null;
+  const num = typeof val === 'number' ? val : Number(String(val).trim());
+  if (Number.isSafeInteger(num) && num > 0) {
+    return num;
+  }
+  return null;
+}
+
+/**
+ * Nonnegative JSON number with at most `maxDecimals` decimal places
+ */
+export function toNonNegativeDecimal(val: unknown, maxDecimals = 2): number | null {
+  if (val === null || val === undefined || val === '') return null;
+  const num = typeof val === 'number' ? val : Number(String(val).trim());
+  if (!Number.isFinite(num) || num < 0) return null;
+  const factor = 10 ** maxDecimals;
+  return Math.round((num + Number.EPSILON) * factor) / factor;
+}
+
+/**
+ * Nonnegative safe integer for stock quantities
+ */
+export function toNonNegativeSafeInt(val: unknown, fallback: number | null = null): number | null {
+  if (val === null || val === undefined || val === '') return fallback;
+  const num = Math.floor(Number(String(val).trim()));
+  if (Number.isSafeInteger(num) && num >= 0) {
+    return num;
+  }
+  return fallback;
+}
 
 export function validateProductImages(
   files: File[],
@@ -47,7 +191,7 @@ export function validateProductImages(
   operation: 'add' | 'replace' = 'add'
 ): string {
   if (files.length > 0 && operation !== 'replace' && existingCount + files.length > MAX_PRODUCT_IMAGES) {
-    return `A product can have a maximum of ${MAX_PRODUCT_IMAGES} images. Remove an image before adding another.`;
+    return `A product can have a maximum of ${MAX_PRODUCT_IMAGES} images in the editor. Remove an image before adding another.`;
   }
   if (files.some((file) => !ALLOWED_PRODUCT_IMAGE_TYPES.includes(file.type))) {
     return 'Product images must be JPG, PNG or WebP.';
@@ -56,7 +200,7 @@ export function validateProductImages(
     return 'Each product image must be no more than 5 MiB.';
   }
   if (existingBytes + files.reduce((sum, file) => sum + file.size, 0) > MAX_TOTAL_IMAGE_BYTES) {
-    return 'Product images must be no more than 10 MB in total.';
+    return 'Product images must be no more than 10 MiB per upload request.';
   }
   return '';
 }
@@ -67,7 +211,7 @@ export function generateProductSlug(input: string): string {
     .trim()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '');
-  return cleaned || `product-${Date.now()}`;
+  return cleaned || '';
 }
 
 export function resolveProductImageUrls(bp?: BackendProduct | any): string[] {
@@ -90,22 +234,232 @@ export function resolvePrimaryProductImage(
   return resolveProductImageUrls(bp)[0];
 }
 
+/* ========================================================================== */
+/* BUILD NATIVE PRODUCT JSON REQUEST BODY                                     */
+/* ========================================================================== */
+
+export function buildNativeProductRequestBody(
+  payload: Partial<NativeProductWritePayload>,
+  isCreate: boolean
+): Record<string, any> {
+  const body: Record<string, any> = {};
+
+  if (payload.product_code !== undefined) {
+    body.product_code = payload.product_code.trim();
+  }
+  if (payload.product_name !== undefined) {
+    body.product_name = payload.product_name.trim();
+  }
+  if (payload.slug !== undefined && payload.slug.trim()) {
+    body.slug = generateProductSlug(payload.slug.trim());
+  } else if (isCreate && payload.product_name) {
+    body.slug = generateProductSlug(payload.product_name);
+  }
+
+  if (payload.sku !== undefined) {
+    body.sku = payload.sku?.trim() || null;
+  }
+  if (payload.barcode !== undefined) {
+    body.barcode = payload.barcode?.trim() || null;
+  }
+
+  if (payload.brand_id !== undefined) {
+    body.brand_id = toSafePositiveInt(payload.brand_id);
+  }
+  if (payload.category_id !== undefined) {
+    body.category_id = toSafePositiveInt(payload.category_id);
+  }
+  if (payload.subcategory_id !== undefined) {
+    body.subcategory_id = toSafePositiveInt(payload.subcategory_id);
+  }
+  if (payload.vendor_id !== undefined) {
+    body.vendor_id = toSafePositiveInt(payload.vendor_id);
+  }
+
+  if (payload.product_type !== undefined) {
+    body.product_type = payload.product_type;
+  }
+  if (payload.product_status !== undefined) {
+    body.product_status = payload.product_status;
+  }
+
+  if (payload.mrp !== undefined) {
+    body.mrp = toNonNegativeDecimal(payload.mrp, 2);
+  }
+  if (payload.selling_price !== undefined) {
+    body.selling_price = toNonNegativeDecimal(payload.selling_price, 2);
+  }
+  if (payload.cost_price !== undefined) {
+    body.cost_price = toNonNegativeDecimal(payload.cost_price, 2);
+  }
+  if (payload.tax_rate !== undefined) {
+    body.tax_rate = toNonNegativeDecimal(payload.tax_rate, 2);
+  }
+  if (payload.hsn_code !== undefined) {
+    body.hsn_code = payload.hsn_code?.trim() || null;
+  }
+
+  if (payload.stock_quantity !== undefined && payload.stock_quantity !== null) {
+    const sq = toNonNegativeSafeInt(payload.stock_quantity, null);
+    if (sq !== null) body.stock_quantity = sq;
+  }
+  if (payload.min_stock_quantity !== undefined && payload.min_stock_quantity !== null) {
+    const msq = toNonNegativeSafeInt(payload.min_stock_quantity, null);
+    if (msq !== null) body.min_stock_quantity = msq;
+  }
+
+  if (payload.details !== undefined) {
+    const d = payload.details;
+    const detailsObj: Record<string, any> = {};
+
+    const nullableStrings = [
+      'short_description',
+      'full_description',
+      'manufacturer_name',
+      'manufacturer_part_number',
+      'country_of_origin',
+      'imported_by',
+      'marketed_by',
+      'material',
+      'colour',
+      'size',
+      'model_number',
+      'model_name',
+      'warranty',
+      'usage_instructions',
+      'care_instructions',
+      'safety_information',
+      'return_policy',
+      'meta_title',
+      'meta_description',
+      'meta_keywords',
+      'canonical_url',
+    ] as const;
+
+    for (const key of nullableStrings) {
+      if (d[key] !== undefined) {
+        const val = d[key];
+        detailsObj[key] = typeof val === 'string' && val.trim() ? val.trim() : null;
+      }
+    }
+
+    const numericFields = [
+      'product_weight',
+      'product_length',
+      'product_width',
+      'product_height',
+      'package_weight',
+      'package_length',
+      'package_width',
+      'package_height',
+    ] as const;
+
+    for (const key of numericFields) {
+      if (d[key] !== undefined) {
+        detailsObj[key] = toNonNegativeDecimal(d[key], 2);
+      }
+    }
+
+    if (d.weight_unit !== undefined) {
+      detailsObj.weight_unit = d.weight_unit || null;
+    }
+    if (d.dimension_unit !== undefined) {
+      detailsObj.dimension_unit = d.dimension_unit || null;
+    }
+
+    if (d.key_features !== undefined) {
+      detailsObj.key_features = Array.isArray(d.key_features)
+        ? d.key_features.map((s) => s.trim()).filter(Boolean)
+        : [];
+    }
+    if (d.highlights !== undefined) {
+      detailsObj.highlights = Array.isArray(d.highlights)
+        ? d.highlights.map((s) => s.trim()).filter(Boolean)
+        : [];
+    }
+    if (d.package_contents !== undefined) {
+      detailsObj.package_contents = Array.isArray(d.package_contents)
+        ? d.package_contents.map((s) => s.trim()).filter(Boolean)
+        : [];
+    }
+
+    if (d.specifications !== undefined) {
+      detailsObj.specifications = d.specifications || {};
+    }
+    if (d.additional_attributes !== undefined) {
+      detailsObj.additional_attributes = d.additional_attributes || {};
+    }
+
+    body.details = detailsObj;
+  }
+
+  return body;
+}
+
+export function validateAdminProductRequestSize(
+  payload: Partial<NativeProductWritePayload> | CreateProductPayload | UpdateProductPayload,
+  isCreate = false
+): void {
+  const body = buildNativeProductRequestBody(payload as Partial<NativeProductWritePayload>, isCreate);
+  assertJsonRequestSize(JSON.stringify(body), MAX_PRODUCT_JSON_REQUEST_BYTES);
+}
+
+/* ========================================================================== */
+/* VENDORS DROPDOWN API                                                       */
+/* ========================================================================== */
+
+export async function getAdminVendors(params?: {
+  limit?: number;
+  offset?: number;
+}): Promise<BackendVendor[]> {
+  const res = await apiFetch<ApiResponse<BackendVendor[]> | BackendVendor[]>(
+    ADMIN_VENDORS_ENDPOINT,
+    {
+      params: {
+        limit: params?.limit ?? 100,
+        offset: params?.offset ?? 0,
+      },
+    }
+  );
+  if (Array.isArray(res)) return res;
+  if (res && Array.isArray((res as ApiResponse<BackendVendor[]>).data)) {
+    return (res as ApiResponse<BackendVendor[]>).data;
+  }
+  return [];
+}
+
+/* ========================================================================== */
+/* PRODUCTS CRUD API (NATIVE SCHEMA)                                          */
+/* ========================================================================== */
+
 export async function getAdminProducts(
   params?: ProductListParams
 ): Promise<AdminProductsResponse> {
   const queryParams: Record<string, string | number | boolean | undefined> = {};
   if (params?.limit !== undefined) queryParams.limit = params.limit;
   if (params?.offset !== undefined) queryParams.offset = params.offset;
-  if (params?.category_id !== undefined && params?.category_id !== null) {
+  if (params?.category_id !== undefined && params?.category_id !== null && params?.category_id !== '') {
     queryParams.category_id = params.category_id;
   }
-  if (params?.brand_id !== undefined && params?.brand_id !== null) {
+  if (params?.subcategory_id !== undefined && params?.subcategory_id !== null && params?.subcategory_id !== '') {
+    queryParams.subcategory_id = params.subcategory_id;
+  }
+  if (params?.brand_id !== undefined && params?.brand_id !== null && params?.brand_id !== '') {
     queryParams.brand_id = params.brand_id;
+  }
+  if (params?.vendor_id !== undefined && params?.vendor_id !== null && params?.vendor_id !== '') {
+    queryParams.vendor_id = params.vendor_id;
+  }
+  if (params?.product_group_code !== undefined && params.product_group_code.trim() !== '') {
+    queryParams.product_group_code = params.product_group_code.trim();
   }
   if (params?.product_status) {
     queryParams.product_status = params.product_status;
   }
-  if (params?.search !== undefined && params?.search.trim() !== '') {
+  if (params?.is_active !== undefined) {
+    queryParams.is_active = String(params.is_active);
+  }
+  if (params?.search !== undefined && params.search.trim() !== '') {
     queryParams.search = params.search.trim();
   }
   if (params?.sort_by) {
@@ -120,267 +474,93 @@ export async function getAdminProducts(
   });
 
   return {
-    data: Array.isArray(res.data) ? res.data : [],
-    pagination: res.pagination,
-    demo: res.demo,
+    data: Array.isArray(res?.data) ? res.data : [],
+    pagination: res?.pagination,
+    demo: res?.demo,
   };
 }
 
 export async function getAdminProductById(
   productId: number | string
-): Promise<BackendProduct> {
-  const res = await apiFetch<any>(`/api/admin/products/${productId}`);
+): Promise<BackendProduct & Record<string, any>> {
+  const res = await apiFetch<any>(`${ADMIN_PRODUCTS_ENDPOINT}/${productId}`, {
+    cache: 'no-store',
+  });
   return res?.data ?? res;
 }
 
-function buildProductRequestBody(
-  payload: CreateProductPayload | UpdateProductPayload,
-  isCreate: boolean
-): Record<string, any> {
-  const body: Record<string, any> = {};
-
-  if (payload.product_name !== undefined) {
-    body.product_name = payload.product_name.trim();
-  }
-  if (payload.slug !== undefined && payload.slug.trim()) {
-    body.slug = generateProductSlug(payload.slug.trim());
-  } else if (isCreate && payload.product_name) {
-    body.slug = generateProductSlug(payload.product_name);
-  }
-
-  if (payload.brand_id !== undefined) {
-    const bId = payload.brand_id != null ? Number(payload.brand_id) : null;
-    body.brand_id = bId && !isNaN(bId) && bId > 0 ? bId : null;
-  }
-
-  if (payload.short_description !== undefined) {
-    body.short_description = payload.short_description?.trim() || null;
-  }
-  if (payload.description !== undefined) {
-    body.description = payload.description?.trim() || null;
-  }
-  if (payload.product_status !== undefined) {
-    body.product_status = payload.product_status;
-  }
-  if (payload.product_type !== undefined) {
-    body.product_type = payload.product_type;
-  }
-  if (payload.product_code !== undefined) {
-    body.product_code = payload.product_code?.trim() || null;
-  }
-  if (payload.sku !== undefined) {
-    body.sku = payload.sku?.trim() || null;
-  }
-
-  // Pricing & discount fields (send numbers, not strings)
-  if (payload.regular_price !== undefined) {
-    const reg = payload.regular_price != null ? Number(payload.regular_price) : null;
-    body.regular_price = reg != null && !isNaN(reg) && reg >= 0 ? reg : null;
-  }
-  if (payload.sale_price !== undefined) {
-    const sale = payload.sale_price != null ? Number(payload.sale_price) : null;
-    body.sale_price = sale != null && !isNaN(sale) && sale >= 0 ? sale : null;
-  }
-  if (payload.offer_percent !== undefined) {
-    const off = payload.offer_percent != null ? Number(payload.offer_percent) : null;
-    body.offer_percent = off != null && !isNaN(off) && off >= 0 ? off : null;
-  }
-  if (payload.special_discount_enabled !== undefined) {
-    body.special_discount_enabled = Boolean(payload.special_discount_enabled);
-  }
-  if (payload.special_discount_percent !== undefined) {
-    body.special_discount_percent = Number(payload.special_discount_percent) || 0;
-  }
-  if (payload.festival_offer_enabled !== undefined) {
-    body.festival_offer_enabled = Boolean(payload.festival_offer_enabled);
-  }
-  if (payload.festival_offer_percent !== undefined) {
-    body.festival_offer_percent = Number(payload.festival_offer_percent) || 0;
-  }
-
-  // Stock & Order Quantities
-  if (payload.stock_quantity !== undefined) {
-    body.stock_quantity = Math.max(0, Math.floor(Number(payload.stock_quantity) || 0));
-  }
-  if (payload.min_order_quantity !== undefined) {
-    body.min_order_quantity = Math.max(1, Math.floor(Number(payload.min_order_quantity) || 1));
-  }
-  if (payload.max_order_quantity !== undefined) {
-    const maxVal =
-      payload.max_order_quantity != null && Number(payload.max_order_quantity) >= 1
-        ? Math.floor(Number(payload.max_order_quantity))
-        : null;
-    if (maxVal != null && body.min_order_quantity != null && maxVal < body.min_order_quantity) {
-      body.max_order_quantity = body.min_order_quantity;
-    } else {
-      body.max_order_quantity = maxVal;
+export async function getRelatedAdminProducts(
+  productId: number | string,
+  params?: { limit?: number; offset?: number }
+): Promise<AdminProductsResponse> {
+  const res = await apiFetch<ApiResponse<BackendProduct[]>>(
+    `${ADMIN_PRODUCTS_ENDPOINT}/${productId}/related`,
+    {
+      params: {
+        limit: params?.limit ?? 20,
+        offset: params?.offset ?? 0,
+      },
     }
-  }
-
-  // Categories
-  if (payload.category_ids !== undefined) {
-    const validIds = (payload.category_ids || [])
-      .map((id) => Number(id))
-      .filter((id) => !isNaN(id) && id > 0);
-    body.category_ids = Array.from(new Set(validIds));
-  }
-  if (payload.primary_category_id !== undefined) {
-    const pId =
-      payload.primary_category_id != null ? Number(payload.primary_category_id) : null;
-    if (pId && !isNaN(pId) && pId > 0) {
-      body.primary_category_id = pId;
-      if (!body.category_ids) {
-        body.category_ids = [pId];
-      } else if (!body.category_ids.includes(pId)) {
-        body.category_ids.push(pId);
-      }
-    } else {
-      body.primary_category_id = null;
-    }
-  }
-
-  // Specifications fields
-  const nullableStringSpecs = [
-    'target_audience',
-    'hsn_code',
-    'barcode',
-    'material',
-    'colour',
-    'package_type',
-    'shelf_life',
-    'hazardous_clause',
-    'manufactured_in',
-    'company_name',
-    'company_address',
-    'packer_name',
-    'packer_address',
-  ] as const;
-
-  for (const field of nullableStringSpecs) {
-    if (payload[field] !== undefined) {
-      const val = payload[field];
-      body[field] = typeof val === 'string' && val.trim() ? val.trim() : null;
-    }
-  }
-
-  // Positive specifications (PostgreSQL / Zod .positive() requires > 0)
-  const positiveSpecs = [
-    'weight',
-    'unit_count',
-    'package_length',
-    'package_breadth',
-    'package_height',
-    'product_length',
-    'product_breadth',
-    'product_height',
-  ] as const;
-
-  for (const field of positiveSpecs) {
-    if (payload[field] !== undefined) {
-      const val = payload[field];
-      const numVal = val != null && !isNaN(Number(val)) ? Number(val) : null;
-      body[field] = numVal != null && numVal > 0 ? numVal : null;
-    }
-  }
-
-  if (payload.gst_rate !== undefined) {
-    const val = payload.gst_rate;
-    const numVal = val != null && !isNaN(Number(val)) ? Number(val) : null;
-    body.gst_rate = numVal != null && numVal >= 0 ? numVal : null;
-  }
-
-  if (payload.weight_unit !== undefined) {
-    body.weight_unit = payload.weight_unit;
-  }
-  if (payload.dimension_unit !== undefined) {
-    body.dimension_unit = payload.dimension_unit;
-  }
-  if (payload.product_dimension_unit !== undefined) {
-    body.product_dimension_unit =
-      typeof payload.product_dimension_unit === 'string' && payload.product_dimension_unit.trim()
-        ? payload.product_dimension_unit.trim()
-        : null;
-  }
-  if (payload.water_resistant !== undefined) {
-    body.water_resistant =
-      payload.water_resistant === null ? null : Boolean(payload.water_resistant);
-  }
-  if (payload.keywords !== undefined) {
-    body.keywords = (payload.keywords || []).map((k) => k.trim()).filter(Boolean);
-  }
-  if (payload.reusable !== undefined) {
-    body.reusable = payload.reusable === null ? null : Boolean(payload.reusable);
-  }
-  if (payload.has_accessories !== undefined) {
-    body.has_accessories = Boolean(payload.has_accessories);
-  }
-  if (payload.accessories !== undefined) {
-    body.accessories =
-      typeof payload.accessories === 'string' && payload.accessories.trim()
-        ? payload.accessories.trim()
-        : null;
-  }
-  if (payload.item_condition !== undefined) {
-    body.item_condition =
-      payload.item_condition === 'refurbished' ? 'refurbished' : 'new';
-  }
-  if (payload.gift_options_available !== undefined) {
-    body.gift_options_available = Boolean(payload.gift_options_available);
-  }
-  if (payload.gift_options_charge !== undefined) {
-    body.gift_options_charge =
-      payload.gift_options_charge != null && !isNaN(Number(payload.gift_options_charge))
-        ? Number(payload.gift_options_charge)
-        : null;
-  }
-  if (payload.gift_wrap_available !== undefined) {
-    body.gift_wrap_available = Boolean(payload.gift_wrap_available);
-  }
-  if (payload.gift_wrap_charge !== undefined) {
-    body.gift_wrap_charge =
-      payload.gift_wrap_charge != null && !isNaN(Number(payload.gift_wrap_charge))
-        ? Number(payload.gift_wrap_charge)
-        : null;
-  }
-  for (const { key } of PRODUCT_DETAIL_FIELDS) {
-    if (payload[key] !== undefined) body[key] = payload[key];
-  }
-
-  return body;
+  );
+  return {
+    data: Array.isArray(res?.data) ? res.data : [],
+    pagination: res?.pagination,
+  };
 }
 
-export function validateAdminProductRequestSize(
-  payload: CreateProductPayload | UpdateProductPayload,
-  isCreate = false
-): void {
-  assertJsonRequestSize(JSON.stringify(buildProductRequestBody(payload, isCreate)));
-}
-
-export async function createAdminProduct(
-  payload: CreateProductPayload
-): Promise<BackendProduct> {
-  const cleanBody = buildProductRequestBody(payload, true);
+/**
+ * POST /api/admin/products
+ * Creates product + details atomically and returns the created product object (including `id`).
+ * Does NOT auto-upload images inside this call so the caller can immediately retain `data.id`
+ * before uploading images separately (preventing duplicate POSTs on image failure).
+ */
+export async function createNativeAdminProduct(
+  payload: NativeProductWritePayload,
+  options?: { idempotencyKey?: string }
+): Promise<any> {
+  const cleanBody = buildNativeProductRequestBody(payload, true);
+  const idempotencyKey = options?.idempotencyKey || generateIdempotencyKey('product-create');
 
   const res = await apiFetch<any>(ADMIN_PRODUCTS_ENDPOINT, {
     method: 'POST',
+    headers: {
+      'Idempotency-Key': idempotencyKey,
+    },
     body: JSON.stringify(cleanBody),
   });
-  const created: BackendProduct = res?.data ?? res;
-  const newProdId = created?.product_id ?? created?.id;
 
-  const files = payload.images ?? [];
-  if (files.length > 0 && newProdId) {
-    await uploadAdminProductImages(newProdId, files);
+  return res?.data ?? res;
+}
+
+/**
+ * PATCH /api/admin/products/:id
+ * Partial update of an existing product; preserves its ID.
+ */
+export async function updateNativeAdminProduct(
+  productId: number | string,
+  payload: Partial<NativeProductWritePayload>
+): Promise<any> {
+  const cleanBody = buildNativeProductRequestBody(payload, false);
+
+  const res = await apiFetch<any>(`${ADMIN_PRODUCTS_ENDPOINT}/${productId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(cleanBody),
+  });
+
+  return res?.data ?? res;
+}
+
+/**
+ * Legacy-compatible wrappers for other pages (e.g., products list table)
+ */
+export async function createAdminProduct(
+  payload: CreateProductPayload
+): Promise<BackendProduct> {
+  const created = await createNativeAdminProduct(payload as unknown as NativeProductWritePayload);
+  const newProdId = created?.id ?? created?.product_id;
+  if (payload.images && payload.images.length > 0 && newProdId) {
+    await uploadAdminProductImages(newProdId, payload.images);
   }
-
-  if (newProdId) {
-    try {
-      return await getAdminProductById(newProdId);
-    } catch {
-      return created;
-    }
-  }
-
   return created;
 }
 
@@ -388,41 +568,28 @@ export async function updateAdminProduct(
   productId: number | string,
   payload: UpdateProductPayload
 ): Promise<BackendProduct> {
-  const cleanBody = buildProductRequestBody(payload, false);
-
-  let updated: BackendProduct | null = null;
-  if (Object.keys(cleanBody).length > 0) {
-    const res = await apiFetch<any>(`/api/admin/products/${productId}`, {
-      method: 'PATCH',
-      body: JSON.stringify(cleanBody),
-    });
-    updated = res?.data ?? res;
+  const updated = await updateNativeAdminProduct(
+    productId,
+    payload as unknown as Partial<NativeProductWritePayload>
+  );
+  if (payload.images && payload.images.length > 0) {
+    await uploadAdminProductImages(productId, payload.images);
   }
-
-  const files = payload.images ?? [];
-  if (files.length > 0) {
-    await uploadAdminProductImages(productId, files);
-  }
-
-  try {
-    return await getAdminProductById(productId);
-  } catch {
-    return updated as BackendProduct;
-  }
+  return updated;
 }
 
 export async function deleteAdminProduct(
   productId: number | string
 ): Promise<void> {
-  await apiFetch(`/api/admin/products/${productId}`, {
+  await apiFetch(`${ADMIN_PRODUCTS_ENDPOINT}/${productId}`, {
     method: 'DELETE',
     body: JSON.stringify({}),
   });
 }
 
-/* ------------------------------------------------------------------ */
-/* Product Images CRUD & Replacement (Point 7)                        */
-/* ------------------------------------------------------------------ */
+/* ========================================================================== */
+/* PRODUCT IMAGES CRUD (/api/admin/products/:id/images)                       */
+/* ========================================================================== */
 
 export interface BackendProductImageRecord {
   id: string;
@@ -438,61 +605,95 @@ export interface BackendProductImageRecord {
 export async function getAdminProductImages(
   productId: number | string
 ): Promise<BackendProductImageRecord[]> {
-  const imgRes = await apiFetch<any>(`/api/admin/products/${productId}/images`, {
+  const imgRes = await apiFetch<any>(`${ADMIN_PRODUCTS_ENDPOINT}/${productId}/images`, {
     cache: 'no-store',
   });
-  const images = Array.isArray(imgRes?.data) ? imgRes.data : Array.isArray(imgRes) ? imgRes : null;
-  const normalized = images?.map((image: any) => ({
-    ...image,
-    id: image?.id ?? image?.image_id,
-    image_url: image?.image_url || image?.url || image?.imageUrl,
-  }));
-  if (!normalized || normalized.some((image: BackendProductImageRecord) => image.id == null || !image.image_url)) {
-    throw new Error('Unable to read product images from the server. Please refresh and try again.');
-  }
-  return normalized;
+  const images = Array.isArray(imgRes?.data)
+    ? imgRes.data
+    : Array.isArray(imgRes)
+    ? imgRes
+    : [];
+
+  return images
+    .map((image: any) => ({
+      ...image,
+      id: String(image?.id ?? image?.image_id ?? ''),
+      product_id: String(image?.product_id ?? productId),
+      image_url: image?.image_url || image?.url || image?.imageUrl || '',
+    }))
+    .filter((img: BackendProductImageRecord) => Boolean(img.id && img.image_url));
 }
 
 export async function uploadAdminProductImages(
   productId: number | string,
-  images: File[]
+  images: File[],
+  options?: { idempotencyKey?: string }
 ): Promise<BackendProductImageRecord[]> {
   if (!images.length) return [];
 
-  const existing = await getAdminProductImages(productId);
-  const validationError = validateProductImages(images, existing.length);
-  if (validationError) throw new Error(validationError);
+  const totalBytes = images.reduce((sum, f) => sum + f.size, 0);
+  if (images.some((file) => !ALLOWED_PRODUCT_IMAGE_TYPES.includes(file.type))) {
+    throw new Error('Product images must be JPG, PNG or WebP.');
+  }
+  if (images.some((file) => file.size > MAX_PRODUCT_IMAGE_BYTES)) {
+    throw new Error('Each product image must be no more than 5 MiB.');
+  }
+  if (totalBytes > MAX_TOTAL_IMAGE_BYTES) {
+    throw new Error('Product images must be no more than 10 MiB per request.');
+  }
 
   const formData = new FormData();
   for (const file of images) {
     formData.append(PRODUCT_IMAGE_FIELD_NAME, file);
   }
 
-  const res = await apiFetch<any>(`/api/admin/products/${productId}/images`, {
+  const idempotencyKey =
+    options?.idempotencyKey || generateIdempotencyKey(`img-upload-${productId}`);
+
+  const res = await apiFetch<any>(`${ADMIN_PRODUCTS_ENDPOINT}/${productId}/images`, {
     method: 'POST',
+    headers: {
+      'Idempotency-Key': idempotencyKey,
+    },
     body: formData,
   });
-  return res?.data ?? res;
+
+  const data = res?.data ?? res;
+  return Array.isArray(data) ? data : [];
 }
 
 export async function replaceAdminProductImage(
   productId: number | string,
   imageId: number | string,
-  file: File
+  file: File,
+  options?: { idempotencyKey?: string }
 ): Promise<BackendProductImageRecord> {
-  const validationError = validateProductImages([file]);
+  const validationError = validateProductImages([file], 0, 0, 'replace');
   if (validationError) throw new Error(validationError);
+
   const formData = new FormData();
   formData.append(PRODUCT_IMAGE_FIELD_NAME, file);
 
+  const idempotencyKey =
+    options?.idempotencyKey || generateIdempotencyKey(`img-replace-${productId}-${imageId}`);
+
   const res = await apiFetch<any>(
-    `/api/admin/products/${productId}/images/${imageId}`,
+    `${ADMIN_PRODUCTS_ENDPOINT}/${productId}/images/${imageId}`,
     {
       method: 'PUT',
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
       body: formData,
     }
   );
-  return res?.data ?? res;
+  const record = res?.data ?? res;
+  return {
+    ...record,
+    id: String(record?.id ?? imageId),
+    product_id: String(record?.product_id ?? productId),
+    image_url: record?.image_url || record?.url || record?.imageUrl || '',
+  };
 }
 
 export async function setPrimaryProductImage(
@@ -500,120 +701,80 @@ export async function setPrimaryProductImage(
   imageId: number | string
 ): Promise<BackendProductImageRecord> {
   const res = await apiFetch<any>(
-    `/api/admin/products/${productId}/images/${imageId}/primary`,
+    `${ADMIN_PRODUCTS_ENDPOINT}/${productId}/images/${imageId}/primary`,
     {
       method: 'PATCH',
       body: JSON.stringify({}),
     }
   );
-  return res?.data ?? res;
+  const record = res?.data ?? res;
+  return {
+    ...record,
+    id: String(record?.id ?? imageId),
+    product_id: String(record?.product_id ?? productId),
+    image_url: record?.image_url || record?.url || record?.imageUrl || '',
+  };
 }
 
 export async function deleteAdminProductImage(
   productId: number | string,
   imageId: number | string
 ): Promise<void> {
-  await apiFetch(`/api/admin/products/${productId}/images/${imageId}`, {
+  await apiFetch(`${ADMIN_PRODUCTS_ENDPOINT}/${productId}/images/${imageId}`, {
     method: 'DELETE',
     body: JSON.stringify({}),
   });
 }
 
-/* ------------------------------------------------------------------ */
-/* Per-Product Variants CRUD (Point 6)                                */
-/* ------------------------------------------------------------------ */
+/* ========================================================================== */
+/* DEPRECATED VARIANT STUBS (No product_variants table in native catalog)     */
+/* ========================================================================== */
 
 export async function getAdminProductVariants(
-  productId: number | string,
-  params?: { limit?: number; offset?: number }
+  _productId: number | string,
+  _params?: { limit?: number; offset?: number }
 ): Promise<BackendProductVariant[]> {
-  const res = await apiFetch<ApiResponse<BackendProductVariant[]>>(
-    `/api/admin/products/${productId}/variants`,
-    {
-      params: params as any,
-    }
-  );
-  return Array.isArray(res?.data) ? res.data : [];
+  return [];
 }
 
-/** Fetch every page before deleting, so offsets do not shift during cleanup. */
 export async function getAllAdminProductVariants(
-  productId: number | string
+  _productId: number | string
 ): Promise<BackendProductVariant[]> {
-  const variants: BackendProductVariant[] = [];
-  const seenIds = new Set<string>();
-  const limit = 100;
-  let offset = 0;
-
-  while (true) {
-    const res = await apiFetch<ApiResponse<BackendProductVariant[]>>(
-      `/api/admin/products/${productId}/variants`,
-      { params: { limit, offset }, cache: 'no-store' }
-    );
-    if (!Array.isArray(res?.data)) {
-      throw new Error('Unable to read the product variants. Please try again.');
-    }
-
-    for (const variant of res.data) {
-      if (variant.id == null || seenIds.has(String(variant.id))) {
-        throw new Error('Unable to load all product variants. Please try again.');
-      }
-      seenIds.add(String(variant.id));
-      variants.push(variant);
-    }
-
-    offset += res.data.length;
-    const hasMore = res.pagination
-      ? res.pagination.hasMore || offset < res.pagination.total
-      : res.data.length === limit;
-    if (!hasMore) return variants;
-    if (res.data.length === 0) {
-      throw new Error('Unable to load all product variants. Please try again.');
-    }
-  }
+  return [];
 }
 
 export async function removeAllAdminProductVariants(
-  productId: number | string
+  _productId: number | string
 ): Promise<void> {
-  // Use current server IDs so a retry skips variants already deleted successfully.
-  const variants = await getAllAdminProductVariants(productId);
-  for (const variant of variants) {
-    try {
-      await deleteAdminProductVariant(productId, variant.id);
-    } catch (err) {
-      const reason = err instanceof Error ? ` ${err.message}` : '';
-      throw new Error(`Unable to remove variant ${variant.id}.${reason} The product type has not been changed. Please retry saving.`);
-    }
-  }
-
-  if ((await getAllAdminProductVariants(productId)).length > 0) {
-    throw new Error('Product variants still exist. The product type has not been changed. Please retry saving.');
-  }
+  // No-op in native schema
 }
 
 export async function getAdminProductVariantById(
   productId: number | string,
   variantId: number | string
 ): Promise<BackendProductVariant> {
-  const res = await apiFetch<ApiResponse<BackendProductVariant>>(
-    `/api/admin/products/${productId}/variants/${variantId}`
-  );
-  return (res as any)?.data ?? res;
+  return {
+    id: variantId,
+    product_id: productId,
+    sku: '',
+    attributes: {},
+    stock_quantity: 0,
+    is_active: true,
+  };
 }
 
 export async function createAdminProductVariant(
   productId: number | string,
   payload: CreateProductVariantPayload
 ): Promise<BackendProductVariant> {
-  const res = await apiFetch<ApiResponse<BackendProductVariant>>(
-    `/api/admin/products/${productId}/variants`,
-    {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    }
-  );
-  return (res as any)?.data ?? res;
+  return {
+    id: Date.now(),
+    product_id: productId,
+    sku: payload.sku,
+    attributes: payload.attributes,
+    stock_quantity: payload.stock_quantity ?? 0,
+    is_active: payload.is_active ?? true,
+  };
 }
 
 export async function updateAdminProductVariant(
@@ -621,22 +782,19 @@ export async function updateAdminProductVariant(
   variantId: number | string,
   payload: UpdateProductVariantPayload
 ): Promise<BackendProductVariant> {
-  const res = await apiFetch<ApiResponse<BackendProductVariant>>(
-    `/api/admin/products/${productId}/variants/${variantId}`,
-    {
-      method: 'PATCH',
-      body: JSON.stringify(payload),
-    }
-  );
-  return (res as any)?.data ?? res;
+  return {
+    id: variantId,
+    product_id: productId,
+    sku: payload.sku ?? '',
+    attributes: payload.attributes ?? {},
+    stock_quantity: payload.stock_quantity ?? 0,
+    is_active: payload.is_active ?? true,
+  };
 }
 
 export async function deleteAdminProductVariant(
-  productId: number | string,
-  variantId: number | string
+  _productId: number | string,
+  _variantId: number | string
 ): Promise<void> {
-  await apiFetch(`/api/admin/products/${productId}/variants/${variantId}`, {
-    method: 'DELETE',
-    body: JSON.stringify({}),
-  });
+  // No-op in native schema
 }

@@ -3,294 +3,142 @@
 import React, { Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import {
-  ChevronDown,
-  ChevronRight,
+  Box,
   CheckCircle2,
-  FileUp,
-  Loader2,
-  Trash2,
-  X,
-  Star,
-  RefreshCw,
+  ChevronDown,
   Copy,
+  DollarSign,
+  Eye,
+  FileText,
+  FileUp,
+  Globe,
+  Layers,
+  Loader2,
+  Plus,
+  RefreshCw,
+  Ruler,
+  Search,
+  ShieldCheck,
+  Star,
+  Trash2,
+  Truck,
+  Wand2,
+  X,
 } from 'lucide-react';
 import {
-  createAdminProduct,
-  updateAdminProduct,
+  createNativeAdminProduct,
+  deleteAdminProductImage,
+  generateIdempotencyKey,
+  generateProductSlug,
   getAdminProductById,
   getAdminProductImages,
-  deleteAdminProductImage,
-  setPrimaryProductImage,
-  replaceAdminProductImage,
-  uploadAdminProductImages,
-  validateProductImages,
-  validateAdminProductRequestSize,
-  getAllAdminProductVariants,
-  removeAllAdminProductVariants,
-  createAdminProductVariant,
-  updateAdminProductVariant,
-  deleteAdminProductVariant,
-  resolveProductImageUrls,
-  generateProductSlug,
+  getAdminVendors,
   MAX_PRODUCT_IMAGES,
   MAX_TOTAL_IMAGE_BYTES,
+  NativeProductWritePayload,
+  NewDimensionUnit,
+  NewProductStatus,
+  NewProductType,
+  NewWeightUnit,
+  replaceAdminProductImage,
+  setPrimaryProductImage,
+  toNonNegativeDecimal,
+  toNonNegativeSafeInt,
+  toSafePositiveInt,
+  updateNativeAdminProduct,
+  uploadAdminProductImages,
+  validateProductImages,
 } from '@/services/api/adminProductsApi';
-import { getAdminCategories, getAllAdminCategories } from '@/services/api/adminCategoriesApi';
-import { getAllAdminBrands } from '@/services/api/adminBrandsApi';
 import {
-  getAllAdminVariantAttributes,
-  createAdminVariantAttribute,
-  updateAdminVariantAttribute,
-} from '@/services/api/adminVariantAttributesApi';
-import { ProductStatus, WeightUnit, DimensionUnit } from '@/types/api';
-import { mergeVariantAttributes } from '@/lib/productCatalog';
-import AdditionalProductDetails, { ProductDetailSummary } from './AdditionalProductDetails';
-import {
-  readProductDetails,
-  serializeProductDetails,
-  validateProductDetails,
-  ProductDetailValues,
-  generateManufacturerSku,
-  generateModelNumber,
-} from '@/lib/productDetails';
+  getAdminCategories,
+  getAdminCategoriesTree,
+} from '@/services/api/adminCategoriesApi';
+import { getAdminBrands } from '@/services/api/adminBrandsApi';
+import { BackendCategory } from '@/types/api';
 
-/* ------------------------------------------------------------------ */
-/* Option data & types                                                */
-/* ------------------------------------------------------------------ */
-interface Subcategory { id: string; name: string; active?: boolean }
-interface Category { id: string; name: string; active?: boolean; subs: Subcategory[] }
-interface VariantType { id: string; name: string; terms: { id: string; name: string }[] }
+/* ========================================================================== */
+/* CLASSIFICATION OPTION INTERFACES & PRESETS                                 */
+/* ========================================================================== */
+
+interface SubcategoryOption {
+  id: string;
+  name: string;
+  active?: boolean;
+}
+
+interface CategoryOption {
+  id: string;
+  name: string;
+  active?: boolean;
+  subcategories: SubcategoryOption[];
+}
+
+interface SelectOption {
+  id: string;
+  name: string;
+}
+
+const TAX_SLABS = ['0', '5', '12', '18', '28'];
+
+const RETURN_POLICY_PRESETS = [
+  {
+    label: '7-Day Easy Return',
+    text: 'Eligible for return or exchange within 7 days of delivery in unused condition with original tags and packaging intact.',
+  },
+  {
+    label: '10-Day Replacement Only',
+    text: 'Replacement available within 10 days of delivery only in case of manufacturing defects, physical damage, or wrong item shipped.',
+  },
+  {
+    label: 'Non-Returnable (Hygiene)',
+    text: 'Due to hygiene and safety standards, this item is non-returnable once opened unless received in a damaged or defective state.',
+  },
+];
+
+const SUGGESTED_SPEC_KEYS = [
+  'Ideal For',
+  'Age Group',
+  'Certification',
+  'Power Source',
+  'BPA Free',
+  'Washable',
+  'Finish Type',
+  'Capacity',
+];
+
+const SUGGESTED_ATTR_KEYS = [
+  'product_group_code',
+  'Collection',
+  'Season',
+  'Occasion',
+  'Pattern',
+  'Closure Type',
+  'Scent / Fragrance',
+  'Skin Type',
+];
 
 const IMAGE_RULES = {
   maxFiles: MAX_PRODUCT_IMAGES,
   maxBytes: MAX_TOTAL_IMAGE_BYTES,
-  maxTotalBytes: MAX_TOTAL_IMAGE_BYTES,
   accept: 'image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp',
   requirements: 'JPG, PNG or WebP · Max 6 images · Max 5 MiB each · Max 10 MiB total',
 };
 
-const TERM_IMAGE_REQUIREMENTS = IMAGE_RULES.requirements;
+/* ========================================================================== */
+/* UI CONSTANTS & HELPERS                                                     */
+/* ========================================================================== */
 
-/* ------------------------------ helpers ----------------------------- */
 const INPUT_CLASS =
-  'h-12 w-full rounded-lg border border-[#D7D7D7] bg-white px-4 text-[14px] outline-none placeholder:text-[#A6A6A6] focus:border-[#F47C35] focus:ring-2 focus:ring-[#F47C35]/10';
+  'h-11 w-full rounded-xl border border-[#DCE0E8] bg-white px-3.5 text-[13.5px] text-[#1E293B] outline-none transition-all placeholder:text-[#94A3B8] focus:border-[#F47C35] focus:ring-3 focus:ring-[#F47C35]/12 disabled:bg-[#F8FAFC] disabled:text-[#94A3B8]';
 
-const TABS = [
-  { id: 'inventory', label: 'Inventory & Pricing' },
-  { id: 'shipping', label: 'Specifications' },
-  { id: 'variants', label: 'Variants' },
-  { id: 'terms', label: 'Terms' },
-] as const;
-type TabId = (typeof TABS)[number]['id'];
+const TEXTAREA_CLASS =
+  'w-full rounded-xl border border-[#DCE0E8] bg-white p-3.5 text-[13.5px] text-[#1E293B] outline-none transition-all placeholder:text-[#94A3B8] focus:border-[#F47C35] focus:ring-3 focus:ring-[#F47C35]/12';
 
-const BULLET_LINE = /^(\s*)[•●▪◦*-]\s+/;
+const CARD_CLASS =
+  'rounded-2xl border border-[#E8ECF2] bg-white p-5 sm:p-6 shadow-[0_1px_3px_rgba(15,23,42,0.03)]';
 
-function num(v: string): number | null {
-  if (!v.trim()) return null;
-  const n = Number(v);
-  return Number.isFinite(n) ? n : null;
-}
+const SUBCARD_CLASS = 'rounded-xl border border-[#E8ECF2] bg-[#F8FAFC] p-4 sm:p-5';
 
-function salePriceFrom(regular: string, offer: string): string {
-  const a = num(regular);
-  const r = num(offer);
-  if (a == null || a <= 0 || r == null || r < 0 || r > 100) return '';
-  const val = Math.round((a * (1 - r / 100) + Number.EPSILON) * 100) / 100;
-  return Number.isInteger(val) ? String(val) : val.toFixed(2);
-}
-
-function offerPercentFrom(regular: string, sale: string): string {
-  const reg = num(regular);
-  const s = num(sale);
-  if (reg == null || reg <= 0 || s == null || s < 0 || s > reg) return '';
-  const pct = Math.round((((reg - s) / reg) * 100 + Number.EPSILON) * 100) / 100;
-  return Number.isInteger(pct) ? String(pct) : pct.toFixed(2);
-}
-
-function uid() {
-  return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
-}
-
-function parseDetails(text: string): string[] {
-  const normalized = text.replace(/\r\n?/g, '\n').replace(/([^\n])\s+(?=[•●▪◦]\s*)/g, '$1\n');
-  const seen = new Map<string, string>();
-  normalized
-    .split('\n')
-    .map((l) => l.replace(/^\s*(?:[•●▪◦*-]+|\d{1,3}[.)])\s*/, '').trim())
-    .filter(Boolean)
-    .forEach((l) => {
-      const k = l.toLocaleLowerCase();
-      if (!seen.has(k)) seen.set(k, l);
-    });
-  return [...seen.values()];
-}
-
-
-/* ------------------------------ small UI ---------------------------- */
-function Label({ htmlFor, required, children }: { htmlFor?: string; required?: boolean; children: React.ReactNode }) {
-  return (
-    <label htmlFor={htmlFor} className="mb-2 block text-[14px] font-medium text-[#202020]">
-      {children}
-      {required && <span className="text-[#E33D25]">*</span>}
-    </label>
-  );
-}
-
-function Select({
-  id,
-  value,
-  placeholder,
-  options,
-  onChange,
-  disabled,
-}: {
-  id: string;
-  value: string;
-  placeholder?: string;
-  options: { value: string; label: string }[];
-  onChange: (v: string) => void;
-  disabled?: boolean;
-}) {
-  return (
-    <div className="relative">
-      <select
-        id={id}
-        value={value}
-        disabled={disabled}
-        onChange={(e) => onChange(e.target.value)}
-        className={`${INPUT_CLASS} appearance-none pr-11 disabled:cursor-not-allowed disabled:bg-[#F2F2F2] disabled:text-[#888] ${
-          value ? 'text-[#292929]' : 'text-[#A6A6A6]'
-        }`}
-      >
-        {placeholder ? <option value="">{placeholder}</option> : null}
-        {options.map((o) => (
-          <option key={o.value} value={o.value}>
-            {o.label}
-          </option>
-        ))}
-      </select>
-      <ChevronDown
-        aria-hidden="true"
-        size={17}
-        className="pointer-events-none absolute top-1/2 right-4 -translate-y-1/2 text-[#A0A0A0]"
-      />
-    </div>
-  );
-}
-
-function BulletTextarea({
-  id,
-  value,
-  onValueChange,
-  maxLength,
-  ...rest
-}: {
-  id: string;
-  value: string;
-  onValueChange: (v: string) => void;
-  maxLength?: number;
-} & Omit<React.TextareaHTMLAttributes<HTMLTextAreaElement>, 'value' | 'onChange' | 'id'>) {
-  const ref = useRef<HTMLTextAreaElement>(null);
-  const [notice, setNotice] = useState('');
-
-  function apply(r: { value: string; start: number; end: number }) {
-    if (maxLength !== undefined && r.value.length > maxLength) {
-      setNotice(`This change exceeds the ${maxLength} character limit.`);
-      return;
-    }
-    setNotice('');
-    onValueChange(r.value);
-    requestAnimationFrame(() => {
-      ref.current?.focus();
-      ref.current?.setSelectionRange(r.start, r.end);
-    });
-  }
-
-  function toggleBullets() {
-    const el = ref.current;
-    if (!el) return;
-    const s = el.selectionStart;
-    const e = el.selectionEnd;
-    const lineStart = s === 0 ? 0 : value.lastIndexOf('\n', s - 1) + 1;
-    const endIdx = e > s && value[e - 1] === '\n' ? e - 1 : e;
-    const nl = value.indexOf('\n', endIdx);
-    const lineEnd = nl < 0 ? value.length : nl;
-    const lines = value.slice(lineStart, lineEnd).split('\n');
-    const allBulleted = lines.every((l) => BULLET_LINE.test(l));
-    const out = lines
-      .map((l) => (allBulleted ? l.replace(BULLET_LINE, '$1') : BULLET_LINE.test(l) ? l : '• ' + l))
-      .join('\n');
-    apply({ value: value.slice(0, lineStart) + out + value.slice(lineEnd), start: lineStart, end: lineStart + out.length });
-  }
-
-  function onKeyDown(ev: React.KeyboardEvent<HTMLTextAreaElement>) {
-    rest.onKeyDown?.(ev);
-    if (
-      ev.defaultPrevented ||
-      ev.nativeEvent.isComposing ||
-      ev.key !== 'Enter' ||
-      ev.shiftKey ||
-      ev.ctrlKey ||
-      ev.metaKey ||
-      ev.altKey
-    )
-      return;
-    const s = ev.currentTarget.selectionStart;
-    const e = ev.currentTarget.selectionEnd;
-    if (s !== e) return;
-    const ls = s === 0 ? 0 : value.lastIndexOf('\n', s - 1) + 1;
-    const m = value.slice(ls, s).match(/^(\s*)([•●▪◦*-])\s+(.*)$/);
-    if (!m) return;
-    ev.preventDefault();
-    if (!m[3].trim()) {
-      apply({ value: value.slice(0, ls) + value.slice(s), start: ls, end: ls });
-      return;
-    }
-    const ins = '\n' + m[1] + m[2] + ' ';
-    apply({ value: value.slice(0, s) + ins + value.slice(e), start: s + ins.length, end: s + ins.length });
-  }
-
-  return (
-    <div>
-      <div className="mb-2 flex flex-wrap items-center gap-3">
-        <button
-          type="button"
-          aria-label="Toggle bullet points"
-          aria-controls={id}
-          onMouseDown={(e) => e.preventDefault()}
-          onClick={toggleBullets}
-          className="inline-flex items-center gap-2 rounded-md border border-gray-300 px-3 py-2 text-sm hover:bg-gray-50 disabled:opacity-50"
-        >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M3 5h.01M3 12h.01M3 19h.01M8 5h13M8 12h13M8 19h13" />
-          </svg>
-          Bullet points
-        </button>
-        <span id={`${id}-help`} className="text-sm text-gray-600">
-          Select lines to add or remove bullets. Enter adds a bullet; Enter on an empty bullet ends the list.
-        </span>
-      </div>
-      <textarea
-        {...rest}
-        id={id}
-        ref={ref}
-        maxLength={maxLength}
-        value={value}
-        aria-describedby={`${id}-help ${id}-notice`}
-        onChange={(e) => {
-          setNotice('');
-          onValueChange(e.target.value);
-        }}
-        onKeyDown={onKeyDown}
-      />
-      <p id={`${id}-notice`} role="status" className="text-sm text-red-700">
-        {notice}
-      </p>
-    </div>
-  );
-}
-
-/* ------------------------------- types ------------------------------ */
 interface GalleryImage {
   key: string;
   src: string;
@@ -300,3981 +148,3075 @@ interface GalleryImage {
   backendImageId?: string;
   isPrimary?: boolean;
 }
-interface Term {
+
+interface KeyValuePair {
+  id: string;
   key: string;
-  termId: string;
-  backendVariantId?: string | number;
-  attributes?: Record<string, string>;
-  variantTypeId: string;
-  variantTypeName: string;
-  name: string;
-  sku: string;
-  variantName: string;
-  unitCount: string;
-  weightGrams: string;
-  barcode: string;
-  regularPrice: string;
-  offerPercent: string;
-  pricingMode?: 'manual' | 'percent';
-  salePrice: string;
-  stockQuantity: string;
-  description: string;
-  image: GalleryImage | null;
+  value: string;
 }
 
-const GST_PRESETS = ['0', '5', '12', '18', '28'];
-const HSN_PRESETS = [
-  { value: '961900', label: '961900 · Diapers & Sanitary' },
-  { value: '902110', label: '902110 · Orthopedic Supports' },
-  { value: '901890', label: '901890 · Medical Instruments' },
-  { value: '300590', label: '300590 · Bandages & Dressings' },
-  { value: '871310', label: '871310 · Wheelchairs & Mobility' },
-];
-const AUDIENCE_PRESETS = [
-  'Adults',
-  'Seniors / Elderly',
-  'Unisex Adults',
-  'Men',
-  'Women',
-  'Children / Infants',
-  'Patients / Post-Surgery',
-];
-const PACKAGE_TYPE_PRESETS = [
-  'Pouch / Pack',
-  'Box',
-  'Bottle',
-  'Strip',
-  'Tube',
-  'Canister',
-  'Carton',
-];
-const SHELF_LIFE_PRESETS = [
-  '6 Months',
-  '12 Months',
-  '18 Months',
-  '24 Months',
-  '36 Months',
-  '60 Months',
-  'No Expiry',
-];
-const MATERIAL_PRESETS = [
-  'Non-woven Cotton',
-  'Breathable PE Film',
-  'Pure Cotton',
-  'Medical Grade Silicone',
-  'Neoprene & Nylon',
-  'Aluminium Alloy',
-  'ABS Plastic',
-];
-const COLOUR_PRESETS = ['White', 'Blue', 'Black', 'Grey', 'Beige', 'Green'];
-const HAZARDOUS_PRESETS = [
-  'Non-Hazardous',
-  'For External Use Only',
-  'Keep out of reach of children',
-  'Flammable — Keep away from heat',
-];
-const ORIGIN_PRESETS = ['India', 'China', 'Germany', 'USA', 'Japan', 'Taiwan'];
-const UNIT_COUNT_PRESETS = ['1', '2', '5', '10', '15', '20', '30', '60'];
+function uid(): string {
+  return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
 
-function PresetChipsWithCustom({
+function parseNullableNumber(val: string): number | null {
+  if (!val.trim()) return null;
+  const n = Number(val);
+  return Number.isFinite(n) ? n : null;
+}
+
+function cleanNullableString(val: string): string | null {
+  const trimmed = val.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function kvListToRecord(items: KeyValuePair[]): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const item of items) {
+    const k = item.key.trim();
+    const v = item.value.trim();
+    if (k && v) {
+      out[k] = v;
+    }
+  }
+  return out;
+}
+
+function recordToKvList(rec: unknown, fallbackIdPrefix: string): KeyValuePair[] {
+  if (!rec || typeof rec !== 'object' || Array.isArray(rec)) {
+    return [{ id: `${fallbackIdPrefix}-init-1`, key: '', value: '' }];
+  }
+  const entries = Object.entries(rec as Record<string, unknown>).filter(
+    ([k, v]) => k.trim() !== '' && v !== undefined && v !== null
+  );
+  if (entries.length === 0) {
+    return [{ id: `${fallbackIdPrefix}-init-1`, key: '', value: '' }];
+  }
+  return entries.map(([k, v], idx) => ({
+    id: `${fallbackIdPrefix}-${idx}-${uid()}`,
+    key: k,
+    value: String(v),
+  }));
+}
+
+function normalizeDecimalInput(val: unknown): string {
+  if (val === null || val === undefined || val === '') return '';
+  const n = Number(val);
+  if (!Number.isFinite(n)) return String(val);
+  return Number.isInteger(n) ? String(n) : String(Number(n.toFixed(2)));
+}
+
+/* ========================================================================== */
+/* REUSABLE FIELD COMPONENTS                                                  */
+/* ========================================================================== */
+
+function FieldLabel({
+  htmlFor,
+  required,
+  hint,
+  children,
+}: {
+  htmlFor?: string;
+  required?: boolean;
+  hint?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="mb-1.5 flex items-center justify-between gap-2">
+      <label
+        htmlFor={htmlFor}
+        className="flex items-center gap-1 text-[13px] font-semibold text-[#1E293B]"
+      >
+        <span>{children}</span>
+        {required && <span className="text-[#E33D25]">*</span>}
+      </label>
+      {hint && <span className="text-[11px] text-[#64748B]">{hint}</span>}
+    </div>
+  );
+}
+
+function SectionHeader({
+  icon: Icon,
+  title,
+  subtitle,
+  action,
+}: {
+  icon: React.ElementType;
+  title: string;
+  subtitle: string;
+  action?: React.ReactNode;
+}) {
+  return (
+    <div className="mb-5 flex flex-col gap-3 border-b border-[#F1F5F9] pb-4 sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex items-start gap-3">
+        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#FFF4ED] text-[#F47C35]">
+          <Icon size={20} />
+        </div>
+        <div>
+          <h3 className="text-[16px] font-bold text-[#0F172A]">{title}</h3>
+          <p className="mt-0.5 text-[12.5px] text-[#64748B]">{subtitle}</p>
+        </div>
+      </div>
+      {action && <div className="shrink-0">{action}</div>}
+    </div>
+  );
+}
+
+/**
+ * Interactive List Builder for array fields:
+ * - key_features[]
+ * - highlights[]
+ * - package_contents[]
+ */
+function StringArrayBuilder({
   id,
-  value,
+  items,
   onChange,
-  presets,
   placeholder,
-  type = 'text',
-  suffix = '',
+  emptyText,
+  quickSuggestions = [],
 }: {
   id: string;
-  value: string;
-  onChange: (v: string) => void;
-  presets: (string | { value: string; label: string })[];
-  placeholder?: string;
-  type?: 'text' | 'number';
-  suffix?: string;
+  items: string[];
+  onChange: (next: string[]) => void;
+  placeholder: string;
+  emptyText: string;
+  quickSuggestions?: string[];
 }) {
-  const normalizedPresets = presets.map((p) =>
-    typeof p === 'string' ? { value: p, label: `${p}${suffix}` } : p
-  );
-  const isPresetMatch = normalizedPresets.some((p) => p.value === value);
-  const [customMode, setCustomMode] = useState(false);
-  const showCustomInput = customMode || (Boolean(value) && !isPresetMatch);
+  const [draft, setDraft] = useState('');
+
+  function addRawText(raw: string) {
+    const splitItems = raw
+      .split(/\r?\n/)
+      .map((line) => line.replace(/^\s*(?:[•●▪◦*-]+|\d+[.)])\s*/, '').trim())
+      .filter(Boolean);
+
+    if (splitItems.length === 0) return;
+
+    const existingLower = new Set(items.map((x) => x.toLowerCase()));
+    const next = [...items];
+    for (const item of splitItems) {
+      if (!existingLower.has(item.toLowerCase())) {
+        existingLower.add(item.toLowerCase());
+        next.push(item);
+      }
+    }
+    onChange(next);
+    setDraft('');
+  }
+
+  function removeItem(idx: number) {
+    onChange(items.filter((_, i) => i !== idx));
+  }
 
   return (
-    <div className="space-y-2">
-      <div className="flex flex-wrap gap-1.5">
-        {normalizedPresets.map((p) => {
-          const active = !customMode && value === p.value;
-          return (
-            <button
-              key={p.value}
-              type="button"
-              onClick={() => {
-                setCustomMode(false);
-                onChange(value === p.value ? '' : p.value);
-              }}
-              className={`rounded-lg border px-2.5 py-1.5 text-[12px] font-medium transition cursor-pointer ${
-                active
-                  ? 'border-[#F47C35] bg-[#FFF4EE] text-[#F47C35] font-semibold'
-                  : 'border-[#E2E8F0] bg-white text-[#475569] hover:bg-slate-50'
-              }`}
-            >
-              {p.label}
-            </button>
-          );
-        })}
-        <button
-          type="button"
-          onClick={() => {
-            setCustomMode(true);
-            if (isPresetMatch) onChange('');
-          }}
-          className={`rounded-lg border px-2.5 py-1.5 text-[12px] font-semibold transition cursor-pointer ${
-            showCustomInput
-              ? 'border-[#F47C35] bg-[#FFF4EE] text-[#F47C35]'
-              : 'border-dashed border-[#CBD5E1] bg-slate-50 text-[#64748B] hover:border-[#F47C35] hover:text-[#F47C35]'
-          }`}
-        >
-          + Custom
-        </button>
-      </div>
-      {showCustomInput && (
+    <div className="space-y-3">
+      <div className="flex gap-2">
         <input
           id={id}
-          type={type}
-          step={type === 'number' ? '0.01' : undefined}
-          min={type === 'number' ? '0' : undefined}
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          placeholder={placeholder || 'Enter custom value...'}
+          type="text"
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              addRawText(draft);
+            }
+          }}
+          onPaste={(e) => {
+            const pasted = e.clipboardData.getData('text');
+            if (pasted.includes('\n')) {
+              e.preventDefault();
+              addRawText(pasted);
+            }
+          }}
+          placeholder={placeholder}
           className={INPUT_CLASS}
         />
+        <button
+          type="button"
+          onClick={() => addRawText(draft)}
+          disabled={!draft.trim()}
+          className="inline-flex h-11 shrink-0 items-center gap-1.5 rounded-xl bg-[#0D2B53] px-4 text-[13px] font-semibold text-white transition-colors hover:bg-[#163B6D] disabled:cursor-not-allowed disabled:opacity-40 cursor-pointer"
+        >
+          <Plus size={16} />
+          <span>Add</span>
+        </button>
+      </div>
+
+      {quickSuggestions.length > 0 && (
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="text-[11px] font-medium text-[#64748B]">Quick add:</span>
+          {quickSuggestions.map((item) => {
+            const alreadyAdded = items.some((x) => x.toLowerCase() === item.toLowerCase());
+            return (
+              <button
+                key={item}
+                type="button"
+                disabled={alreadyAdded}
+                onClick={() => addRawText(item)}
+                className="rounded-lg border border-[#E2E8F0] bg-white px-2.5 py-1 text-[11px] font-medium text-[#475569] transition-colors hover:border-[#F47C35] hover:bg-[#FFF4ED] hover:text-[#F47C35] disabled:opacity-40 cursor-pointer"
+              >
+                + {item}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {items.length > 0 ? (
+        <ul className="space-y-2">
+          {items.map((item, idx) => (
+            <li
+              key={`${item}-${idx}`}
+              className="group flex items-center justify-between gap-3 rounded-xl border border-[#E2E8F0] bg-white px-3.5 py-2.5 text-[13px] text-[#1E293B] transition-colors hover:border-[#CBD5E1]"
+            >
+              <div className="flex items-center gap-2.5 min-w-0">
+                <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[#F47C35]/15 text-[11px] font-bold text-[#F47C35]">
+                  {idx + 1}
+                </span>
+                <span className="break-words">{item}</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => removeItem(idx)}
+                aria-label={`Remove ${item}`}
+                className="rounded-lg p-1 text-[#94A3B8] transition-colors hover:bg-red-50 hover:text-[#E33D25] cursor-pointer"
+              >
+                <X size={15} />
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <div className="rounded-xl border border-dashed border-[#CBD5E1] bg-white/60 px-4 py-3.5 text-center text-[12px] text-[#64748B]">
+          {emptyText}
+        </div>
       )}
     </div>
   );
 }
 
+/**
+ * Interactive Key-Value Map Builder for:
+ * - specifications{}
+ * - additional_attributes{}
+ */
+function KeyValueMapBuilder({
+  title,
+  description,
+  pairs,
+  onChange,
+  keyPlaceholder,
+  valuePlaceholder,
+  suggestedKeys = [],
+}: {
+  title: string;
+  description: string;
+  pairs: KeyValuePair[];
+  onChange: (next: KeyValuePair[]) => void;
+  keyPlaceholder: string;
+  valuePlaceholder: string;
+  suggestedKeys?: string[];
+}) {
+  function addRow(initialKey = '') {
+    onChange([...pairs, { id: uid(), key: initialKey, value: '' }]);
+  }
+
+  function updateRow(id: string, field: 'key' | 'value', val: string) {
+    onChange(pairs.map((p) => (p.id === id ? { ...p, [field]: val } : p)));
+  }
+
+  function removeRow(id: string) {
+    if (pairs.length === 1) {
+      onChange([{ id: pairs[0].id, key: '', value: '' }]);
+      return;
+    }
+    onChange(pairs.filter((p) => p.id !== id));
+  }
+
+  const usedKeys = new Set(pairs.map((p) => p.key.trim().toLowerCase()).filter(Boolean));
+
+  return (
+    <div className={SUBCARD_CLASS}>
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <h4 className="text-[14px] font-bold text-[#0F172A]">{title}</h4>
+          <p className="mt-0.5 text-[12px] text-[#64748B]">{description}</p>
+        </div>
+        <button
+          type="button"
+          onClick={() => addRow('')}
+          className="inline-flex items-center gap-1.5 rounded-lg border border-[#DCE0E8] bg-white px-3 py-1.5 text-[12px] font-semibold text-[#0D2B53] shadow-2xs transition-colors hover:border-[#F47C35] hover:text-[#F47C35] cursor-pointer"
+        >
+          <Plus size={14} />
+          <span>Add Row</span>
+        </button>
+      </div>
+
+      {suggestedKeys.length > 0 && (
+        <div className="mb-3 flex flex-wrap items-center gap-1.5">
+          <span className="text-[11px] font-medium text-[#64748B]">Quick add:</span>
+          {suggestedKeys.map((k) => {
+            const isUsed = usedKeys.has(k.toLowerCase());
+            return (
+              <button
+                key={k}
+                type="button"
+                disabled={isUsed}
+                onClick={() => {
+                  const emptyIdx = pairs.findIndex((p) => !p.key.trim() && !p.value.trim());
+                  if (emptyIdx >= 0) {
+                    const next = [...pairs];
+                    next[emptyIdx] = { ...next[emptyIdx], key: k };
+                    onChange(next);
+                  } else {
+                    addRow(k);
+                  }
+                }}
+                className="rounded-md border border-[#E2E8F0] bg-white px-2.5 py-1 text-[11px] font-medium text-[#475569] transition-colors hover:border-[#F47C35] hover:text-[#F47C35] disabled:opacity-40 cursor-pointer"
+              >
+                + {k}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      <div className="space-y-2.5">
+        {pairs.map((pair, idx) => (
+          <div
+            key={pair.id}
+            className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_1.2fr_auto] sm:items-center"
+          >
+            <input
+              type="text"
+              value={pair.key}
+              onChange={(e) => updateRow(pair.id, 'key', e.target.value)}
+              placeholder={`${keyPlaceholder} (e.g. ${suggestedKeys[idx % suggestedKeys.length] || 'Name'})`}
+              aria-label={`${title} key ${idx + 1}`}
+              className={INPUT_CLASS}
+            />
+            <input
+              type="text"
+              value={pair.value}
+              onChange={(e) => updateRow(pair.id, 'value', e.target.value)}
+              placeholder={valuePlaceholder}
+              aria-label={`${title} value ${idx + 1}`}
+              className={INPUT_CLASS}
+            />
+            <button
+              type="button"
+              onClick={() => removeRow(pair.id)}
+              title="Remove row"
+              aria-label={`Remove ${title} row ${idx + 1}`}
+              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-[#DCE0E8] bg-white text-[#64748B] transition-colors hover:border-red-200 hover:bg-red-50 hover:text-[#E33D25] cursor-pointer"
+            >
+              <Trash2 size={15} />
+            </button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* ========================================================================== */
+/* MAIN PRODUCT EDITOR COMPONENT                                              */
+/* ========================================================================== */
+
 export interface ProductEditorProps {
   initialIsEdit?: boolean;
 }
 
-/* ------------------------------- page ------------------------------- */
 function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const requestedEditId = searchParams?.get('id') ?? null;
-  const requestedCopyFromId = searchParams?.get('copyFrom') ?? null;
-  const [createdProductId, setCreatedProductId] = useState<string | null>(null);
-  const createdProductIdRef = useRef<string | null>(null);
-  const editId = requestedEditId ?? createdProductId;
-  const saveInProgress = useRef(false);
-  const uncertainImageUpload = useRef(false);
-  const isEditing = Boolean(editId || initialIsEdit);
-  const [isLoadingProduct, setIsLoadingProduct] = useState(
-    Boolean(editId || requestedCopyFromId)
-  );
-  const [copiedFromInfo, setCopiedFromInfo] = useState<{ id: string; name: string } | null>(
-    null
-  );
+  const urlId = searchParams.get('id');
 
-  const [name, setName] = useState('');
+  /* ------------------------- Product Identity & Save Lifecycle ------------ */
+  // Retained immediately after POST /api/admin/products so retries use PATCH
+  const [savedProductId, setSavedProductId] = useState<string | null>(urlId);
+  const isEditing = initialIsEdit || Boolean(savedProductId);
+
+  const [isLoadingProduct, setIsLoadingProduct] = useState<boolean>(Boolean(urlId));
+  const [saving, setSaving] = useState<boolean>(false);
+  const [submitting, setSubmitting] = useState<boolean>(false);
+  const [imageActionBusyKey, setImageActionBusyKey] = useState<string | null>(null);
+  const saveInProgressRef = useRef<boolean>(false);
+
+  // Stable Idempotency-Key caches for timeout retries with identical payload
+  const createIdempotencyRef = useRef<{ payloadJson: string; key: string } | null>(null);
+  const uploadImagesIdempotencyRef = useRef<{ filesSignature: string; key: string } | null>(null);
+
+  /* ------------------------- Modal & Banner State ------------------------- */
+  const [previewOpen, setPreviewOpen] = useState<boolean>(false);
+  const [error, setError] = useState<string>('');
+  const [successBanner, setSuccessBanner] = useState<string>('');
+
+  /* ------------------------- Dropdown Options State ----------------------- */
+  const [categoriesList, setCategoriesList] = useState<CategoryOption[]>([]);
+  const [brandsList, setBrandsList] = useState<SelectOption[]>([]);
+  const [vendorsList, setVendorsList] = useState<SelectOption[]>([]);
+  const [loadingDropdowns, setLoadingDropdowns] = useState<boolean>(true);
+
+  /* ======================================================================== */
+  /* 1. TABLE: PRODUCTs STATE                                                 */
+  /* ======================================================================== */
+
+  // Core Identity
+  const [productName, setProductName] = useState('');
   const [slug, setSlug] = useState('');
-  const [slugTouched, setSlugTouched] = useState(false);
-  const [productStatus, setProductStatus] = useState<ProductStatus>('draft');
-  const [shortDescription, setShortDescription] = useState('');
-  const [description, setDescription] = useState('');
-  const [detailsText, setDetailsText] = useState('');
-  const [details, setDetails] = useState<string[]>([]);
-  const [additionalDetails, setAdditionalDetails] = useState<ProductDetailValues>({});
-  const [initialAdditionalDetails, setInitialAdditionalDetails] = useState<ProductDetailValues>({});
-  const [productLoadError, setProductLoadError] = useState('');
-  const [lookupError, setLookupError] = useState('');
-  const [productType, setProductType] = useState<'SIMPLE' | 'VARIABLE'>('VARIABLE');
-  const [tab, setTab] = useState<TabId>('inventory');
+  const [slugLocked, setSlugLocked] = useState(false);
   const [productCode, setProductCode] = useState('');
-  const [sku, setSku] = useState('');
-  const [minQty, setMinQty] = useState('1');
-  const [maxQty, setMaxQty] = useState('');
-  const [offer, setOffer] = useState('');
-  const [pricingMode, setPricingMode] = useState<'manual' | 'percent'>('manual');
-  const [regular, setRegular] = useState('');
-  const [sale, setSale] = useState('');
-  const [specialDiscountEnabled, setSpecialDiscountEnabled] = useState(false);
-  const [specialDiscountPercent, setSpecialDiscountPercent] = useState('0');
-  const [festivalOfferEnabled, setFestivalOfferEnabled] = useState(false);
-  const [festivalOfferPercent, setFestivalOfferPercent] = useState('0');
-  const [serverEffectivePrice, setServerEffectivePrice] = useState<string>('');
-  const [stock, setStock] = useState('0');
 
-  // Specifications state (Page 7 of Handoff)
-  const [targetAudience, setTargetAudience] = useState('');
-  const [hsnCode, setHsnCode] = useState('');
-  const [gstRate, setGstRate] = useState('');
+  // Identification
+  const [sku, setSku] = useState('');
   const [barcode, setBarcode] = useState('');
-  const [weight, setWeight] = useState('');
-  const [weightUnit, setWeightUnit] = useState<WeightUnit>('g');
-  const defaultWeightGrams = useMemo(() => {
-    if (!weight || typeof weight !== 'string' || !weight.trim()) return '';
-    const numVal = Number(weight.trim());
-    if (!Number.isFinite(numVal) || numVal <= 0) return '';
-    return String(Math.round(weightUnit === 'kg' ? numVal * 1000 : numVal));
-  }, [weight, weightUnit]);
-  const [unitCount, setUnitCount] = useState('');
-  const [packageLength, setPackageLength] = useState('');
-  const [packageBreadth, setPackageBreadth] = useState('');
-  const [packageHeight, setPackageHeight] = useState('');
-  const [dimensionUnit, setDimensionUnit] = useState<DimensionUnit>('cm');
+
+  // Classification
+  const [brandId, setBrandId] = useState('');
+  const [categoryId, setCategoryId] = useState('');
+  const [subcategoryId, setSubcategoryId] = useState('');
+  const [vendorId, setVendorId] = useState('');
+
+  // Type & Status
+  const [productType, setProductType] = useState<NewProductType>('simple');
+  const [productStatus, setProductStatus] = useState<NewProductStatus>('active');
+
+  // Pricing (Strictly selling_price, mrp, cost_price in DB; discountPercent is UI-only)
+  const [mrp, setMrp] = useState('');
+  const [discountPercent, setDiscountPercent] = useState('');
+  const [sellingPrice, setSellingPrice] = useState('');
+  const [costPrice, setCostPrice] = useState('');
+
+  // Tax & Compliance
+  const [taxRate, setTaxRate] = useState('18');
+  const [hsnCode, setHsnCode] = useState('');
+
+  // Inventory Information
+  const [stockQuantity, setStockQuantity] = useState('0');
+  const [minStockQuantity, setMinStockQuantity] = useState('5');
+
+  /* ======================================================================== */
+  /* 2. TABLE: product_details (nested inside `details`) STATE                */
+  /* ======================================================================== */
+
+  // Product Description
+  const [shortDescription, setShortDescription] = useState('');
+  const [fullDescription, setFullDescription] = useState('');
+  const [keyFeatures, setKeyFeatures] = useState<string[]>([]);
+  const [highlights, setHighlights] = useState<string[]>([]);
+
+  // Manufacturer Information
+  const [manufacturerName, setManufacturerName] = useState('');
+  const [manufacturerPartNumber, setManufacturerPartNumber] = useState('');
+  const [countryOfOrigin, setCountryOfOrigin] = useState('India');
+  const [importedBy, setImportedBy] = useState('');
+  const [marketedBy, setMarketedBy] = useState('');
+
+  // Physical Specifications
+  const [productWeight, setProductWeight] = useState('');
+  const [weightUnit, setWeightUnit] = useState<NewWeightUnit>('g');
   const [productLength, setProductLength] = useState('');
-  const [productBreadth, setProductBreadth] = useState('');
+  const [productWidth, setProductWidth] = useState('');
   const [productHeight, setProductHeight] = useState('');
-  const [productDimensionUnit, setProductDimensionUnit] = useState<string>('');
+  const [dimensionUnit, setDimensionUnit] = useState<NewDimensionUnit>('cm');
+
+  // Product Properties
   const [material, setMaterial] = useState('');
   const [colour, setColour] = useState('');
-  const [packageType, setPackageType] = useState('');
-  const [shelfLife, setShelfLife] = useState('');
-  const [waterResistant, setWaterResistant] = useState<string>(''); // '' | 'true' | 'false'
-  const [hazardousClause, setHazardousClause] = useState('');
-  const [reusable, setReusable] = useState<boolean | null>(null);
-  const [hasAccessories, setHasAccessories] = useState<boolean>(false);
-  const [accessoriesText, setAccessoriesText] = useState<string>('');
-  const [itemCondition, setItemCondition] = useState<'new' | 'refurbished'>('new');
-  const [giftOptionsAvailable, setGiftOptionsAvailable] = useState<boolean>(false);
-  const [giftOptionsCharge, setGiftOptionsCharge] = useState<string>('');
-  const [giftWrapAvailable, setGiftWrapAvailable] = useState<boolean>(false);
-  const [giftWrapCharge, setGiftWrapCharge] = useState<string>('');
-  const [manufacturedIn, setManufacturedIn] = useState('');
-  const [companyName, setCompanyName] = useState('');
-  const [companyAddress, setCompanyAddress] = useState('');
-  const [packerName, setPackerName] = useState('');
-  const [packerAddress, setPackerAddress] = useState('');
-  const [sameAsManufacturer, setSameAsManufacturer] = useState(false);
-  const [keywordsText, setKeywordsText] = useState('');
-  const [keywordDraft, setKeywordDraft] = useState('');
-  const [initialVariantIds, setInitialVariantIds] = useState<(string | number)[]>([]);
-  const [replacingImageKey, setReplacingImageKey] = useState<string | null>(null);
-  const [deletingImageKey, setDeletingImageKey] = useState<string | null>(null);
-  const [settingPrimaryKey, setSettingPrimaryKey] = useState<string | null>(null);
-  const [replacingImage, setReplacingImage] = useState(false);
-  const replaceFileInputRef = useRef<HTMLInputElement>(null);
+  const [size, setSize] = useState('');
+  const [modelNumber, setModelNumber] = useState('');
+  const [modelName, setModelName] = useState('');
+  const [warranty, setWarranty] = useState('');
 
-  const [brandsList, setBrandsList] = useState<{ id: string; name: string }[]>([]);
-  const [brand, setBrand] = useState('');
-  const [categoriesList, setCategoriesList] = useState<Category[]>([]);
-  const [categoryId, setCategoryId] = useState('');
-  const [subCategoryId, setSubCategoryId] = useState('');
-  const [variantTypesList, setVariantTypesList] = useState<VariantType[]>([]);
-  const [selectedVariantTypeIds, setSelectedVariantTypeIds] = useState<string[]>([]);
-  const [activeVariantTabId, setActiveVariantTabId] = useState<string>('');
-  const [customVariantTypeName, setCustomVariantTypeName] = useState('');
-  const [customOptionInputByVariant, setCustomOptionInputByVariant] = useState<Record<string, string>>({});
-  const [activeOptionByVariant, setActiveOptionByVariant] = useState<Record<string, string>>({});
-  const [selectedOptionsByVariant, setSelectedOptionsByVariant] = useState<Record<string, string[]>>({});
-  const [variantDoneNotice, setVariantDoneNotice] = useState<string>('');
-  const [terms, setTerms] = useState<Term[]>([]);
-  const [openTerm, setOpenTerm] = useState<string | null>(null);
+  // Packaging Information
+  const [packageContents, setPackageContents] = useState<string[]>([]);
+  const [packageWeight, setPackageWeight] = useState('');
+  const [packageLength, setPackageLength] = useState('');
+  const [packageWidth, setPackageWidth] = useState('');
+  const [packageHeight, setPackageHeight] = useState('');
+
+  // Usage and Care
+  const [usageInstructions, setUsageInstructions] = useState('');
+  const [careInstructions, setCareInstructions] = useState('');
+  const [safetyInformation, setSafetyInformation] = useState('');
+  const [returnPolicy, setReturnPolicy] = useState('');
+
+  // SEO Information
+  const [metaTitle, setMetaTitle] = useState('');
+  const [metaDescription, setMetaDescription] = useState('');
+  const [metaKeywords, setMetaKeywords] = useState('');
+  const [canonicalUrl, setCanonicalUrl] = useState('');
+
+  // Additional Information (specifications{} and additional_attributes{})
+  const [specificationsList, setSpecificationsList] = useState<KeyValuePair[]>([
+    { id: 'spec-init-1', key: '', value: '' },
+  ]);
+  const [additionalAttributesList, setAdditionalAttributesList] = useState<KeyValuePair[]>([
+    { id: 'attr-init-1', key: '', value: '' },
+  ]);
+
+  /* ------------------------- Product Images UI State ---------------------- */
   const [images, setImages] = useState<GalleryImage[]>([]);
-
-  const [saving, setSaving] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
-  const [previewOpen, setPreviewOpen] = useState(false);
-  const [successMessage, setSuccessMessage] = useState('');
-  const [error, setError] = useState('');
-  const [termError, setTermError] = useState('');
-
-  // Load live categories, brands, and variant attribute definitions from backend
-  useEffect(() => {
-    async function fetchCategoriesAndBrands() {
-      try {
-        const [all, liveBrands, liveAttrDefs] = await Promise.all([
-          getAllAdminCategories(),
-          getAllAdminBrands(),
-          getAllAdminVariantAttributes(),
-        ]);
-        if (Array.isArray(liveBrands) && liveBrands.length > 0) {
-          setBrandsList(
-            liveBrands.map((b) => ({
-              id: String(b.brand_id ?? b.id),
-              name: b.brand_name,
-            }))
-          );
-        }
-        const IGNORED_VARIANT_KEYS = new Set([
-          'hsn',
-          'hsn_code',
-          'gst_percent',
-          'gst_rate',
-          'source_attributes',
-        ]);
-        const validAttrDefs = Array.isArray(liveAttrDefs)
-          ? liveAttrDefs.filter((a) => !IGNORED_VARIANT_KEYS.has((a.name || '').toLowerCase()))
-          : [];
-        if (validAttrDefs.length > 0) {
-          setVariantTypesList((prev) => {
-            const merged = new Map<string, VariantType>();
-            for (const existing of prev) {
-              merged.set(existing.id, {
-                ...existing,
-                terms: [...existing.terms],
-              });
-            }
-            for (const attr of validAttrDefs) {
-              const attrId = (attr.name || 'size').trim().toLowerCase();
-              const vals = Array.isArray(attr.values) ? attr.values : [];
-              const prevEntry = merged.get(attrId);
-              const existingTerms = prevEntry ? [...prevEntry.terms] : [];
-              for (const val of vals) {
-                const cleanVal = String(val || '').trim();
-                if (
-                  cleanVal &&
-                  !existingTerms.some((t) => t.name.toLowerCase() === cleanVal.toLowerCase())
-                ) {
-                  existingTerms.push({
-                    id: `${attrId}-opt-${existingTerms.length}`,
-                    name: cleanVal,
-                  });
-                }
-              }
-              merged.set(attrId, {
-                id: attrId,
-                name: prevEntry?.name || attr.name,
-                terms: existingTerms,
-              });
-            }
-            return Array.from(merged.values());
-          });
-        } else {
-          setVariantTypesList((prev) =>
-            prev.length > 0
-              ? prev
-              : [
-                  {
-                    id: 'size',
-                    name: 'Size',
-                    terms: ['S', 'M', 'L', 'XL', 'XXL'].map((val, i) => ({
-                      id: `size-opt-${i}`,
-                      name: val,
-                    })),
-                  },
-                ]
-          );
-        }
-        if (Array.isArray(all) && all.length > 0) {
-          const roots = all.filter((c) => c.parent_category_id == null);
-          const children = all.filter((c) => c.parent_category_id != null);
-          const tree: Category[] = (roots.length > 0 ? roots : all).map((r) => {
-            const rId = String(r.category_id ?? r.id);
-            const subs = children
-              .filter((ch) => String(ch.parent_category_id) === rId)
-              .map((ch) => ({
-                id: String(ch.category_id ?? ch.id),
-                name: ch.category_name || ch.name || `Category #${ch.category_id ?? ch.id}`,
-                active: ch.is_active !== false,
-              }));
-            return {
-              id: rId,
-              name: r.category_name || r.name || `Category #${rId}`,
-              active: r.is_active !== false,
-              subs,
-            };
-          });
-          setCategoriesList(tree);
-        }
-      } catch {
-        const message = 'Categories, brands or variant options could not be loaded. Refresh before saving.';
-        setError(message);
-        setLookupError(message);
-      }
-    }
-    void fetchCategoriesAndBrands();
-  }, []);
-
-  // When a root category is selected, fetch its sub-categories from backend (?parent_category_id=...)
-  useEffect(() => {
-    const rootNum = categoryId ? Number(categoryId) : NaN;
-    if (!rootNum || isNaN(rootNum)) return;
-    let cancelled = false;
-    async function fetchSubsForRoot() {
-      try {
-        const res = await getAdminCategories({ parent_category_id: rootNum, limit: 100 });
-        if (cancelled || !Array.isArray(res.data)) return;
-        const fetchedSubs: Subcategory[] = res.data.map((ch) => ({
-          id: String(ch.category_id ?? ch.id),
-          name: ch.category_name || ch.name || `Category #${ch.category_id ?? ch.id}`,
-          active: ch.is_active !== false,
-        }));
-        setCategoriesList((prev) =>
-          prev.map((cat) => {
-            if (cat.id !== String(rootNum)) return cat;
-            const mergedMap = new Map<string, Subcategory>();
-            for (const s of cat.subs) mergedMap.set(s.id, s);
-            for (const s of fetchedSubs) mergedMap.set(s.id, s);
-            return { ...cat, subs: Array.from(mergedMap.values()) };
-          })
-        );
-      } catch (err) {
-        console.warn('Could not load sub-categories for root:', err);
-      }
-    }
-    void fetchSubsForRoot();
-    return () => {
-      cancelled = true;
-    };
-  }, [categoryId]);
-
-  // Load existing product if editId is provided or clone if copyFrom is provided
-  useEffect(() => {
-    if (requestedEditId && requestedEditId === createdProductIdRef.current) return;
-    if (!requestedEditId && !requestedCopyFromId) {
-      setIsLoadingProduct(false);
-      return;
-    }
-    const currentId = requestedEditId;
-    async function loadProduct(id: string) {
-      setIsLoadingProduct(true);
-      setProductLoadError('');
-      setImages([]);
-      setTerms([]);
-      setInitialVariantIds([]);
-      setSelectedVariantTypeIds([]);
-      setActiveVariantTabId('');
-      setSelectedOptionsByVariant({});
-      setVariantDoneNotice('');
-      setOpenTerm(null);
-      setBrand('');
-      setCategoryId('');
-      setSubCategoryId('');
-      setAdditionalDetails({});
-      setInitialAdditionalDetails({});
-      try {
-        const prod = await getAdminProductById(id);
-        if (prod) {
-          const loadedDetails = readProductDetails(prod);
-          setAdditionalDetails(loadedDetails);
-          setInitialAdditionalDetails(loadedDetails);
-          const prodName = prod.product_name || prod.name || '';
-          setName(prodName);
-          setSlug(prod.slug || generateProductSlug(prodName));
-          setSlugTouched(true);
-          setProductStatus((prod.product_status as ProductStatus) || 'draft');
-          setShortDescription(prod.short_description || '');
-          setDescription(prod.description || '');
-          if (prod.brand_id != null) {
-            setBrand(String(prod.brand_id));
-          }
-          if (Array.isArray(prod.categories) && prod.categories.length > 0) {
-            const primary =
-              prod.categories.find((c) => c.ProductCategory?.is_primary) || prod.categories[0];
-            const pId = String(primary.category_id ?? primary.id ?? '');
-            const parentId =
-              primary.parent_category_id != null ? String(primary.parent_category_id) : '';
-            if (parentId) {
-              setCategoryId(parentId);
-              setSubCategoryId(pId);
-            } else {
-              setCategoryId(pId);
-              setSubCategoryId('');
-            }
-          }
-          setProductType(prod.product_type === 'variable' ? 'VARIABLE' : 'SIMPLE');
-          setProductCode(prod.product_code || '');
-          setSku(prod.sku || '');
-          setMinQty(String(prod.min_order_quantity ?? 1));
-          setMaxQty(prod.max_order_quantity != null ? String(prod.max_order_quantity) : '');
-          setStock(String(prod.stock_quantity ?? prod.stock ?? 0));
-
-          const regVal = prod.regular_price ?? prod.mrp ?? prod.price;
-          const saleVal = prod.sale_price ?? prod.offer_price;
-          const regStr = regVal != null ? String(regVal) : '';
-          const saleStr = saleVal != null ? String(saleVal) : '';
-          const offerStr =
-            prod.offer_percent != null
-              ? String(prod.offer_percent)
-              : regStr && saleStr
-              ? offerPercentFrom(regStr, saleStr)
-              : '';
-          setRegular(regStr);
-          setSale(saleStr);
-          setOffer(offerStr);
-          setPricingMode(prod.offer_percent != null ? 'percent' : 'manual');
-          setSpecialDiscountEnabled(Boolean(prod.special_discount_enabled));
-          setSpecialDiscountPercent(String(prod.special_discount_percent ?? 0));
-          setFestivalOfferEnabled(Boolean(prod.festival_offer_enabled));
-          setFestivalOfferPercent(String(prod.festival_offer_percent ?? 0));
-          setServerEffectivePrice(
-            prod.effective_price != null ? String(prod.effective_price) : ''
-          );
-
-          // Specifications
-          const firstVarAttrs: Record<string, any> =
-            Array.isArray(prod.variants) && prod.variants[0]?.attributes
-              ? (prod.variants[0].attributes as Record<string, any>)
-              : {};
-          setTargetAudience(prod.target_audience || '');
-          setHsnCode(prod.hsn_code || (firstVarAttrs.hsn ? String(firstVarAttrs.hsn) : ''));
-          setBarcode(
-            (prod as any).barcode ||
-              (Array.isArray(prod.variants) && prod.variants.find((v) => v.barcode)?.barcode) ||
-              ''
-          );
-          setGstRate(
-            prod.gst_rate != null
-              ? String(prod.gst_rate)
-              : firstVarAttrs.gst_percent != null
-              ? String(firstVarAttrs.gst_percent)
-              : ''
-          );
-          setWeight(prod.weight != null ? String(prod.weight) : '');
-          setWeightUnit(prod.weight_unit || 'g');
-          setUnitCount(prod.unit_count != null ? String(prod.unit_count) : '');
-          setPackageLength(prod.package_length != null ? String(prod.package_length) : '');
-          setPackageBreadth(prod.package_breadth != null ? String(prod.package_breadth) : '');
-          setPackageHeight(prod.package_height != null ? String(prod.package_height) : '');
-          setDimensionUnit(prod.dimension_unit || 'cm');
-
-          const pLen =
-            prod.product_length != null
-              ? String(prod.product_length)
-              : loadedDetails.product_length || '';
-          const pBreadth =
-            prod.product_breadth != null
-              ? String(prod.product_breadth)
-              : loadedDetails.product_breadth || '';
-          const pHeight =
-            prod.product_height != null
-              ? String(prod.product_height)
-              : loadedDetails.product_height || '';
-          const pDimUnit =
-            (prod.product_dimension_unit || loadedDetails.product_dimension_unit || '') as string;
-          setProductLength(pLen);
-          setProductBreadth(pBreadth);
-          setProductHeight(pHeight);
-          setProductDimensionUnit(pDimUnit);
-          setAdditionalDetails((prev) => ({
-            ...prev,
-            product_length: pLen,
-            product_breadth: pBreadth,
-            product_height: pHeight,
-            product_dimension_unit: pDimUnit,
-          }));
-          setMaterial(prod.material || '');
-          setColour(prod.colour || '');
-          setPackageType(prod.package_type || '');
-          setShelfLife(prod.shelf_life || '');
-          setWaterResistant(
-            prod.water_resistant === true
-              ? 'true'
-              : prod.water_resistant === false
-              ? 'false'
-              : ''
-          );
-          setHazardousClause(prod.hazardous_clause || '');
-
-          const savedReusable =
-            prod.reusable !== undefined
-              ? prod.reusable
-              : loadedDetails.reusable === 'true'
-              ? true
-              : loadedDetails.reusable === 'false'
-              ? false
-              : null;
-          setReusable(savedReusable ?? null);
-
-          const savedHasAccessories =
-            prod.has_accessories !== undefined
-              ? Boolean(prod.has_accessories)
-              : Boolean(prod.accessories || loadedDetails.accessories);
-          const savedAccessories =
-            (prod.accessories ?? loadedDetails.accessories ?? '').trim();
-          setHasAccessories(savedHasAccessories);
-          setAccessoriesText(savedHasAccessories ? savedAccessories : '');
-
-          const savedCondition = prod.item_condition || (prod as any).condition;
-          if (savedCondition === 'refurbished' || savedCondition === 'new') {
-            setItemCondition(savedCondition);
-          } else {
-            setItemCondition('new');
-          }
-
-          const savedGiftOptionsAvail = Boolean(prod.gift_options_available);
-          const savedGiftOptionsCharge =
-            prod.gift_options_charge != null ? String(prod.gift_options_charge) : '';
-          setGiftOptionsAvailable(savedGiftOptionsAvail);
-          setGiftOptionsCharge(savedGiftOptionsAvail ? savedGiftOptionsCharge : '');
-
-          const savedGiftWrapAvail = Boolean(prod.gift_wrap_available);
-          const savedGiftWrapCharge =
-            prod.gift_wrap_charge != null ? String(prod.gift_wrap_charge) : '';
-          setGiftWrapAvailable(savedGiftWrapAvail);
-          setGiftWrapCharge(savedGiftWrapAvail ? savedGiftWrapCharge : '');
-          setManufacturedIn(prod.manufactured_in || '');
-          setCompanyName(prod.company_name || '');
-          setCompanyAddress(prod.company_address || '');
-          setPackerName(prod.packer_name || '');
-          setPackerAddress(prod.packer_address || '');
-          setKeywordsText(Array.isArray(prod.keywords) ? prod.keywords.join(', ') : '');
-
-          const descBullets = prod.description ? parseDetails(prod.description) : [];
-          setDetails(descBullets);
-          setDetailsText(prod.description || '');
-
-          // Load existing images from /api/admin/products/:id/images so every image has its exact DB id
-          let rawImages: any[] = [];
-          try {
-            rawImages = await getAdminProductImages(id);
-          } catch {
-            const message = 'Saved images could not be loaded. Refresh the product before editing its images.';
-            setError(message);
-            setProductLoadError(message);
-          }
-          if (!Array.isArray(rawImages) || rawImages.length === 0) {
-            rawImages = Array.isArray(prod.images) ? prod.images : [];
-          }
-          if (rawImages.length > 0) {
-            setImages(
-              rawImages
-                .map((item, idx) => {
-                  const url = typeof item === 'string' ? item : item?.image_url || item?.url;
-                  if (!url) return null;
-                  const resolvedImgId = item?.id ?? item?.image_id;
-                  return {
-                    key: `existing-${resolvedImgId ?? idx}-${uid()}`,
-                    src: url,
-                    name: `Image ${idx + 1}`,
-                    size: 0,
-                    backendImageId: resolvedImgId != null ? String(resolvedImgId) : undefined,
-                    isPrimary: Boolean(item?.is_primary ?? idx === 0),
-                  } as GalleryImage;
-                })
-                .filter((x): x is GalleryImage => x !== null)
-            );
-          }
-
-          // Load existing per-product variants
-          let prodVariants = Array.isArray(prod.variants) ? prod.variants : [];
-          {
-            try {
-              prodVariants = await getAllAdminProductVariants(id);
-            } catch {
-              const message = 'Saved variants could not be loaded. Refresh the product before changing variants.';
-              setError(message);
-              setProductLoadError(message);
-            }
-          }
-          setProductType(prod.product_type === 'variable' ? 'VARIABLE' : 'SIMPLE');
-
-          if (prodVariants.length > 0) {
-            setInitialVariantIds(prodVariants.map((v) => v.id));
-            const IGNORED_VARIANT_KEYS = new Set([
-              'hsn',
-              'hsn_code',
-              'gst_percent',
-              'gst_rate',
-              'source_attributes',
-            ]);
-            const liveAttrs = await getAllAdminVariantAttributes().catch(() => []);
-            const discoveredTypes = new Map<string, VariantType>();
-
-            liveAttrs
-              .filter((a) => !IGNORED_VARIANT_KEYS.has((a.name || '').toLowerCase()))
-              .forEach((attr) => {
-                const attrName = (attr.name || 'Size').trim();
-                const attrId = attrName;
-                const vals = Array.isArray(attr.values) ? attr.values : [];
-                discoveredTypes.set(attrId, {
-                  id: attrId,
-                  name: attr.name,
-                  terms: vals.map((val, i) => ({ id: `${attrId}-opt-${i}`, name: val })),
-                });
-              });
-
-            if (!discoveredTypes.has('Size') && !discoveredTypes.has('size')) {
-              discoveredTypes.set('Size', {
-                id: 'Size',
-                name: 'Size',
-                terms: ['S', 'M', 'L', 'XL', 'XXL'].map((val, i) => ({
-                  id: `Size-opt-${i}`,
-                  name: val,
-                })),
-              });
-            }
-
-            const loadedTerms: Term[] = [];
-            const usedVtIds = new Set<string>();
-            const seenTermCombo = new Set<string>();
-            const loadedSelectedOpts: Record<string, string[]> = {};
-
-            prodVariants.forEach((v, idx) => {
-              const attrsObj = v.attributes || {};
-              const validEntries = Object.entries(attrsObj).filter(
-                ([k]) => !IGNORED_VARIANT_KEYS.has(k.toLowerCase())
-              );
-
-              // Skip legacy HSN-only placeholder variant rows if there are other variants
-              const rawVarName = (v.variant_name || v.display_name || '').trim();
-              if (
-                validEntries.length === 0 &&
-                /^hsn\s*:/i.test(rawVarName) &&
-                prodVariants.length > 1
-              ) {
-                return;
-              }
-
-              let attrName = 'Size';
-              let attrVal = '';
-              if (validEntries.length > 0) {
-                attrName = String(validEntries[0][0] || 'Size').trim();
-                attrVal = String(validEntries[0][1] || '').trim();
-              }
-              if (!attrVal) {
-                attrVal =
-                  (v.variant_name ? v.variant_name.replace(/\s*\(Pack of \d+\)/i, '').trim() : '') ||
-                  (v.display_name ? v.display_name.replace(/\s*\(Pack of \d+\)/i, '').trim() : '') ||
-                  `Size ${idx + 1}`;
-              }
-
-              const canonicalId = (attrName || 'Size').trim();
-              let vtEntry = discoveredTypes.get(canonicalId);
-              if (!vtEntry) {
-                vtEntry = {
-                  id: canonicalId,
-                  name: attrName,
-                  terms: [],
-                };
-                discoveredTypes.set(canonicalId, vtEntry);
-              }
-              if (
-                !vtEntry.terms.some(
-                  (t) => t.name.trim() === attrVal.trim()
-                )
-              ) {
-                vtEntry.terms.push({
-                  id: `${vtEntry.id}-opt-${vtEntry.terms.length}`,
-                  name: attrVal,
-                });
-              }
-
-              // Deduplicate loaded terms by full attribute combination so all combinations are loaded
-              const comboKey = validEntries.length > 0
-                ? validEntries
-                    .map(([k, val]) => `${String(k).trim()}:${String(val).trim()}`)
-                    .sort()
-                    .join('::')
-                : `${canonicalId}::${attrVal.trim()}`;
-              if (seenTermCombo.has(comboKey)) {
-                return;
-              }
-              seenTermCombo.add(comboKey);
-
-              // Register all attributes in this variant into discovered types and selected options
-              for (const [eKey, eVal] of validEntries) {
-                const kName = String(eKey || '').trim();
-                const vName = String(eVal || '').trim();
-                if (!kName || !vName) continue;
-                usedVtIds.add(kName);
-                let entryType = discoveredTypes.get(kName);
-                if (!entryType) {
-                  entryType = { id: kName, name: kName, terms: [] };
-                  discoveredTypes.set(kName, entryType);
-                }
-                if (!entryType.terms.some((t) => t.name.trim() === vName)) {
-                  entryType.terms.push({ id: `${kName}-opt-${entryType.terms.length}`, name: vName });
-                }
-                if (!loadedSelectedOpts[kName]) loadedSelectedOpts[kName] = [];
-                if (!loadedSelectedOpts[kName].includes(vName)) loadedSelectedOpts[kName].push(vName);
-              }
-
-              // Extract unit count if stored in variant_name like "M (Pack of 10)"
-              const packMatch = (v.variant_name || '').match(/Pack of (\d+)/i);
-              const extractedUnitCount = packMatch
-                ? packMatch[1]
-                : prod.unit_count != null
-                ? String(prod.unit_count)
-                : '';
-
-              loadedTerms.push({
-                key: `variant-${v.id}`,
-                termId: `variant-${v.id}`,
-                backendVariantId: v.id,
-                attributes: Object.fromEntries(validEntries),
-                variantTypeId: vtEntry.id,
-                variantTypeName: vtEntry.name,
-                name: attrVal,
-                sku: v.sku || '',
-                variantName: v.variant_name || '',
-                unitCount: extractedUnitCount,
-                weightGrams: v.weight_grams != null ? String(v.weight_grams) : '',
-                barcode: v.barcode || (prod as any).barcode || '',
-                regularPrice: v.regular_price != null ? String(v.regular_price) : '',
-                offerPercent:
-                  v.regular_price != null && v.sale_price != null
-                    ? offerPercentFrom(String(v.regular_price), String(v.sale_price))
-                    : '',
-                salePrice: v.sale_price != null ? String(v.sale_price) : '',
-                stockQuantity: String(v.stock_quantity ?? 0),
-                description: '',
-                image: null,
-              });
-            });
-
-            setVariantTypesList((prev) => {
-              const merged = new Map<string, VariantType>();
-              for (const existing of prev) {
-                merged.set(existing.id, { ...existing, terms: [...existing.terms] });
-              }
-              for (const [k, vt] of discoveredTypes.entries()) {
-                const prevEntry = merged.get(k);
-                const mergedTerms = prevEntry ? [...prevEntry.terms] : [];
-                for (const t of vt.terms) {
-                  if (
-                    !mergedTerms.some(
-                      (m) => m.name.trim() === t.name.trim()
-                    )
-                  ) {
-                    mergedTerms.push(t);
-                  }
-                }
-                merged.set(k, {
-                  id: k,
-                  name: vt.name || prevEntry?.name || k,
-                  terms: mergedTerms,
-                });
-              }
-              return Array.from(merged.values());
-            });
-            const vtIdsArr = Array.from(usedVtIds);
-            setSelectedVariantTypeIds(vtIdsArr);
-            setActiveVariantTabId(vtIdsArr[0] || '');
-            setSelectedOptionsByVariant(loadedSelectedOpts);
-            setTerms(loadedTerms);
-            if (loadedTerms[0]) {
-              setOpenTerm(loadedTerms[0].key);
-            }
-          }
-        }
-      } catch (err: any) {
-        const message = err?.message || 'Unable to load the product. Please refresh and try again.';
-        setError(message);
-        setProductLoadError(message);
-      } finally {
-        setIsLoadingProduct(false);
-      }
-    }
-
-    async function loadProductForCopy(id: string) {
-      setIsLoadingProduct(true);
-      setProductLoadError('');
-      setImages([]);
-      setTerms([]);
-      setInitialVariantIds([]);
-      setSelectedVariantTypeIds([]);
-      setActiveVariantTabId('');
-      setSelectedOptionsByVariant({});
-      setVariantDoneNotice('');
-      setOpenTerm(null);
-      setBrand('');
-      setCategoryId('');
-      setSubCategoryId('');
-      setAdditionalDetails({});
-      setInitialAdditionalDetails({});
-      try {
-        const prod = await getAdminProductById(id);
-        if (prod) {
-          const loadedDetails = readProductDetails(prod);
-          // Exclude dimensions, dates, and previous SKU/model codes so fresh ones generate
-          const {
-            net_weight: _nw,
-            net_weight_unit: _nwu,
-            product_length: _pl,
-            product_breadth: _pb,
-            product_height: _ph,
-            product_dimension_unit: _pdu,
-            manufacturing_date: _md,
-            sale_start_date: _ssd,
-            sale_end_date: _sed,
-            manufacturer_sku: _msku,
-            model_number: _mnum,
-            ...filteredDetails
-          } = loadedDetails;
-          setAdditionalDetails(filteredDetails);
-          setInitialAdditionalDetails(filteredDetails);
-
-          const prodName = prod.product_name || prod.name || '';
-          setName(prodName);
-          setSlug(generateProductSlug(prodName));
-          setSlugTouched(false);
-          setProductStatus('draft'); // Default copied product to draft for safety
-          setShortDescription(prod.short_description || '');
-          setDescription(prod.description || '');
-          if (prod.brand_id != null) {
-            setBrand(String(prod.brand_id));
-          }
-          if (Array.isArray(prod.categories) && prod.categories.length > 0) {
-            const primary =
-              prod.categories.find((c) => c.ProductCategory?.is_primary) || prod.categories[0];
-            const pId = String(primary.category_id ?? primary.id ?? '');
-            const parentId =
-              primary.parent_category_id != null ? String(primary.parent_category_id) : '';
-            if (parentId) {
-              setCategoryId(parentId);
-              setSubCategoryId(pId);
-            } else {
-              setCategoryId(pId);
-              setSubCategoryId('');
-            }
-          }
-          setProductType('SIMPLE');
-
-          // Reset codes, stock, pricing, and quantities to blank as requested
-          setProductCode('');
-          setSku('');
-          setBarcode('');
-          setMinQty('');
-          setMaxQty('');
-          setStock('');
-          setRegular('');
-          setSale('');
-          setOffer('');
-          setPricingMode('manual');
-          setSpecialDiscountEnabled(false);
-          setSpecialDiscountPercent('0');
-          setFestivalOfferEnabled(false);
-          setFestivalOfferPercent('0');
-          setServerEffectivePrice('');
-
-          // Specifications (Non-dimension / non-date)
-          setTargetAudience(prod.target_audience || '');
-          setHsnCode(prod.hsn_code || '');
-          setGstRate(prod.gst_rate != null ? String(prod.gst_rate) : '');
-          setUnitCount(prod.unit_count != null ? String(prod.unit_count) : '');
-          setMaterial(prod.material || '');
-          setColour(prod.colour || '');
-          setPackageType(prod.package_type || '');
-          setShelfLife(prod.shelf_life || '');
-          setWaterResistant(
-            prod.water_resistant === true
-              ? 'true'
-              : prod.water_resistant === false
-              ? 'false'
-              : ''
-          );
-          setHazardousClause(prod.hazardous_clause || '');
-
-          // Reset dimensions to blank
-          setWeight('');
-          setWeightUnit(prod.weight_unit || 'g');
-          setPackageLength('');
-          setPackageBreadth('');
-          setPackageHeight('');
-          setDimensionUnit(prod.dimension_unit || 'cm');
-          setProductLength('');
-          setProductBreadth('');
-          setProductHeight('');
-          setProductDimensionUnit((prod.product_dimension_unit as string) || 'cm');
-
-          const savedReusable =
-            prod.reusable !== undefined
-              ? prod.reusable
-              : loadedDetails.reusable === 'true'
-              ? true
-              : loadedDetails.reusable === 'false'
-              ? false
-              : null;
-          setReusable(savedReusable ?? null);
-
-          const savedHasAccessories =
-            prod.has_accessories !== undefined
-              ? Boolean(prod.has_accessories)
-              : Boolean(prod.accessories || loadedDetails.accessories);
-          const savedAccessories =
-            (prod.accessories ?? loadedDetails.accessories ?? '').trim();
-          setHasAccessories(savedHasAccessories);
-          setAccessoriesText(savedHasAccessories ? savedAccessories : '');
-
-          const savedCondition = prod.item_condition || (prod as any).condition;
-          if (savedCondition === 'refurbished' || savedCondition === 'new') {
-            setItemCondition(savedCondition);
-          } else {
-            setItemCondition('new');
-          }
-
-          const savedGiftOptionsAvail = Boolean(prod.gift_options_available);
-          const savedGiftOptionsCharge =
-            prod.gift_options_charge != null ? String(prod.gift_options_charge) : '';
-          setGiftOptionsAvailable(savedGiftOptionsAvail);
-          setGiftOptionsCharge(savedGiftOptionsAvail ? savedGiftOptionsCharge : '');
-
-          const savedGiftWrapAvail = Boolean(prod.gift_wrap_available);
-          const savedGiftWrapCharge =
-            prod.gift_wrap_charge != null ? String(prod.gift_wrap_charge) : '';
-          setGiftWrapAvailable(savedGiftWrapAvail);
-          setGiftWrapCharge(savedGiftWrapAvail ? savedGiftWrapCharge : '');
-          setManufacturedIn(prod.manufactured_in || '');
-          setCompanyName(prod.company_name || '');
-          setCompanyAddress(prod.company_address || '');
-          setPackerName(prod.packer_name || '');
-          setPackerAddress(prod.packer_address || '');
-          setKeywordsText(Array.isArray(prod.keywords) ? prod.keywords.join(', ') : '');
-
-          const descBullets = prod.description ? parseDetails(prod.description) : [];
-          setDetails(descBullets);
-          setDetailsText(prod.description || '');
-
-          // Images start fresh as requested
-          setImages([]);
-
-          setCopiedFromInfo({
-            id: String(prod.product_id ?? prod.id ?? id),
-            name: prodName,
-          });
-        }
-      } catch (err: any) {
-        const message = err?.message || 'Unable to copy product listing. Please try again.';
-        setError(message);
-        setProductLoadError(message);
-      } finally {
-        setIsLoadingProduct(false);
-      }
-    }
-
-    if (currentId) {
-      void loadProduct(currentId);
-    } else if (requestedCopyFromId) {
-      void loadProductForCopy(requestedCopyFromId);
-    }
-  }, [requestedEditId, requestedCopyFromId]);
-
-  const fileRef = useRef<HTMLInputElement>(null);
-  const imagesRef = useRef<GalleryImage[]>([]);
-  const termsRef = useRef<Term[]>([]);
-  useEffect(() => {
-    imagesRef.current = images;
-  }, [images]);
-  useEffect(() => {
-    termsRef.current = terms;
-  }, [terms]);
-  useEffect(
-    () => () => {
-      imagesRef.current.forEach((i) => URL.revokeObjectURL(i.src));
-      termsRef.current.forEach((t) => t.image && URL.revokeObjectURL(t.image.src));
-    },
-    [],
-  );
-
-  const category = categoriesList.find((c) => c.id === categoryId);
-  const brandName =
-    brandsList.find((b) => b.id === brand)?.name ?? (brand ? `Brand #${brand}` : 'Unbranded');
-
-  const priceSummary = useMemo(() => {
-    if (productType === 'SIMPLE') return `₹${sale || regular || '—'}`;
-    const vals = terms.map((t) => num(t.salePrice) ?? num(t.regularPrice)).filter((v): v is number => v != null);
-    if (!vals.length) return '—';
-    const lo = Math.min(...vals);
-    const hi = Math.max(...vals);
-    return lo === hi ? `₹${lo}` : `₹${lo} – ₹${hi}`;
-  }, [productType, regular, sale, terms]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const replaceInputRef = useRef<HTMLInputElement>(null);
+  const [replacingKey, setReplacingKey] = useState<string | null>(null);
 
   const totalImageBytes = useMemo(
-    () => images.filter((image) => image.file && !image.backendImageId)
-      .reduce((sum, img) => sum + (img.file?.size || 0), 0),
+    () =>
+      images
+        .filter((img) => Boolean(img.file) && !img.backendImageId)
+        .reduce((acc, img) => acc + (img.size || 0), 0),
     [images]
   );
 
-  function validateBasics(): string {
-    if (productLoadError) return productLoadError;
-    if (lookupError) return lookupError;
-    if (!name.trim()) return 'Product name is required.';
-    if (typeof hasAccessories !== 'undefined' && hasAccessories && typeof accessoriesText !== 'undefined' && !accessoriesText.trim()) {
-      return 'Please specify the included accessories.';
-    }
-    const currentAdditional = {
-      ...additionalDetails,
-      ...(typeof productLength !== 'undefined' ? { product_length: productLength } : {}),
-      ...(typeof productBreadth !== 'undefined' ? { product_breadth: productBreadth } : {}),
-      ...(typeof productHeight !== 'undefined' ? { product_height: productHeight } : {}),
-      ...(typeof productDimensionUnit !== 'undefined' ? { product_dimension_unit: productDimensionUnit } : {}),
-    };
-    const additionalError = validateProductDetails(currentAdditional);
-    if (additionalError) return additionalError;
+  /* ======================================================================== */
+  /* LOAD DROPDOWNS: CATEGORIES, BRANDS, VENDORS                              */
+  /* ======================================================================== */
 
-    if (typeof giftOptionsAvailable !== 'undefined' && giftOptionsAvailable) {
-      if (typeof giftOptionsCharge === 'undefined' || giftOptionsCharge.trim() === '') {
-        return 'Please enter a valid gift options charge.';
-      }
-      const chargeNum = Number(giftOptionsCharge);
-      if (isNaN(chargeNum) || chargeNum < 0) {
-        return 'Gift options charge must be a non-negative amount.';
-      }
-    }
+  useEffect(() => {
+    let cancelled = false;
 
-    if (typeof giftWrapAvailable !== 'undefined' && giftWrapAvailable) {
-      if (typeof giftWrapCharge === 'undefined' || giftWrapCharge.trim() === '') {
-        return 'Please enter a valid gift wrap charge.';
-      }
-      const chargeNum = Number(giftWrapCharge);
-      if (isNaN(chargeNum) || chargeNum < 0) {
-        return 'Gift wrap charge must be a non-negative amount.';
-      }
-    }
-    if (uncertainImageUpload.current) {
-      return 'An image upload could not be verified. Reload this product to check its saved images before retrying.';
-    }
+    async function loadDropdownData() {
+      setLoadingDropdowns(true);
+      try {
+        const [catsResult, brandsResult, vendorsResult] = await Promise.allSettled([
+          getAdminCategoriesTree().catch(async () => {
+            const rootsRes = await getAdminCategories({
+              roots_only: true,
+              limit: 100,
+              offset: 0,
+            });
+            return rootsRes.data;
+          }),
+          getAdminBrands({ limit: 100, offset: 0 }),
+          getAdminVendors({ limit: 100, offset: 0 }),
+        ]);
 
-    const parseNum = (v: any): number | null => {
-      if (typeof v === 'number') return Number.isFinite(v) ? v : null;
-      if (typeof v !== 'string' || !v.trim()) return null;
-      const n = Number(v);
-      return Number.isFinite(n) ? n : null;
-    };
+        if (cancelled) return;
 
-    // Pricing & Discount Validation
-    const regNum = parseNum(typeof regular !== 'undefined' ? regular : '');
-    const saleNum = parseNum(typeof sale !== 'undefined' ? sale : '');
-    const offerNum = parseNum(typeof offer !== 'undefined' ? offer : '');
+        // Parse Categories Tree / Roots
+        if (catsResult.status === 'fulfilled' && Array.isArray(catsResult.value)) {
+          const rawCats = catsResult.value;
+          const hasNestedSubs = rawCats.some(
+            (c) => Array.isArray(c.subcategories) && c.subcategories.length > 0
+          );
 
-    if (regNum != null && regNum < 0) {
-      return 'Regular Price (MRP) cannot be negative.';
-    }
-    if (saleNum != null && saleNum < 0) {
-      return 'Sale Price cannot be negative.';
-    }
-    if (saleNum != null && saleNum > 0 && regNum == null) {
-      return 'Regular Price (MRP) is required when a Sale Price is set.';
-    }
-    if (offerNum != null && offerNum > 0 && regNum == null) {
-      return 'Regular Price (MRP) is required when an Offer Discount is set.';
-    }
-    if (regNum != null && saleNum != null && saleNum > regNum) {
-      return 'Sale Price cannot be greater than Regular Price (MRP).';
-    }
-
-    // Order Quantities Validation
-    const minNum = parseNum(typeof minQty !== 'undefined' ? minQty : '');
-    const maxNum = parseNum(typeof maxQty !== 'undefined' ? maxQty : '');
-    if (minNum != null && minNum < 1) {
-      return 'Minimum order quantity must be at least 1.';
-    }
-    if (minNum != null && maxNum != null && maxNum < minNum) {
-      return 'Maximum order quantity cannot be less than minimum order quantity.';
-    }
-
-    // Positive-only specifications (Weight, Dimensions, Unit Count)
-    const positiveSpecs: [any, string][] = [
-      [typeof weight !== 'undefined' ? weight : '', 'Weight'],
-      [typeof unitCount !== 'undefined' ? unitCount : '', 'Unit Count'],
-      [typeof packageLength !== 'undefined' ? packageLength : '', 'Package Length'],
-      [typeof packageBreadth !== 'undefined' ? packageBreadth : '', 'Package Breadth'],
-      [typeof packageHeight !== 'undefined' ? packageHeight : '', 'Package Height'],
-      [typeof productLength !== 'undefined' ? productLength : '', 'Product Length'],
-      [typeof productBreadth !== 'undefined' ? productBreadth : '', 'Product Breadth'],
-      [typeof productHeight !== 'undefined' ? productHeight : '', 'Product Height'],
-    ];
-    for (const [val, label] of positiveSpecs) {
-      if (typeof val === 'string' && val.trim() !== '') {
-        const n = Number(val);
-        if (!Number.isFinite(n) || n <= 0) {
-          return `${label} must be a positive number greater than 0.`;
-        }
-      }
-    }
-
-    if (typeof terms !== 'undefined' && Array.isArray(terms)) {
-      for (const t of terms) {
-        const termLabel = t.name || 'option';
-        const termReg = parseNum(t.regularPrice) ?? regNum;
-        const termSale = parseNum(t.salePrice);
-
-        if (t.regularPrice && typeof t.regularPrice === 'string' && t.regularPrice.trim() !== '') {
-          const tr = parseNum(t.regularPrice);
-          if (tr != null && tr < 0) {
-            return `Regular Price cannot be negative for variant "${termLabel}".`;
-          }
-        }
-        if (termSale != null) {
-          if (termSale < 0) {
-            return `Sale Price cannot be negative for variant "${termLabel}".`;
-          }
-          if (termReg == null) {
-            return `Regular Price is required for variant "${termLabel}" when a Sale Price is set.`;
-          }
-          if (termSale > termReg) {
-            return `Sale Price cannot be greater than Regular Price for variant "${termLabel}".`;
-          }
-        }
-
-        if (t.weightGrams && typeof t.weightGrams === 'string' && t.weightGrams.trim() !== '') {
-          const w = Number(t.weightGrams);
-          if (!Number.isFinite(w) || w < 0) {
-            return `Weight for variant "${termLabel}" must be a non-negative number in grams.`;
-          }
-          if (!Number.isInteger(w)) {
-            return `Weight for variant "${termLabel}" must be a whole number in grams (integers only, e.g. 890 instead of 0.89).`;
-          }
-        }
-      }
-    }
-    return validateProductImages(
-      images.flatMap((image) => image.file ? [image.file] : []),
-      images.filter((image) => !image.file).length
-    );
-  }
-
-  function validateAll(): string {
-    return validateBasics();
-  }
-
-  function onPickImages(e: React.ChangeEvent<HTMLInputElement>) {
-    const files = Array.from(e.target.files ?? []);
-    e.target.value = '';
-    if (!files.length) return;
-    const validationError = validateProductImages(files, images.length, totalImageBytes);
-    if (validationError) {
-      setError(validationError);
-      return;
-    }
-    setError('');
-    setImages((prev) => [
-      ...prev,
-      ...files.map((f) => ({
-        key: uid(),
-        src: URL.createObjectURL(f),
-        name: f.name,
-        size: f.size,
-        file: f,
-      })),
-    ]);
-  }
-
-  async function handleDeleteEditorImage(img: GalleryImage) {
-    setDeletingImageKey(img.key);
-    setError('');
-    try {
-      // If this is a local unsaved file selection, just remove it from state
-      if (img.file && !img.backendImageId) {
-        if (img.src.startsWith('blob:')) URL.revokeObjectURL(img.src);
-        setImages((prev) => prev.filter((x) => x.key !== img.key));
-        return;
-      }
-
-      if (editId) {
-        let targetBackendId = img.backendImageId;
-        if (!targetBackendId) {
-          try {
-            const currentServerImgs = await getAdminProductImages(editId);
-            const matched = currentServerImgs.find((s) => s.image_url === img.src);
-            if (matched?.id != null) targetBackendId = String(matched.id);
-          } catch {
-            throw new Error('Unable to find this image on the server. Please refresh and try again.');
-          }
-        }
-
-        if (targetBackendId) {
-          try {
-            await deleteAdminProductImage(editId, targetBackendId);
-          } catch (apiErr: any) {
-            console.warn('Backend image delete returned status:', apiErr?.message);
-            // A failed response does not establish whether deletion committed.
-            // Verify the database list before changing the gallery.
-          }
-
-          const fresh = await getAdminProductImages(editId);
-          if (fresh) {
-            const stillExists = fresh.some((s) => String(s.id) === String(targetBackendId));
-            if (stillExists) {
-              throw new Error('Image could not be deleted from the server.');
+          if (hasNestedSubs) {
+            const mapped: CategoryOption[] = rawCats
+              .filter((c) => !c.parent_category_id && !c.parent_id)
+              .map((c) => ({
+                id: String(c.category_id ?? c.id ?? ''),
+                name: c.category_name || c.name || 'Unnamed Category',
+                active: c.is_active !== false,
+                subcategories: (c.subcategories || []).map((s: BackendCategory) => ({
+                  id: String(s.category_id ?? s.id ?? ''),
+                  name: s.category_name || s.name || 'Unnamed Subcategory',
+                  active: s.is_active !== false,
+                })),
+              }))
+              .filter((c) => Boolean(c.id));
+            setCategoriesList(mapped);
+          } else {
+            // Flat list or roots list
+            const roots = rawCats.filter((c) => !c.parent_category_id && !c.parent_id);
+            const childrenByParent = new Map<string, SubcategoryOption[]>();
+            for (const c of rawCats) {
+              const parentId = c.parent_category_id ?? c.parent_id;
+              if (parentId != null) {
+                const pKey = String(parentId);
+                const list = childrenByParent.get(pKey) || [];
+                list.push({
+                  id: String(c.category_id ?? c.id ?? ''),
+                  name: c.category_name || c.name || 'Subcategory',
+                  active: c.is_active !== false,
+                });
+                childrenByParent.set(pKey, list);
+              }
             }
-            setImages((prev) => {
-              const unsavedLocal = prev.filter((x) => x.file && !x.backendImageId && x.key !== img.key);
-              const mappedServer: GalleryImage[] = fresh.map((item, idx) => ({
-                key: `existing-${item.id}-${uid()}`,
-                src: item.image_url,
+            const mapped: CategoryOption[] = roots
+              .map((r) => {
+                const rId = String(r.category_id ?? r.id ?? '');
+                return {
+                  id: rId,
+                  name: r.category_name || r.name || 'Unnamed Category',
+                  active: r.is_active !== false,
+                  subcategories: childrenByParent.get(rId) || [],
+                };
+              })
+              .filter((c) => Boolean(c.id));
+            setCategoriesList(mapped);
+          }
+        }
+
+        // Parse Brands
+        if (brandsResult.status === 'fulfilled' && Array.isArray(brandsResult.value?.data)) {
+          setBrandsList(
+            brandsResult.value.data
+              .filter((b) => b.is_active !== false)
+              .map((b) => ({
+                id: String(b.brand_id ?? b.id ?? ''),
+                name: b.brand_name || 'Brand',
+              }))
+              .filter((b) => Boolean(b.id))
+          );
+        }
+
+        // Parse Vendors
+        if (vendorsResult.status === 'fulfilled' && Array.isArray(vendorsResult.value)) {
+          setVendorsList(
+            vendorsResult.value
+              .filter((v) => v.is_active !== false && v.status !== 'inactive')
+              .map((v) => ({
+                id: String(v.id ?? v.vendor_id ?? ''),
+                name: v.name || v.vendor_name || `Vendor #${v.id ?? v.vendor_id}`,
+              }))
+              .filter((v) => Boolean(v.id))
+          );
+        }
+      } finally {
+        if (!cancelled) setLoadingDropdowns(false);
+      }
+    }
+
+    void loadDropdownData();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Dynamically fetch child subcategories if a root category is selected and has 0 loaded subcategories
+  useEffect(() => {
+    const safeCatId = toSafePositiveInt(categoryId);
+    if (!safeCatId) return;
+
+    const currentCat = categoriesList.find((c) => c.id === String(safeCatId));
+    if (!currentCat || currentCat.subcategories.length > 0) return;
+
+    let cancelled = false;
+    getAdminCategories({ parent_category_id: safeCatId, limit: 100, offset: 0 })
+      .then((res) => {
+        if (cancelled || !Array.isArray(res?.data) || res.data.length === 0) return;
+        const subs: SubcategoryOption[] = res.data
+          .map((s) => ({
+            id: String(s.category_id ?? s.id ?? ''),
+            name: s.category_name || s.name || 'Subcategory',
+            active: s.is_active !== false,
+          }))
+          .filter((s) => Boolean(s.id));
+
+        setCategoriesList((prev) =>
+          prev.map((c) => (c.id === String(safeCatId) ? { ...c, subcategories: subs } : c))
+        );
+      })
+      .catch(() => {
+        // Ignore if root category simply has no subcategories
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [categoryId, categoriesList]);
+
+  /* ======================================================================== */
+  /* LOAD PRODUCT IN EDIT MODE (GET /api/admin/products/:id)                  */
+  /* ======================================================================== */
+
+  useEffect(() => {
+    if (!urlId) return;
+    let cancelled = false;
+
+    async function loadExistingProduct(targetId: string) {
+      setIsLoadingProduct(true);
+      setError('');
+      try {
+        const prod = await getAdminProductById(targetId);
+        if (cancelled || !prod) return;
+
+        const resolvedId = String(prod.id ?? prod.product_id ?? targetId);
+        setSavedProductId(resolvedId);
+
+        setProductName(prod.product_name || prod.name || '');
+        const loadedSlug = prod.slug || '';
+        setSlug(loadedSlug);
+        setSlugLocked(Boolean(loadedSlug));
+        setProductCode(prod.product_code || '');
+
+        setSku(prod.sku || '');
+        setBarcode(prod.barcode || '');
+
+        setBrandId(prod.brand_id != null ? String(prod.brand_id) : '');
+        setCategoryId(prod.category_id != null ? String(prod.category_id) : '');
+        setSubcategoryId(prod.subcategory_id != null ? String(prod.subcategory_id) : '');
+        setVendorId(prod.vendor_id != null ? String(prod.vendor_id) : '');
+
+        if (prod.product_type) {
+          setProductType(prod.product_type as NewProductType);
+        }
+        if (prod.product_status) {
+          setProductStatus(prod.product_status as NewProductStatus);
+        }
+
+        const loadedMrp = normalizeDecimalInput(prod.mrp);
+        const loadedSelling = normalizeDecimalInput(prod.selling_price ?? prod.sale_price);
+        const loadedCost = normalizeDecimalInput(prod.cost_price);
+
+        setMrp(loadedMrp);
+        setSellingPrice(loadedSelling);
+        setCostPrice(loadedCost);
+
+        // Compute UI-only discountPercent from loaded mrp & selling_price
+        const mrpNum = parseNullableNumber(loadedMrp);
+        const sellNum = parseNullableNumber(loadedSelling);
+        if (mrpNum != null && mrpNum > 0 && sellNum != null && sellNum >= 0 && sellNum <= mrpNum) {
+          const pct = Math.round((((mrpNum - sellNum) / mrpNum) * 100 + Number.EPSILON) * 100) / 100;
+          setDiscountPercent(Number.isInteger(pct) ? String(pct) : pct.toFixed(2));
+        } else {
+          setDiscountPercent('');
+        }
+
+        setTaxRate(prod.tax_rate != null ? normalizeDecimalInput(prod.tax_rate) : '18');
+        setHsnCode(prod.hsn_code || '');
+
+        const invSummary = prod.inventory;
+        const resolvedStock =
+          prod.stock_quantity ??
+          invSummary?.available_quantity ??
+          invSummary?.total_available ??
+          0;
+        setStockQuantity(String(resolvedStock));
+        setMinStockQuantity(
+          String(prod.min_stock_quantity ?? invSummary?.minimum_stock_level ?? 5)
+        );
+
+        // Details object (`details` or `product_details` or flat fallback)
+        const d = prod.details || prod.product_details || prod;
+
+        setShortDescription(d.short_description ?? prod.short_description ?? '');
+        setFullDescription(d.full_description ?? prod.description ?? '');
+        setKeyFeatures(Array.isArray(d.key_features) ? d.key_features.map(String) : []);
+        setHighlights(Array.isArray(d.highlights) ? d.highlights.map(String) : []);
+
+        setManufacturerName(d.manufacturer_name || '');
+        setManufacturerPartNumber(d.manufacturer_part_number || '');
+        setCountryOfOrigin(d.country_of_origin || 'India');
+        setImportedBy(d.imported_by || '');
+        setMarketedBy(d.marketed_by || '');
+
+        setProductWeight(normalizeDecimalInput(d.product_weight ?? prod.weight));
+        if (d.weight_unit) setWeightUnit(d.weight_unit as NewWeightUnit);
+        setProductLength(normalizeDecimalInput(d.product_length ?? prod.product_length));
+        setProductWidth(normalizeDecimalInput(d.product_width ?? prod.product_breadth));
+        setProductHeight(normalizeDecimalInput(d.product_height ?? prod.product_height));
+        if (d.dimension_unit) setDimensionUnit(d.dimension_unit as NewDimensionUnit);
+
+        setMaterial(d.material || '');
+        setColour(d.colour || '');
+        setSize(d.size || '');
+        setModelNumber(d.model_number || '');
+        setModelName(d.model_name || '');
+        setWarranty(d.warranty || '');
+
+        setPackageContents(
+          Array.isArray(d.package_contents) ? d.package_contents.map(String) : []
+        );
+        setPackageWeight(normalizeDecimalInput(d.package_weight));
+        setPackageLength(normalizeDecimalInput(d.package_length));
+        setPackageWidth(normalizeDecimalInput(d.package_width ?? prod.package_breadth));
+        setPackageHeight(normalizeDecimalInput(d.package_height));
+
+        setUsageInstructions(d.usage_instructions || '');
+        setCareInstructions(d.care_instructions || '');
+        setSafetyInformation(d.safety_information || '');
+        setReturnPolicy(d.return_policy || '');
+
+        setMetaTitle(d.meta_title || '');
+        setMetaDescription(d.meta_description || '');
+        setMetaKeywords(d.meta_keywords || '');
+        setCanonicalUrl(d.canonical_url || '');
+
+        setSpecificationsList(recordToKvList(d.specifications, 'spec'));
+        setAdditionalAttributesList(recordToKvList(d.additional_attributes, 'attr'));
+
+        // Images
+        let rawImages = Array.isArray(prod.images) ? prod.images : [];
+        if (rawImages.length === 0) {
+          try {
+            rawImages = await getAdminProductImages(resolvedId);
+          } catch {
+            rawImages = [];
+          }
+        }
+
+        if (!cancelled && rawImages.length > 0) {
+          const sorted = [...rawImages].sort(
+            (a: any, b: any) => (b?.is_primary ? 1 : 0) - (a?.is_primary ? 1 : 0)
+          );
+          const mappedImages: GalleryImage[] = sorted
+            .map((img: any, idx: number) => {
+              const url =
+                typeof img === 'string'
+                  ? img
+                  : img?.image_url || img?.url || img?.imageUrl || '';
+              const backendId =
+                typeof img === 'object' && img !== null
+                  ? String(img.id ?? img.image_id ?? '')
+                  : '';
+              return {
+                key: backendId ? `server-${backendId}` : uid(),
+                src: url,
                 name: `Image ${idx + 1}`,
                 size: 0,
-                backendImageId: String(item.id),
-                isPrimary: Boolean(item.is_primary ?? idx === 0),
-              }));
-              return [...mappedServer, ...unsavedLocal];
-            });
-            return;
-          }
+                backendImageId: backendId || undefined,
+                isPrimary: Boolean(img?.is_primary) || idx === 0,
+              };
+            })
+            .filter((img: GalleryImage) => Boolean(img.src));
+          setImages(mappedImages);
         }
-        throw new Error('Unable to verify image deletion. Please refresh and try again.');
-      }
-
-      if (img.src.startsWith('blob:')) URL.revokeObjectURL(img.src);
-      setImages((prev) => prev.filter((x) => x.key !== img.key));
-    } catch (err: any) {
-      setError(err?.message || 'Failed to delete image.');
-    } finally {
-      setDeletingImageKey(null);
-    }
-  }
-
-  async function handleSetPrimaryEditorImage(img: GalleryImage) {
-    if (!editId || !img.backendImageId) return;
-    setSettingPrimaryKey(img.key);
-    setError('');
-    try {
-      await setPrimaryProductImage(editId, img.backendImageId);
-      const fresh = await getAdminProductImages(editId).catch(() => null);
-      if (fresh && fresh.length > 0) {
-        setImages((prev) => {
-          const unsavedLocal = prev.filter((x) => x.file && !x.backendImageId);
-          const mappedServer: GalleryImage[] = fresh.map((item, idx) => ({
-            key: `existing-${item.id}-${uid()}`,
-            src: item.image_url,
-            name: `Image ${idx + 1}`,
-            size: 0,
-            backendImageId: String(item.id),
-            isPrimary: Boolean(item.is_primary ?? idx === 0),
-          }));
-          return [...mappedServer, ...unsavedLocal];
-        });
-      } else {
-        setImages((prev) =>
-          prev.map((x) => ({
-            ...x,
-            isPrimary: x.key === img.key,
-          }))
-        );
-      }
-    } catch (err: any) {
-      setError(err?.message || 'Failed to set primary image.');
-    } finally {
-      setSettingPrimaryKey(null);
-    }
-  }
-
-  function patchTerm(key: string, patch: Partial<Term>) {
-    const target = terms.find((t) => t.key === key);
-    if (target && typeof patch.name === 'string' && patch.name.trim()) {
-      const oldName = target.name.trim().toLowerCase();
-      const newName = patch.name.trim();
-      const vId = target.variantTypeId;
-      setSelectedOptionsByVariant((prev) => {
-        const list = prev[vId] || [];
-        const updated = list.map((o) => (o.trim().toLowerCase() === oldName ? newName : o));
-        return { ...prev, [vId]: updated };
-      });
-      setVariantTypesList((prev) =>
-        prev.map((vt) => {
-          if (vt.id !== vId) return vt;
-          const exists = vt.terms.some((x) => x.name.trim().toLowerCase() === newName.toLowerCase());
-          if (exists) return vt;
-          return {
-            ...vt,
-            terms: vt.terms.map((x) =>
-              x.name.trim().toLowerCase() === oldName ? { ...x, name: newName } : x
-            ),
-          };
-        })
-      );
-    }
-    setTerms((prev) => prev.map((t) => (t.key === key ? { ...t, ...patch } : t)));
-  }
-
-  async function handleRemoveTerm(termToRemove: Term) {
-    setError('');
-    const remainingAll = terms.filter((x) => x.key !== termToRemove.key);
-    const remainingForVt = remainingAll.filter(
-      (x) => x.variantTypeId === termToRemove.variantTypeId
-    );
-    setTerms(remainingAll);
-    setSelectedOptionsByVariant((prev) => {
-      const currentList = prev[termToRemove.variantTypeId] || [];
-      return {
-        ...prev,
-        [termToRemove.variantTypeId]: currentList.filter(
-          (opt) => opt.trim().toLowerCase() !== termToRemove.name.trim().toLowerCase()
-        ),
-      };
-    });
-
-    if (remainingForVt.length === 0) {
-      setActiveOptionByVariant((prev) => {
-        const next = { ...prev };
-        delete next[termToRemove.variantTypeId];
-        return next;
-      });
-    } else {
-      setActiveOptionByVariant((prev) => ({
-        ...prev,
-        [termToRemove.variantTypeId]: remainingForVt[0]?.key ?? '',
-      }));
-    }
-
-    if (openTerm === termToRemove.key) {
-      setOpenTerm(remainingAll[0]?.key ?? null);
-    }
-  }
-
-  function toggleVariantType(id: string) {
-    if (!id) return;
-    setError('');
-    setVariantDoneNotice('');
-    const isAlreadySelected = selectedVariantTypeIds.includes(id);
-    if (isAlreadySelected) {
-      const remainingIds = selectedVariantTypeIds.filter((x) => x !== id);
-      setSelectedVariantTypeIds(remainingIds);
-      setTerms((prev) => prev.filter((t) => t.variantTypeId !== id));
-      setSelectedOptionsByVariant((prev) => {
-        const next = { ...prev };
-        delete next[id];
-        return next;
-      });
-      setActiveOptionByVariant((prev) => {
-        const next = { ...prev };
-        delete next[id];
-        return next;
-      });
-      if (activeVariantTabId === id) {
-        setActiveVariantTabId(remainingIds[0] || '');
-      }
-      return;
-    }
-
-    const vt = variantTypesList.find((v) => v.id === id);
-    if (!vt) return;
-
-    // Select the variant type tab WITHOUT dumping all global options into Terms.
-    // Only options explicitly selected by the user + confirmed via "Done" will appear in Terms.
-    const existingTermsForVt = terms.filter((t) => t.variantTypeId === id);
-    setSelectedVariantTypeIds((prev) => (prev.includes(id) ? prev : [...prev, id]));
-    setActiveVariantTabId(id);
-    setSelectedOptionsByVariant((prev) => ({
-      ...prev,
-      [id]:
-        prev[id] && prev[id].length > 0
-          ? prev[id]
-          : existingTermsForVt.map((t) => t.name),
-    }));
-  }
-
-  function selectVariantFromDropdown(id: string) {
-    if (!id) return;
-    if (selectedVariantTypeIds.includes(id)) {
-      setActiveVariantTabId(id);
-      return;
-    }
-    toggleVariantType(id);
-  }
-
-  function toggleOptionSelection(variantId: string, optionName: string) {
-    const clean = optionName.trim();
-    if (!clean) return;
-    setError('');
-    setVariantDoneNotice('');
-    setSelectedOptionsByVariant((prev) => {
-      const current = prev[variantId] || [];
-      const exists = current.some((o) => o.trim().toLowerCase() === clean.toLowerCase());
-      const nextList = exists
-        ? current.filter((o) => o.trim().toLowerCase() !== clean.toLowerCase())
-        : [...current, clean];
-      return { ...prev, [variantId]: nextList };
-    });
-  }
-
-  function handleConfirmVariantsDone() {
-    setError('');
-
-    const activeTypes = selectedVariantTypeIds
-      .map((vId) => {
-        const vt = variantTypesList.find((v) => v.id === vId);
-        const selectedOpts = (selectedOptionsByVariant[vId] || [])
-          .map((o) => o.trim())
-          .filter(Boolean);
-        return { vt, selectedOpts };
-      })
-      .filter(
-        (item): item is { vt: VariantType; selectedOpts: string[] } =>
-          Boolean(item.vt && item.selectedOpts.length > 0)
-      );
-
-    if (activeTypes.length === 0) {
-      setError('Please select at least one variant option before clicking Done.');
-      return;
-    }
-
-    // Cartesian product of option combinations:
-    const optionLists = activeTypes.map((at) =>
-      at.selectedOpts.map((opt) => ({
-        vtId: at.vt.id,
-        vtName: at.vt.name,
-        optName: opt,
-      }))
-    );
-
-    const cartesianCombos = optionLists.reduce<
-      Array<Array<{ vtId: string; vtName: string; optName: string }>>
-    >(
-      (acc, curr) => acc.flatMap((a) => curr.map((b) => [...a, b])),
-      [[]]
-    );
-
-    const nextTerms: Term[] = [];
-    const seenCombos = new Set<string>();
-
-    for (const combo of cartesianCombos) {
-      if (combo.length === 0) continue;
-      const primaryItem = combo[0];
-      const attributes: Record<string, string> = {};
-      for (const item of combo) {
-        attributes[item.vtName] = item.optName;
-      }
-
-      const comboKey = Object.entries(attributes)
-        .map(([k, v]) => `${k.trim().toLowerCase()}:${v.trim().toLowerCase()}`)
-        .sort()
-        .join('::');
-
-      if (seenCombos.has(comboKey)) continue;
-      seenCombos.add(comboKey);
-
-      // Reuse existing Term if already present so saved price/SKU/stock/backendVariantId are preserved
-      const existingTerm = terms.find((t) => {
-        const tAttrs = mergeVariantAttributes(
-          t.attributes,
-          (t.variantTypeName || 'Size').trim(),
-          t.name.trim()
-        );
-        const tKey = Object.entries(tAttrs)
-          .map(([k, v]) => `${k.trim().toLowerCase()}:${v.trim().toLowerCase()}`)
-          .sort()
-          .join('::');
-        return tKey === comboKey;
-      });
-
-      if (existingTerm) {
-        nextTerms.push({
-          ...existingTerm,
-          attributes,
-          variantTypeName: primaryItem.vtName,
-          name: primaryItem.optName,
-        });
-      } else {
-        const vtOpt = primaryItem.vtName
-          ? variantTypesList
-              .find((v) => v.id === primaryItem.vtId)
-              ?.terms.find(
-                (x) => x.name.trim().toLowerCase() === primaryItem.optName.toLowerCase()
-              )
-          : null;
-        const termId = vtOpt?.id || `${primaryItem.vtId}-opt-${uid()}`;
-        const subNames = combo.map((c) => c.optName).join(' / ');
-        nextTerms.push({
-          key: `combo-${comboKey.replace(/[^a-zA-Z0-9]+/g, '-')}-${uid()}`,
-          termId,
-          variantTypeId: primaryItem.vtId,
-          variantTypeName: primaryItem.vtName,
-          name: primaryItem.optName,
-          attributes,
-          sku: '',
-          variantName: subNames,
-          unitCount: unitCount || '',
-          weightGrams: defaultWeightGrams || '',
-          barcode: barcode || '',
-          regularPrice: '',
-          offerPercent: '',
-          salePrice: '',
-          stockQuantity: '',
-          description: '',
-          image: null,
-        });
+      } catch (err: any) {
+        if (!cancelled) {
+          setError(err?.message || 'Failed to load product details.');
+        }
+      } finally {
+        if (!cancelled) {
+          setIsLoadingProduct(false);
+        }
       }
     }
 
-    if (nextTerms.length === 0) {
-      setError('Please select at least one variant option before clicking Done.');
-      return;
-    }
-
-    // Merge newly confirmed terms with existing terms so previously configured options are preserved
-    const mergedTerms: Term[] = [...terms];
-    for (const nt of nextTerms) {
-      const ntKey = Object.entries(
-        mergeVariantAttributes(nt.attributes, nt.variantTypeName || 'Size', nt.name)
-      )
-        .map(([k, v]) => `${k.trim().toLowerCase()}:${v.trim().toLowerCase()}`)
-        .sort()
-        .join('::');
-      const idx = mergedTerms.findIndex((et) => {
-        const etKey = Object.entries(
-          mergeVariantAttributes(et.attributes, et.variantTypeName || 'Size', et.name)
-        )
-          .map(([k, v]) => `${k.trim().toLowerCase()}:${v.trim().toLowerCase()}`)
-          .sort()
-          .join('::');
-        return etKey === ntKey;
-      });
-      if (idx >= 0) {
-        mergedTerms[idx] = { ...mergedTerms[idx], ...nt };
-      } else {
-        mergedTerms.push(nt);
-      }
-    }
-
-    setTerms(mergedTerms);
-    const targetKey = nextTerms[0]?.key || mergedTerms[0]?.key || null;
-    setOpenTerm(targetKey);
-    const noticeText =
-      mergedTerms.length > 1
-        ? `${mergedTerms.length} options configured in Terms.`
-        : `${mergedTerms.length} option synced to Terms.`;
-    setVariantDoneNotice(noticeText);
-    setTab('terms');
-  }
-
-  function handleAddCustomVariantType() {
-    const trimmed = customVariantTypeName.replace(/,/g, ' ').trim();
-    if (!trimmed) return;
-    const newId = trimmed.toLowerCase();
-    const defaultTermKey = `${newId}-opt-1`;
-    const newVt: VariantType = {
-      id: newId,
-      name: trimmed,
-      terms: [{ id: defaultTermKey, name: 'Option 1' }],
+    void loadExistingProduct(urlId);
+    return () => {
+      cancelled = true;
     };
-    setVariantTypesList((prev) =>
-      prev.some((v) => v.id === newId) ? prev : [...prev, newVt]
-    );
-    setSelectedVariantTypeIds((prev) => (prev.includes(newId) ? prev : [...prev, newId]));
-    setActiveVariantTabId(newId);
-    setSelectedOptionsByVariant((prev) => ({
-      ...prev,
-      [newId]: prev[newId] && prev[newId].length > 0 ? prev[newId] : ['Option 1'],
-    }));
-    setCustomVariantTypeName('');
-  }
+  }, [urlId]);
 
-  function handleAddOptionToVariant(variantId: string) {
-    const vt = variantTypesList.find((v) => v.id === variantId);
-    if (!vt) return;
-    const rawInput = (customOptionInputByVariant[variantId] || '').trim();
-    if (!rawInput) return;
-    setError('');
-    setVariantDoneNotice('');
+  /* ------------------------- Derived Calculations ------------------------- */
+  const selectedCategory = useMemo(
+    () => categoriesList.find((c) => c.id === categoryId) ?? null,
+    [categoriesList, categoryId]
+  );
 
-    // Split on comma so comma-separated entries create distinct options and prevent backend 422 comma errors
-    const rawNames = rawInput
-      .split(',')
-      .map((s) => s.trim())
-      .filter((s) => Boolean(s));
+  const pricingMetrics = useMemo(() => {
+    const mrpVal = parseNullableNumber(mrp);
+    const sellVal = parseNullableNumber(sellingPrice);
+    const costVal = parseNullableNumber(costPrice);
+    const taxVal = parseNullableNumber(taxRate) ?? 0;
 
-    if (rawNames.length === 0) return;
-
-    // 1. Add options to variantTypesList if not already present (case-insensitive)
-    setVariantTypesList((prev) =>
-      prev.map((item) => {
-        if (item.id !== variantId) return item;
-        const newTerms = [...item.terms];
-        for (const name of rawNames) {
-          const alreadyInList = newTerms.some(
-            (t) => t.name.trim().toLowerCase() === name.toLowerCase()
-          );
-          if (!alreadyInList) {
-            newTerms.push({ id: `${variantId}-opt-${uid()}`, name });
-          }
-        }
-        return {
-          ...item,
-          terms: newTerms,
-        };
-      })
-    );
-
-    // 2. Automatically mark the new options as selected in selectedOptionsByVariant (without duplicates)
-    setSelectedOptionsByVariant((prev) => {
-      const current = prev[variantId] || [];
-      const updated = [...current];
-      for (const name of rawNames) {
-        if (!updated.some((o) => o.trim().toLowerCase() === name.toLowerCase())) {
-          updated.push(name);
-        }
-      }
-      return {
-        ...prev,
-        [variantId]: updated,
-      };
-    });
-
-    setCustomOptionInputByVariant((prev) => ({ ...prev, [variantId]: '' }));
-  }
-
-  /** Syncs per-product variants with /api/admin/products/:productId/variants */
-  async function syncProductVariants(targetProductId: string | number) {
-    if (productType !== 'VARIABLE' && terms.length === 0 && initialVariantIds.length === 0) return;
-
-    // Deduplicate terms by full attribute combination so duplicate attribute combinations are never sent
-    const uniqueTerms: Term[] = [];
-    const seenAttrCombos = new Set<string>();
-    for (const t of terms) {
-      const attrName = (t.variantTypeName || 'Size').trim();
-      const optVal = t.name.trim();
-      if (!optVal) continue;
-      const mergedAttrs = mergeVariantAttributes(t.attributes, attrName, optVal);
-      const comboKey = Object.entries(mergedAttrs)
-        .map(([k, v]) => `${k.trim()}:${v.trim()}`)
-        .sort()
-        .join('::');
-      if (seenAttrCombos.has(comboKey)) continue;
-      seenAttrCombos.add(comboKey);
-      uniqueTerms.push(t);
+    let discountPct: number | null = null;
+    if (mrpVal != null && mrpVal > 0 && sellVal != null && sellVal >= 0 && sellVal <= mrpVal) {
+      discountPct = Math.round(((mrpVal - sellVal) / mrpVal) * 100);
     }
 
-    // 1. Ensure variant attribute definitions & option values exist on the backend
-    const liveAttrs = await getAllAdminVariantAttributes();
-    const groupedByAttr = new Map<string, { name: string; values: Set<string> }>();
-    for (const term of uniqueTerms) {
-      const attributes = mergeVariantAttributes(term.attributes, (term.variantTypeName || 'Size').trim(), term.name.trim());
-      for (const [name, rawValue] of Object.entries(attributes)) {
-        const attrName = name.trim();
-        const value = rawValue.trim();
-        if (!attrName || !value) throw new Error('Variant attribute names and values cannot be blank.');
-        const key = attrName;
-        if (!groupedByAttr.has(key)) groupedByAttr.set(key, { name: attrName, values: new Set() });
-        groupedByAttr.get(key)!.values.add(value);
-      }
-    }
-    for (const [key, attribute] of groupedByAttr) {
-      const existing =
-        liveAttrs.find((item) => (item.name || '').trim() === key) ||
-        liveAttrs.find(
-          (item) => (item.name || '').trim().toLowerCase() === key.toLowerCase()
-        );
-      if (!existing) {
-        await createAdminVariantAttribute({ name: attribute.name, values: [...attribute.values] });
-      } else {
-        const values = [...new Set([...(existing.values || []), ...attribute.values])];
-        if (values.length > (existing.values || []).length) {
-          await updateAdminVariantAttribute(existing.id, { name: existing.name, values });
-        }
-      }
+    let profitPerUnit: number | null = null;
+    let marginPct: number | null = null;
+    if (sellVal != null && sellVal > 0 && costVal != null && costVal >= 0) {
+      profitPerUnit = Number((sellVal - costVal).toFixed(2));
+      marginPct = Number((((sellVal - costVal) / sellVal) * 100).toFixed(1));
     }
 
-    // 2. Delete variants that were removed in the UI
-    const currentVariantIds = new Set(
-      uniqueTerms.flatMap((t) => (t.backendVariantId != null ? [String(t.backendVariantId)] : []))
-    );
-    for (const oldId of initialVariantIds) {
-      if (!currentVariantIds.has(String(oldId))) {
-        try {
-          await deleteAdminProductVariant(targetProductId, oldId);
-        } catch (err: any) {
-          const is404 =
-            err?.status === 404 ||
-            (err instanceof Error && /not found/i.test(err.message));
-          if (!is404) {
-            throw err;
-          }
-        }
-        setInitialVariantIds((prev) => prev.filter((id) => String(id) !== String(oldId)));
-      }
+    let taxAmount: number | null = null;
+    if (sellVal != null && sellVal > 0 && taxVal >= 0) {
+      taxAmount = Number(((sellVal * taxVal) / (100 + taxVal)).toFixed(2));
     }
-
-    // 3. Create or update each unique term variant
-    const baseSkuPrefix = (
-      sku.trim() ||
-      productCode.trim() ||
-      generateProductSlug(name.trim()) ||
-      `PRD-${targetProductId}`
-    ).toUpperCase();
-
-    for (let idx = 0; idx < uniqueTerms.length; idx++) {
-      const t = uniqueTerms[idx];
-      const attrName = (t.variantTypeName || 'Size').trim();
-      const optVal = t.name.trim();
-      if (!optVal) continue;
-
-      const optSlug = Object.values(mergeVariantAttributes(t.attributes, attrName, optVal))
-        .map((val) => val.replace(/[^a-zA-Z0-9]+/g, '-').toUpperCase())
-        .filter(Boolean)
-        .join('-');
-
-      const resolvedSku =
-        t.sku.trim() ||
-        `${baseSkuPrefix}-${optSlug || optVal.replace(/[^a-zA-Z0-9]+/g, '-').toUpperCase()}-${idx + 1}`;
-
-      // Embed Unit Count (per pack) into variant_name so each size stores its pack count
-      const packCount = t.unitCount.trim();
-      let resolvedVariantName =
-        t.variantName.trim() ||
-        Object.values(mergeVariantAttributes(t.attributes, attrName, optVal)).join(' / ') ||
-        optVal;
-      if (packCount && !/pack\s+of\s+\d+/i.test(resolvedVariantName)) {
-        resolvedVariantName = `${resolvedVariantName} (Pack of ${packCount})`;
-      }
-
-      const variantPayload = {
-        sku: resolvedSku,
-        attributes: mergeVariantAttributes(t.attributes, attrName, optVal),
-        variant_name: resolvedVariantName || null,
-        barcode: t.barcode.trim() || null,
-        weight_grams: (() => {
-          const w = num(t.weightGrams);
-          if (w != null) return Math.max(0, Math.round(w));
-          const fallback = typeof defaultWeightGrams !== 'undefined' ? defaultWeightGrams : null;
-          if (fallback) return Math.max(0, Math.round(Number(fallback)));
-          return null;
-        })(),
-        regular_price: num(t.regularPrice) ?? num(regular) ?? 0,
-        sale_price: num(t.salePrice),
-        // stock_quantity: Math.max(0, Math.floor(num(t.stockQuantity) ?? 0)),
-        is_active: true,
-      };
-
-      if (t.backendVariantId != null) {
-        try {
-          await updateAdminProductVariant(targetProductId, t.backendVariantId, variantPayload);
-        } catch (err: any) {
-          const is404 =
-            err?.status === 404 ||
-            (err instanceof Error && /not found/i.test(err.message));
-          if (is404) {
-            // Variant record was deleted or not found on the server; recreate it transparently
-            const created = await createAdminProductVariant(targetProductId, variantPayload);
-            if (created?.id == null) throw new Error('The server did not return the saved variant ID.');
-            patchTerm(t.key, { backendVariantId: created.id });
-            setInitialVariantIds((prev) => [...prev, created.id]);
-          } else {
-            throw err;
-          }
-        }
-      } else {
-        const created = await createAdminProductVariant(targetProductId, variantPayload);
-        if (created?.id == null) throw new Error('The server did not return the saved variant ID.');
-        patchTerm(t.key, { backendVariantId: created.id });
-        setInitialVariantIds((prev) => [...prev, created.id]);
-      }
-    }
-  }
-
-  /** Builds the payload sent to the backend products API. */
-  function buildApiPayload(targetStatus: ProductStatus) {
-    const catIdNum = Number(categoryId);
-    const subCatIdNum = Number(subCategoryId);
-    const categoryIds: number[] = [];
-    if (!isNaN(catIdNum) && catIdNum > 0) categoryIds.push(catIdNum);
-    if (!isNaN(subCatIdNum) && subCatIdNum > 0 && !categoryIds.includes(subCatIdNum)) {
-      categoryIds.push(subCatIdNum);
-    }
-    const primaryCategoryId =
-      !isNaN(subCatIdNum) && subCatIdNum > 0
-        ? subCatIdNum
-        : !isNaN(catIdNum) && catIdNum > 0
-        ? catIdNum
-        : null;
-
-    const brandNum = brand ? Number(brand) : null;
-    const combinedDescription =
-      description.trim() ||
-      (details.length > 0 ? details.map((d) => `• ${d}`).join('\n') : null);
-    const resolvedShortDesc =
-      shortDescription.trim() ||
-      (details.length > 0 ? details.join(' • ').slice(0, 500) : null);
-    const imageFiles = images
-      .map((i) => i.file)
-      .filter((f): f is File => f instanceof File);
-
-    const parsedKeywords = keywordsText
-      .split(',')
-      .map((k) => k.trim())
-      .filter(Boolean);
-
-    // If variable product has unitCount set on its first term, fallback parent unit_count to it
-    const effectiveUnitCountStr =
-      unitCount.trim() || (productType === 'VARIABLE' ? terms[0]?.unitCount?.trim() || '' : '');
-
-    const effectiveBarcode =
-      (typeof barcode !== 'undefined' ? barcode.trim() : '') ||
-      (terms[0]?.barcode ? terms[0].barcode.trim() : '');
 
     return {
-      product_name: name.trim(),
-      slug: generateProductSlug(slug.trim() || name.trim()),
-      brand_id: brandNum && !isNaN(brandNum) && brandNum > 0 ? brandNum : null,
-      short_description: resolvedShortDesc,
-      description: combinedDescription,
-      product_status: targetStatus,
-      product_type: (productType === 'VARIABLE' ? 'variable' : 'simple') as 'simple' | 'variable',
-      product_code: productCode.trim() || null,
-      sku: sku.trim() || null,
-      regular_price: num(regular),
-      sale_price: num(sale),
-      offer_percent: pricingMode === 'percent' ? num(offer) : null,
-      special_discount_enabled: specialDiscountEnabled,
-      special_discount_percent: num(specialDiscountPercent) ?? 0,
-      festival_offer_enabled: festivalOfferEnabled,
-      festival_offer_percent: num(festivalOfferPercent) ?? 0,
-      stock_quantity: Math.max(0, Math.floor(num(stock) ?? 0)),
-      min_order_quantity: Math.max(1, Math.floor(num(minQty) ?? 1)),
-      max_order_quantity: num(maxQty) != null ? Math.floor(num(maxQty)!) : null,
-      category_ids: categoryIds,
-      primary_category_id: primaryCategoryId,
-      target_audience: targetAudience.trim() || null,
-      hsn_code: hsnCode.trim() || null,
-      gst_rate: num(gstRate),
-      barcode: effectiveBarcode || null,
-      weight: num(weight),
-      weight_unit: weightUnit,
-      unit_count: num(effectiveUnitCountStr) != null ? Math.floor(num(effectiveUnitCountStr)!) : null,
-      package_length: num(packageLength),
-      package_breadth: num(packageBreadth),
-      package_height: num(packageHeight),
-      dimension_unit: dimensionUnit,
-      material: material.trim() || null,
-      colour: colour.trim() || null,
-      package_type: packageType.trim() || null,
-      shelf_life: shelfLife.trim() || null,
-      water_resistant:
-        waterResistant === 'true' ? true : waterResistant === 'false' ? false : null,
-      hazardous_clause: hazardousClause.trim() || null,
-      manufactured_in: manufacturedIn.trim() || null,
-      company_name: companyName.trim() || null,
-      company_address: companyAddress.trim() || null,
-      packer_name: (sameAsManufacturer ? companyName : packerName).trim() || null,
-      packer_address: (sameAsManufacturer ? companyAddress : packerAddress).trim() || null,
-      keywords: parsedKeywords,
-      ...(() => {
-        const effectiveBrand =
-          (typeof brandName !== 'undefined' && brandName && brandName !== 'Unbranded' ? brandName : '') ||
-          (typeof brand !== 'undefined' && brand && brand !== 'Unbranded' ? brand : '');
-        const effectiveBrandOrCompany = effectiveBrand.trim() || (companyName || '').trim() || '';
-        const effectiveCategory =
-          typeof category !== 'undefined' && category?.name
-            ? (typeof subCategoryId !== 'undefined' && subCategoryId
-                ? category?.subs?.find((s) => s.id === subCategoryId)?.name
-                : null) || category.name
-            : typeof categoryId !== 'undefined'
-            ? categoryId
-            : '';
-
-        const autoManufacturerSku = additionalDetails.manufacturer_sku?.trim()
-          ? additionalDetails.manufacturer_sku.trim()
-          : typeof generateManufacturerSku === 'function'
-          ? generateManufacturerSku(effectiveBrandOrCompany, 1)
-          : null;
-
-        const autoModelNumber = additionalDetails.model_number?.trim()
-          ? additionalDetails.model_number.trim()
-          : typeof generateModelNumber === 'function'
-          ? generateModelNumber(effectiveCategory, typeof editId !== 'undefined' ? editId : null)
-          : null;
-
-        const detailsObj = serializeProductDetails(
-          {
-            ...additionalDetails,
-            ...(autoManufacturerSku ? { manufacturer_sku: autoManufacturerSku } : {}),
-            ...(autoModelNumber ? { model_number: autoModelNumber } : {}),
-            ...(typeof productLength !== 'undefined' ? { product_length: productLength } : {}),
-            ...(typeof productBreadth !== 'undefined' ? { product_breadth: productBreadth } : {}),
-            ...(typeof productHeight !== 'undefined' ? { product_height: productHeight } : {}),
-            ...(typeof productDimensionUnit !== 'undefined' ? { product_dimension_unit: productDimensionUnit } : {}),
-          },
-          initialAdditionalDetails
-        );
-        const {
-          product_length: _pl,
-          product_breadth: _pb,
-          product_height: _ph,
-          product_dimension_unit: _pdu,
-          ...restDetails
-        } = detailsObj;
-        return {
-          ...restDetails,
-          ...(detailsObj.product_length !== undefined
-            ? {
-                product_length:
-                  detailsObj.product_length != null && !isNaN(Number(detailsObj.product_length))
-                    ? Number(detailsObj.product_length)
-                    : null,
-              }
-            : {}),
-          ...(detailsObj.product_breadth !== undefined
-            ? {
-                product_breadth:
-                  detailsObj.product_breadth != null && !isNaN(Number(detailsObj.product_breadth))
-                    ? Number(detailsObj.product_breadth)
-                    : null,
-              }
-            : {}),
-          ...(detailsObj.product_height !== undefined
-            ? {
-                product_height:
-                  detailsObj.product_height != null && !isNaN(Number(detailsObj.product_height))
-                    ? Number(detailsObj.product_height)
-                    : null,
-              }
-            : {}),
-          ...(detailsObj.product_dimension_unit !== undefined
-            ? {
-                product_dimension_unit:
-                  typeof detailsObj.product_dimension_unit === 'string' && detailsObj.product_dimension_unit
-                    ? (detailsObj.product_dimension_unit as 'cm' | 'mm' | 'in')
-                    : null,
-              }
-            : {}),
-        };
-      })(),
-      reusable: typeof reusable !== 'undefined' ? (reusable as boolean | null) : null,
-      has_accessories: typeof hasAccessories !== 'undefined' ? Boolean(hasAccessories) : false,
-      accessories:
-        typeof hasAccessories !== 'undefined' &&
-        hasAccessories &&
-        typeof accessoriesText !== 'undefined' &&
-        accessoriesText.trim()
-          ? accessoriesText.trim()
-          : null,
-      item_condition: (typeof itemCondition !== 'undefined' ? itemCondition : 'new') as 'new' | 'refurbished',
-      gift_options_available: typeof giftOptionsAvailable !== 'undefined' ? Boolean(giftOptionsAvailable) : false,
-      gift_options_charge:
-        typeof giftOptionsAvailable !== 'undefined' &&
-        giftOptionsAvailable &&
-        typeof giftOptionsCharge !== 'undefined' &&
-        giftOptionsCharge.trim() !== '' &&
-        !isNaN(Number(giftOptionsCharge))
-          ? Number(Number(giftOptionsCharge).toFixed(2))
-          : null,
-      gift_wrap_available: typeof giftWrapAvailable !== 'undefined' ? Boolean(giftWrapAvailable) : false,
-      gift_wrap_charge:
-        typeof giftWrapAvailable !== 'undefined' &&
-        giftWrapAvailable &&
-        typeof giftWrapCharge !== 'undefined' &&
-        giftWrapCharge.trim() !== '' &&
-        !isNaN(Number(giftWrapCharge))
-          ? Number(Number(giftWrapCharge).toFixed(2))
-          : null,
-      ...(imageFiles.length > 0 ? { images: imageFiles } : {}),
+      mrpVal,
+      sellVal,
+      costVal,
+      discountPct,
+      profitPerUnit,
+      marginPct,
+      taxAmount,
+      sellingExceedsMrp: mrpVal != null && sellVal != null && sellVal > mrpVal,
+      sellingBelowCost: costVal != null && sellVal != null && sellVal < costVal,
     };
+  }, [mrp, sellingPrice, costPrice, taxRate]);
+
+  /* ------------------------- Build Native Backend Payload ----------------- */
+  const nativeWritePayload = useMemo<NativeProductWritePayload>(() => {
+    const finalSlug = generateProductSlug(slug.trim() || productName.trim());
+
+    return {
+      product_code: productCode.trim(),
+      product_name: productName.trim(),
+      slug: finalSlug,
+      sku: cleanNullableString(sku),
+      barcode: cleanNullableString(barcode),
+      brand_id: toSafePositiveInt(brandId),
+      category_id: toSafePositiveInt(categoryId),
+      subcategory_id: toSafePositiveInt(subcategoryId),
+      vendor_id: toSafePositiveInt(vendorId),
+      product_type: productType,
+      product_status: productStatus,
+      mrp: toNonNegativeDecimal(mrp, 2),
+      selling_price: toNonNegativeDecimal(sellingPrice, 2),
+      cost_price: toNonNegativeDecimal(costPrice, 2),
+      tax_rate: toNonNegativeDecimal(taxRate, 2),
+      hsn_code: cleanNullableString(hsnCode),
+      stock_quantity: toNonNegativeSafeInt(stockQuantity, 0),
+      min_stock_quantity: toNonNegativeSafeInt(minStockQuantity, 0),
+      details: {
+        short_description: cleanNullableString(shortDescription),
+        full_description: cleanNullableString(fullDescription),
+        key_features: keyFeatures,
+        highlights: highlights,
+
+        manufacturer_name: cleanNullableString(manufacturerName),
+        manufacturer_part_number: cleanNullableString(manufacturerPartNumber),
+        country_of_origin: cleanNullableString(countryOfOrigin),
+        imported_by: cleanNullableString(importedBy),
+        marketed_by: cleanNullableString(marketedBy),
+
+        product_weight: toNonNegativeDecimal(productWeight, 2),
+        weight_unit: weightUnit,
+        product_length: toNonNegativeDecimal(productLength, 2),
+        product_width: toNonNegativeDecimal(productWidth, 2),
+        product_height: toNonNegativeDecimal(productHeight, 2),
+        dimension_unit: dimensionUnit,
+
+        material: cleanNullableString(material),
+        colour: cleanNullableString(colour),
+        size: cleanNullableString(size),
+        model_number: cleanNullableString(modelNumber),
+        model_name: cleanNullableString(modelName),
+        warranty: cleanNullableString(warranty),
+
+        package_contents: packageContents,
+        package_weight: toNonNegativeDecimal(packageWeight, 2),
+        package_length: toNonNegativeDecimal(packageLength, 2),
+        package_width: toNonNegativeDecimal(packageWidth, 2),
+        package_height: toNonNegativeDecimal(packageHeight, 2),
+
+        usage_instructions: cleanNullableString(usageInstructions),
+        care_instructions: cleanNullableString(careInstructions),
+        safety_information: cleanNullableString(safetyInformation),
+        return_policy: cleanNullableString(returnPolicy),
+
+        meta_title: cleanNullableString(metaTitle),
+        meta_description: cleanNullableString(metaDescription),
+        meta_keywords: cleanNullableString(metaKeywords),
+        canonical_url: cleanNullableString(canonicalUrl),
+
+        specifications: kvListToRecord(specificationsList),
+        additional_attributes: kvListToRecord(additionalAttributesList),
+      },
+    };
+  }, [
+    productCode,
+    productName,
+    slug,
+    sku,
+    barcode,
+    brandId,
+    categoryId,
+    subcategoryId,
+    vendorId,
+    productType,
+    productStatus,
+    mrp,
+    sellingPrice,
+    costPrice,
+    taxRate,
+    hsnCode,
+    stockQuantity,
+    minStockQuantity,
+    shortDescription,
+    fullDescription,
+    keyFeatures,
+    highlights,
+    manufacturerName,
+    manufacturerPartNumber,
+    countryOfOrigin,
+    importedBy,
+    marketedBy,
+    productWeight,
+    weightUnit,
+    productLength,
+    productWidth,
+    productHeight,
+    dimensionUnit,
+    material,
+    colour,
+    size,
+    modelNumber,
+    modelName,
+    warranty,
+    packageContents,
+    packageWeight,
+    packageLength,
+    packageWidth,
+    packageHeight,
+    usageInstructions,
+    careInstructions,
+    safetyInformation,
+    returnPolicy,
+    metaTitle,
+    metaDescription,
+    metaKeywords,
+    canonicalUrl,
+    specificationsList,
+    additionalAttributesList,
+  ]);
+
+  /* ------------------------- Bidirectional Pricing Helpers ---------------- */
+  function formatPriceNumber(val: number): string {
+    const rounded = Math.round((val + Number.EPSILON) * 100) / 100;
+    return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(2);
   }
 
-  async function removeAllBackendVariantsBeforeSimple(targetProductId: string | number) {
-    await removeAllAdminProductVariants(targetProductId);
-    setInitialVariantIds([]);
-    // Retain form values, but do not reference records removed by this conversion.
-    setTerms((prev) => prev.map((term) => ({ ...term, backendVariantId: undefined })));
-  }
+  function handleMrpChange(nextMrp: string) {
+    setMrp(nextMrp);
+    const mrpNum = parseNullableNumber(nextMrp);
+    const discNum = parseNullableNumber(discountPercent);
+    const sellNum = parseNullableNumber(sellingPrice);
 
-  async function persistProduct(targetStatus: ProductStatus) {
-    // Save metadata first so a later upload failure cannot create a second product.
-    const { images: _files, ...payload } = buildApiPayload(targetStatus);
-    validateAdminProductRequestSize(payload, editId == null);
-    let savedId: string | number | null = editId;
-    if (savedId != null) {
-      if (payload.product_type === 'simple' && terms.length === 0 && initialVariantIds.length > 0) {
-        await removeAllBackendVariantsBeforeSimple(savedId);
+    if (mrpNum != null && mrpNum > 0) {
+      if (discNum != null && discNum >= 0 && discNum <= 100) {
+        const computedSelling = mrpNum * (1 - discNum / 100);
+        setSellingPrice(formatPriceNumber(computedSelling));
+      } else if (sellNum != null && sellNum >= 0 && sellNum <= mrpNum) {
+        const computedDiscount = ((mrpNum - sellNum) / mrpNum) * 100;
+        setDiscountPercent(formatPriceNumber(computedDiscount));
       }
-      await updateAdminProduct(savedId, payload);
-    } else {
-      const created = await createAdminProduct(payload);
-      savedId = created?.product_id ?? created?.id ?? null;
-      if (savedId == null) throw new Error('The server did not return the saved product ID.');
-      createdProductIdRef.current = String(savedId);
-      setCreatedProductId(String(savedId));
-      // Preserve the new ID on reload, including after an uncertain upload result.
-      window.history.replaceState(null, '', `/admin/products/edit?id=${encodeURIComponent(savedId)}`);
+    }
+  }
 
-      // If model_number was auto-generated, update it with the real product ID (Option A)
-      if (
-        typeof additionalDetails !== 'undefined' &&
-        !additionalDetails.model_number?.trim() &&
-        typeof generateModelNumber === 'function'
-      ) {
-        const effectiveCategory =
-          typeof category !== 'undefined' && category?.name
-            ? (typeof subCategoryId !== 'undefined' && subCategoryId
-                ? category?.subs?.find((s) => s.id === subCategoryId)?.name
-                : null) || category.name
-            : typeof categoryId !== 'undefined'
-            ? categoryId
-            : '';
-        const realModelNumber = generateModelNumber(effectiveCategory, savedId);
+  function handleDiscountPercentChange(nextDiscount: string) {
+    setDiscountPercent(nextDiscount);
+    const mrpNum = parseNullableNumber(mrp);
+    const discNum = parseNullableNumber(nextDiscount);
+
+    if (mrpNum != null && mrpNum > 0 && discNum != null && discNum >= 0 && discNum <= 100) {
+      const computedSelling = mrpNum * (1 - discNum / 100);
+      setSellingPrice(formatPriceNumber(computedSelling));
+    }
+  }
+
+  function handleSellingPriceChange(nextSelling: string) {
+    setSellingPrice(nextSelling);
+    const mrpNum = parseNullableNumber(mrp);
+    const sellNum = parseNullableNumber(nextSelling);
+
+    if (!nextSelling.trim()) {
+      setDiscountPercent('');
+      return;
+    }
+
+    if (mrpNum != null && mrpNum > 0 && sellNum != null && sellNum >= 0 && sellNum <= mrpNum) {
+      const computedDiscount = ((mrpNum - sellNum) / mrpNum) * 100;
+      setDiscountPercent(formatPriceNumber(computedDiscount));
+    } else {
+      setDiscountPercent('');
+    }
+  }
+
+  /* ------------------------- Smart Helper Actions ------------------------- */
+  function handleGenerateProductCode() {
+    const prefix = (productName.trim().slice(0, 3) || 'PRD')
+      .toUpperCase()
+      .replace(/[^A-Z]/g, 'X');
+    const rand = Math.floor(10000 + Math.random() * 90000);
+    setProductCode(`${prefix}-${rand}`);
+  }
+
+  function handleGenerateSku() {
+    const catPart = selectedCategory ? selectedCategory.name.slice(0, 3).toUpperCase() : 'GEN';
+    const namePart = (productName.trim().slice(0, 3) || 'ITM')
+      .toUpperCase()
+      .replace(/[^A-Z0-9]/g, '');
+    const colorPart = colour.trim() ? `-${colour.trim().slice(0, 3).toUpperCase()}` : '';
+    const rand = Math.floor(100 + Math.random() * 900);
+    setSku(`MB-${catPart}-${namePart}${colorPart}-${rand}`);
+  }
+
+  function handleCopyDimensionsToPackage() {
+    if (productWeight) setPackageWeight(productWeight);
+    if (productLength) setPackageLength(productLength);
+    if (productWidth) setPackageWidth(productWidth);
+    if (productHeight) setPackageHeight(productHeight);
+  }
+
+  function handleAutoFillSeo() {
+    if (!metaTitle.trim() && productName.trim()) {
+      setMetaTitle(productName.trim().slice(0, 60));
+    }
+    if (!metaDescription.trim() && (shortDescription.trim() || fullDescription.trim())) {
+      setMetaDescription((shortDescription.trim() || fullDescription.trim()).slice(0, 160));
+    }
+    const currentSlug = generateProductSlug(slug.trim() || productName.trim());
+    if (!canonicalUrl.trim() && currentSlug) {
+      setCanonicalUrl(`https://merabeta.com/products/${currentSlug}`);
+    }
+  }
+
+  /* ======================================================================== */
+  /* IMAGE HANDLERS (LOCAL + SERVER CRUD WHEN savedProductId EXISTS)          */
+  /* ======================================================================== */
+
+  function handlePickImages(e: React.ChangeEvent<HTMLInputElement>) {
+    const picked = Array.from(e.target.files ?? []);
+    e.target.value = '';
+    if (!picked.length) return;
+
+    const validationErr = validateProductImages(picked, images.length, totalImageBytes, 'add');
+    if (validationErr) {
+      setError(validationErr);
+      return;
+    }
+
+    setError('');
+    const nextImages: GalleryImage[] = picked.map((file, idx) => ({
+      key: uid(),
+      src: URL.createObjectURL(file),
+      name: file.name,
+      size: file.size,
+      file,
+      isPrimary: images.length === 0 && idx === 0,
+    }));
+    setImages((prev) => [...prev, ...nextImages]);
+  }
+
+  async function handleReplaceImageFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    const targetKey = replacingKey;
+    setReplacingKey(null);
+    if (!file || !targetKey) return;
+
+    const targetImg = images.find((img) => img.key === targetKey);
+    if (!targetImg) return;
+
+    const validationErr = validateProductImages([file], images.length - 1, 0, 'replace');
+    if (validationErr) {
+      setError(validationErr);
+      return;
+    }
+
+    // If image already exists on server, replace via PUT /api/admin/products/:id/images/:imageId
+    if (savedProductId && targetImg.backendImageId) {
+      setImageActionBusyKey(targetKey);
+      setError('');
+      try {
+        const replaced = await replaceAdminProductImage(
+          savedProductId,
+          targetImg.backendImageId,
+          file
+        );
+        const newSrc = replaced?.image_url || URL.createObjectURL(file);
+        setImages((prev) =>
+          prev.map((img) =>
+            img.key === targetKey
+              ? {
+                  ...img,
+                  src: newSrc,
+                  name: file.name,
+                  size: file.size,
+                  file: undefined,
+                }
+              : img
+          )
+        );
+      } catch (err: any) {
+        setError(err?.message || 'Failed to replace product image.');
+      } finally {
+        setImageActionBusyKey(null);
+      }
+    } else {
+      const newUrl = URL.createObjectURL(file);
+      if (targetImg.src.startsWith('blob:')) URL.revokeObjectURL(targetImg.src);
+      setImages((prev) =>
+        prev.map((img) =>
+          img.key === targetKey
+            ? { ...img, src: newUrl, name: file.name, size: file.size, file }
+            : img
+        )
+      );
+    }
+  }
+
+  async function handleSetPrimaryImage(targetImg: GalleryImage) {
+    if (savedProductId && targetImg.backendImageId) {
+      setImageActionBusyKey(targetImg.key);
+      setError('');
+      try {
+        await setPrimaryProductImage(savedProductId, targetImg.backendImageId);
+        setImages((prev) =>
+          prev.map((img) => ({
+            ...img,
+            isPrimary: img.key === targetImg.key,
+          }))
+        );
+      } catch (err: any) {
+        setError(err?.message || 'Failed to set primary image.');
+      } finally {
+        setImageActionBusyKey(null);
+      }
+      return;
+    }
+
+    setImages((prev) =>
+      prev.map((img) => ({
+        ...img,
+        isPrimary: img.key === targetImg.key,
+      }))
+    );
+  }
+
+  async function handleRemoveImage(targetImg: GalleryImage) {
+    if (savedProductId && targetImg.backendImageId) {
+      setImageActionBusyKey(targetImg.key);
+      setError('');
+      try {
+        await deleteAdminProductImage(savedProductId, targetImg.backendImageId);
+      } catch (err: any) {
+        setError(err?.message || 'Failed to delete product image.');
+        setImageActionBusyKey(null);
+        return;
+      }
+      setImageActionBusyKey(null);
+    }
+
+    setImages((prev) => {
+      if (targetImg.src.startsWith('blob:')) URL.revokeObjectURL(targetImg.src);
+      const remaining = prev.filter((img) => img.key !== targetImg.key);
+      if (remaining.length > 0 && !remaining.some((img) => img.isPrimary)) {
+        remaining[0] = { ...remaining[0], isPrimary: true };
+      }
+      return remaining;
+    });
+  }
+
+  /* ======================================================================== */
+  /* VALIDATION & SAVE LIFECYCLE (POST -> RETAIN ID -> UPLOAD IMAGES / PATCH) */
+  /* ======================================================================== */
+
+  function validateForm(): string {
+    if (!productName.trim()) {
+      return 'Product Name is required.';
+    }
+    if (!productCode.trim()) {
+      return 'Product Code is required (click "Generate" or enter a unique product code).';
+    }
+    const finalSlug = generateProductSlug(slug.trim() || productName.trim());
+    if (!finalSlug) {
+      return 'URL Slug is required.';
+    }
+    if (pricingMetrics.sellingExceedsMrp) {
+      return 'Selling Price cannot exceed MRP.';
+    }
+    return '';
+  }
+
+  function handleOpenPreview(e: React.FormEvent) {
+    e.preventDefault();
+    const validationError = validateForm();
+    if (validationError) {
+      setError(validationError);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      return;
+    }
+    setError('');
+    setPreviewOpen(true);
+  }
+
+  async function persistProductToBackend(statusOverride?: NewProductStatus) {
+    if (saveInProgressRef.current) return;
+
+    const validationError = validateForm();
+    if (validationError) {
+      setError(validationError);
+      setPreviewOpen(false);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      return;
+    }
+
+    const effectiveStatus = statusOverride ?? productStatus;
+    if (statusOverride) {
+      setProductStatus(statusOverride);
+    }
+
+    const payloadToSend: NativeProductWritePayload = {
+      ...nativeWritePayload,
+      product_status: effectiveStatus,
+    };
+
+    saveInProgressRef.current = true;
+    const isDraftSave = statusOverride === 'draft' && !previewOpen;
+    if (isDraftSave) setSaving(true);
+    else setSubmitting(true);
+    setError('');
+    setSuccessBanner('');
+
+    let activeProductId = savedProductId;
+
+    try {
+      // STEP 1: Create (POST) if no ID yet, or Update (PATCH) if ID already retained
+      if (!activeProductId) {
+        const payloadJson = JSON.stringify(payloadToSend);
+        if (
+          !createIdempotencyRef.current ||
+          createIdempotencyRef.current.payloadJson !== payloadJson
+        ) {
+          createIdempotencyRef.current = {
+            payloadJson,
+            key: generateIdempotencyKey('prod-create'),
+          };
+        }
+
+        const created = await createNativeAdminProduct(payloadToSend, {
+          idempotencyKey: createIdempotencyRef.current.key,
+        });
+
+        const newId = String(created?.id ?? created?.product_id ?? '');
+        if (!newId) {
+          throw new Error('Product was created, but the server did not return a valid product ID.');
+        }
+
+        // Immediately retain returned `data.id` so any subsequent image/network retry uses PATCH
+        activeProductId = newId;
+        setSavedProductId(newId);
+      } else {
+        // On PATCH, omit stock_quantity because warehouse availability maintains it after creation
+        const { stock_quantity: _omitStockOnPatch, ...patchPayload } = payloadToSend;
+        await updateNativeAdminProduct(activeProductId, patchPayload);
+      }
+
+      // STEP 2: Upload any pending local image files separately
+      const pendingFiles = images
+        .filter((img) => Boolean(img.file) && !img.backendImageId)
+        .map((img) => img.file as File);
+
+      if (pendingFiles.length > 0 && activeProductId) {
+        const filesSignature = pendingFiles
+          .map((f) => `${f.name}:${f.size}:${f.lastModified}`)
+          .join('|');
+
+        if (
+          !uploadImagesIdempotencyRef.current ||
+          uploadImagesIdempotencyRef.current.filesSignature !== filesSignature
+        ) {
+          uploadImagesIdempotencyRef.current = {
+            filesSignature,
+            key: generateIdempotencyKey(`img-upload-${activeProductId}`),
+          };
+        }
+
+        const uploadedRecords = await uploadAdminProductImages(activeProductId, pendingFiles, {
+          idempotencyKey: uploadImagesIdempotencyRef.current.key,
+        });
+
+        // Refresh image list from server so local files are marked as persisted
         try {
-          await updateAdminProduct(savedId, { model_number: realModelNumber });
-          if (typeof setAdditionalDetails === 'function') {
-            setAdditionalDetails((prev) => ({ ...prev, model_number: realModelNumber }));
+          const serverImages =
+            uploadedRecords.length > 0
+              ? uploadedRecords
+              : await getAdminProductImages(activeProductId);
+          if (serverImages.length > 0) {
+            setImages(
+              serverImages.map((rec, idx) => ({
+                key: `server-${rec.id}`,
+                src: rec.image_url,
+                name: `Image ${idx + 1}`,
+                size: 0,
+                backendImageId: String(rec.id),
+                isPrimary: Boolean(rec.is_primary) || idx === 0,
+              }))
+            );
           }
         } catch {
-          // non-blocking
+          // Non-fatal if gallery refresh fails after upload succeeds
         }
       }
-    }
-    setInitialAdditionalDetails({ ...additionalDetails });
 
-    // Persist each successful upload immediately, before variants or the next file
-    // can fail. A retry then includes only files that have not been uploaded.
-    for (const image of images.filter((item) => item.file && !item.backendImageId)) {
-      const before = await getAdminProductImages(savedId);
-      const validationError = validateProductImages([image.file!], before.length);
-      if (validationError) throw new Error(validationError);
-      try {
-        await uploadAdminProductImages(savedId, [image.file!]);
-        const after = await getAdminProductImages(savedId);
-        const added = after.filter((item) => !before.some((old) => String(old.id) === String(item.id)));
-        if (added.length !== 1) throw new Error('Unable to identify the uploaded image.');
-        const uploaded = added[0];
-        setImages((prev) => prev.map((item) => item.key === image.key ? {
-          ...item,
-          src: uploaded.image_url,
-          backendImageId: String(uploaded.id),
-          isPrimary: uploaded.is_primary,
-          file: undefined,
-        } : item));
-        if (image.src.startsWith('blob:')) URL.revokeObjectURL(image.src);
-      } catch (err) {
-        uncertainImageUpload.current = true;
-        const reason = err instanceof Error ? err.message : 'Image upload failed.';
-        throw new Error(`Product ${savedId} was saved, but an image upload could not be verified: ${reason} Reload this product to check its images before retrying.`);
-      }
-    }
-    if (productType === 'VARIABLE' || terms.length > 0 || initialVariantIds.length > 0) {
-      await syncProductVariants(savedId);
-    }
-  }
+      setPreviewOpen(false);
+      setSuccessBanner(
+        effectiveStatus === 'draft'
+          ? `Product draft saved (ID: #${activeProductId})!`
+          : isEditing
+          ? `Product #${activeProductId} updated successfully!`
+          : `Product published successfully (ID: #${activeProductId})!`
+      );
+      window.scrollTo({ top: 0, behavior: 'smooth' });
 
-  async function saveDraft() {
-    if (saveInProgress.current || deletingImageKey || settingPrimaryKey || replacingImage) return;
-    saveInProgress.current = true;
-    setSaving(true);
-    setError('');
-    try {
-      const msg = validateBasics();
-      if (msg) throw new Error(msg);
-
-      await persistProduct('draft');
-      setSuccessMessage('Draft saved successfully.');
-      setTimeout(() => {
-        router.replace('/admin/products');
-        router.refresh();
-      }, 1200);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unable to save the product draft.');
-    } finally {
-      saveInProgress.current = false;
-      setSaving(false);
-    }
-  }
-
-  async function confirmPublish() {
-    if (saveInProgress.current || deletingImageKey || settingPrimaryKey || replacingImage) return;
-    saveInProgress.current = true;
-    setSubmitting(true);
-    setError('');
-    try {
-      const msg = validateBasics();
-      if (msg) {
-        setPreviewOpen(false);
-        throw new Error(msg);
-      }
-      await persistProduct(productStatus);
-      setSuccessMessage(isEditing ? 'The product has been updated successfully!' : 'The product has been published successfully!');
       setTimeout(() => {
         router.push('/admin/products');
         router.refresh();
-      }, 1500);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unable to publish the product.');
+      }, 1200);
+    } catch (err: any) {
+      const baseMsg = err?.message || 'Unable to save the product.';
+      if (activeProductId && !savedProductId) {
+        setError(
+          `${baseMsg} (Product #${activeProductId} was saved; retry to finish uploading images or changes without creating a duplicate.)`
+        );
+      } else {
+        setError(baseMsg);
+      }
+      setPreviewOpen(false);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
     } finally {
-      saveInProgress.current = false;
+      saveInProgressRef.current = false;
+      setSaving(false);
       setSubmitting(false);
     }
   }
 
-  const termInputBase = INPUT_CLASS;
-  const sectionCard = 'rounded-2xl bg-[#F7F7F7] p-5';
-
   return (
     <>
-      <section className="min-h-[calc(100vh-90px)] rounded-2xl bg-white px-4 sm:px-6 pt-4 sm:pt-[18px] pb-8 text-[#252525] shadow-sm">
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            const msg = validateAll();
-            if (msg) {
-              setError(msg);
-              return;
-            }
-            setError('');
-            setSuccessMessage('');
-            setPreviewOpen(true);
-          }}
-        >
-          <fieldset disabled={saving || submitting || isLoadingProduct || Boolean(deletingImageKey || settingPrimaryKey) || replacingImage} className="contents">
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between border-b border-[#F0F0F0] pb-4">
-            <div>
-              <div className="flex items-center gap-2.5">
-                <h2 className="text-[20px] font-bold text-gray-900 tracking-tight">
-                  {isEditing ? 'Edit Product' : copiedFromInfo ? 'Add Product (Copied Listing)' : 'Add New Product'}
-                </h2>
-                {editId && (
-                  <span className="rounded-md bg-orange-50 px-2.5 py-0.5 font-mono text-[11px] font-semibold text-[#F47C35] border border-orange-200">
-                    ID: #{editId}
-                  </span>
-                )}
-                {copiedFromInfo && (
-                  <span className="rounded-md bg-indigo-50 px-2.5 py-0.5 font-mono text-[11px] font-semibold text-indigo-700 border border-indigo-200">
-                    Copied from #{copiedFromInfo.id}
-                  </span>
-                )}
-                {isLoadingProduct && (
-                  <span className="flex items-center gap-1.5 text-[12px] text-gray-400">
-                    <Loader2 size={13} className="animate-spin text-[#F47C35]" />
-                    <span>Loading...</span>
-                  </span>
-                )}
+      <section className="min-h-[calc(100vh-90px)] rounded-2xl bg-[#F8FAFC] px-4 sm:px-6 pt-5 pb-12 text-[#1E293B]">
+        <form onSubmit={handleOpenPreview} noValidate className="space-y-6">
+          <fieldset
+            disabled={isLoadingProduct || saving || submitting || Boolean(imageActionBusyKey)}
+            className="contents"
+          >
+            {/* ============================================================== */}
+            {/* TOP HEADER BAR                                                 */}
+            {/* ============================================================== */}
+            <div className="rounded-2xl border border-[#E2E8F0] bg-white p-4 sm:p-5 shadow-2xs">
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <div className="flex flex-wrap items-center gap-2.5">
+                    <h2 className="text-[20px] sm:text-[22px] font-bold text-[#0F172A] tracking-tight">
+                      {isEditing ? 'Edit Product' : 'Add New Product'}
+                    </h2>
+                    {savedProductId && (
+                      <span className="rounded-md border border-orange-200 bg-orange-50 px-2.5 py-0.5 font-mono text-[11px] font-semibold text-[#F47C35]">
+                        ID: #{savedProductId}
+                      </span>
+                    )}
+                    {(isLoadingProduct || loadingDropdowns) && (
+                      <span className="inline-flex items-center gap-1.5 text-[12px] text-[#64748B]">
+                        <Loader2 size={14} className="animate-spin text-[#F47C35]" />
+                        <span>Loading...</span>
+                      </span>
+                    )}
+                  </div>
+                  <p className="mt-0.5 text-[13px] text-[#64748B]">
+                    Fill in the product details, pricing, inventory, specifications, packaging, and SEO information below.
+                  </p>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2.5">
+                  <button
+                    type="button"
+                    disabled={saving || submitting || isLoadingProduct}
+                    onClick={() => void persistProductToBackend('draft')}
+                    className="inline-flex h-10 items-center gap-1.5 rounded-xl border border-[#DCE0E8] bg-white px-4 text-[13px] font-semibold text-[#334155] transition-colors hover:bg-[#F8FAFC] disabled:opacity-60 cursor-pointer"
+                  >
+                    {saving && <Loader2 size={15} className="animate-spin text-[#64748B]" />}
+                    <span>{saving ? 'Saving Draft...' : 'Save as Draft'}</span>
+                  </button>
+
+                  <button
+                    type="submit"
+                    disabled={saving || submitting || isLoadingProduct}
+                    className="inline-flex h-10 items-center gap-2 rounded-xl bg-[#F47C35] px-5 text-[13.5px] font-semibold text-white shadow-xs transition-colors hover:bg-[#E06924] disabled:opacity-60 cursor-pointer"
+                  >
+                    {submitting ? (
+                      <Loader2 size={15} className="animate-spin" />
+                    ) : (
+                      <Eye size={15} />
+                    )}
+                    <span>
+                      {submitting
+                        ? 'Saving...'
+                        : isEditing
+                        ? 'Save Changes'
+                        : 'Publish Product'}
+                    </span>
+                  </button>
+                </div>
               </div>
-              <p className="mt-1 text-[13px] text-gray-500">
-                {isEditing
-                  ? 'Update existing product catalog details, pricing, and images'
-                  : copiedFromInfo
-                  ? 'Review copied details, fill in pricing, dimensions, and images for this variant'
-                  : 'Configure product catalog details, pricing, and images'}
-              </p>
             </div>
-            <div className="flex items-center gap-2.5 w-full sm:w-auto">
-              {isEditing && editId && (
+
+            {/* Alerts */}
+            {error && (
+              <div
+                role="alert"
+                className="flex items-center justify-between gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-[13px] font-medium text-red-700"
+              >
+                <span>{error}</span>
                 <button
                   type="button"
-                  disabled={saving || submitting || isLoadingProduct}
-                  onClick={() => router.push(`/admin/products/add?copyFrom=${editId}`)}
-                  className="hidden sm:inline-flex h-10 sm:h-11 items-center justify-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50 px-3.5 sm:px-4 text-[13px] sm:text-[14px] font-medium text-indigo-700 hover:bg-indigo-100 transition-colors disabled:opacity-60 cursor-pointer"
-                  title="Copy this listing as a new variant"
+                  onClick={() => setError('')}
+                  className="rounded-lg p-1 text-red-500 hover:bg-red-100 cursor-pointer"
                 >
-                  <Copy size={15} />
-                  <span>Copy Listing</span>
+                  <X size={15} />
                 </button>
-              )}
-              <button
-                type="button"
-                disabled={saving || submitting || isLoadingProduct}
-                onClick={() => void saveDraft()}
-                className="flex-1 sm:flex-initial flex h-10 sm:h-11 items-center justify-center gap-2 rounded-lg border border-gray-300 bg-white px-4 sm:px-5 text-[13px] sm:text-[14px] font-medium text-gray-700 hover:bg-gray-50 hover:border-gray-400 transition-colors disabled:opacity-60 cursor-pointer"
-              >
-                {saving && <Loader2 size={16} className="animate-spin text-gray-600" />}
-                {saving ? 'Saving...' : 'Save as Draft'}
-              </button>
-              <button
-                type="submit"
-                disabled={saving || submitting || isLoadingProduct}
-                className="flex-1 sm:flex-initial flex h-10 sm:h-11 items-center justify-center gap-2 rounded-lg bg-[#F47C35] px-5 sm:px-7 text-[13px] sm:text-[14px] font-semibold text-white hover:bg-[#E96F29] shadow-sm transition-colors disabled:opacity-60 cursor-pointer"
-              >
-                {isEditing ? 'Save Changes' : 'Publish'}
-              </button>
-            </div>
-          </div>
-
-          {copiedFromInfo && (
-            <div className="mt-4 flex items-start gap-3 rounded-xl border border-indigo-200 bg-indigo-50/70 p-4 text-indigo-900 shadow-2xs">
-              <Copy className="mt-0.5 h-5 w-5 text-indigo-600 shrink-0" />
-              <div className="flex-1 text-sm">
-                <p className="font-semibold text-indigo-950">
-                  Copying listing from: <span className="underline decoration-indigo-300">{copiedFromInfo.name}</span> (ID: #{copiedFromInfo.id})
-                </p>
-                <p className="mt-0.5 text-xs text-indigo-700">
-                  Descriptions, brand, categories, and specifications were copied. Pricing, order limits, barcode, dimensions, dates, and images have been left blank for this new variant.
-                </p>
               </div>
-              <button
-                type="button"
-                onClick={() => setCopiedFromInfo(null)}
-                className="text-indigo-400 hover:text-indigo-700 cursor-pointer"
-                title="Dismiss notice"
+            )}
+
+            {successBanner && (
+              <div
+                role="status"
+                className="flex items-center justify-between gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-[13px] font-medium text-emerald-800"
               >
-                <X size={16} />
-              </button>
-            </div>
-          )}
-
-          {error && !previewOpen && (
-            <p
-              role="alert"
-              className="mt-4 rounded-lg border border-[#F4B6A2] bg-[#FFF6F2] px-4 py-3 text-[13px] text-[#C23D22]"
-            >
-              {error}
-            </p>
-          )}
-
-          <div className="mt-7 grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_300px]">
-            {/* ------------------------- left column ------------------------- */}
-            <div>
-              <Label htmlFor="product-name" required>
-                Product Name
-              </Label>
-              <input
-                id="product-name"
-                value={name}
-                onChange={(e) => {
-                  const val = e.target.value;
-                  setName(val);
-                  if (!slugTouched) {
-                    setSlug(generateProductSlug(val));
-                  }
-                  setError('');
-                }}
-                maxLength={255}
-                placeholder="Enter product name"
-                className={INPUT_CLASS}
-              />
-
-              <div className="mt-5 grid gap-5 md:grid-cols-2">
-                <div>
-                  <Label htmlFor="product-status" required>
-                    Product Status
-                  </Label>
-                  <Select
-                    id="product-status"
-                    value={productStatus}
-                    options={[
-                      { value: 'inactive', label: 'Inactive' },
-                      { value: 'draft', label: 'Draft' },
-                    ]}
-                    onChange={(v) => setProductStatus((v || 'draft') as ProductStatus)}
-                  />
+                <div className="flex items-center gap-2">
+                  <CheckCircle2 size={17} className="text-emerald-600 shrink-0" />
+                  <span>{successBanner}</span>
                 </div>
-                <div>
-                  <Label htmlFor="short-description">
-                    Short Description
-                  </Label>
-                  <input
-                    id="short-description"
-                    value={shortDescription}
-                    onChange={(e) => setShortDescription(e.target.value)}
-                    maxLength={500}
-                    placeholder="Enter a short summary of the product (optional)"
-                    className={INPUT_CLASS}
-                  />
-                </div>
+                <button
+                  type="button"
+                  onClick={() => setSuccessBanner('')}
+                  className="rounded-lg p-1 text-emerald-700 hover:bg-emerald-100 cursor-pointer"
+                >
+                  <X size={15} />
+                </button>
               </div>
+            )}
 
-              <div className="mt-5">
-                <Label htmlFor="product-description" required>
-                  Product Description
-                </Label>
-                <BulletTextarea
-                  id="product-description"
-                  value={description}
-                  maxLength={2000}
-                  onValueChange={setDescription}
-                  placeholder="Add the full product description"
-                  className="min-h-[125px] w-full resize-y rounded-lg border border-[#D7D7D7] p-4 text-[14px] leading-6 outline-none placeholder:text-[#A6A6A6] focus:border-[#F47C35]"
+            {/* ============================================================== */}
+            {/* ROW 1: TOP 2-COLUMN SECTION (BASIC INFO + IMAGES/TAXONOMY)     */}
+            {/* ============================================================== */}
+            <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
+              {/* LEFT: Basic Information & Descriptions */}
+              <div className={CARD_CLASS}>
+                <SectionHeader
+                  icon={FileText}
+                  title="Basic Information & Descriptions"
+                  subtitle="Product title, URL slug, product code, summary, full description, key features, and highlights."
                 />
-                <p className="mt-1 text-right text-[10px] text-[#999]">{description.length}/2000</p>
-              </div>
 
-              <div className="mt-5">
-                <Label htmlFor="product-details" required>
-                  Product Details
-                </Label>
-                <BulletTextarea
-                  id="product-details"
-                  value={detailsText}
-                  onValueChange={(v) => {
-                    setDetailsText(v);
-                    setDetails(parseDetails(v));
-                  }}
-                  placeholder="Paste a paragraph, bullets, numbered list, or multiline details"
-                  className="min-h-[155px] w-full resize-y rounded-lg border border-[#D7D7D7] bg-white p-4 text-[14px] leading-6 outline-none placeholder:text-[#A6A6A6] focus:border-[#F47C35]"
-                />
-                <p className="mt-1 text-right text-[10px] text-[#999]">{details.length} points detected</p>
-              </div>
-
-              {/* Product type + tabs */}
-              <div className="mt-6 rounded-2xl bg-[#F7F7F7] p-4">
-                <div className="flex items-center justify-between gap-5">
-                  <h3 className="text-[17px] font-semibold text-[#111]">Product Type</h3>
-                </div>
-
-                <div className="mt-5 grid grid-cols-2 gap-3 md:grid-cols-4">
-                  {TABS.map((t) => (
-                    <button
-                      key={t.id}
-                      type="button"
-                      onClick={() => setTab(t.id)}
-                      className={`h-10 rounded-lg border text-[12px] shadow-sm disabled:cursor-not-allowed disabled:opacity-40 cursor-pointer ${
-                        tab === t.id ? 'border-[#D6A7EA] bg-[#F6ECFA]' : 'border-[#ECECEC] bg-white'
-                      }`}
+                <div className="space-y-5">
+                  {/* Product Name */}
+                  <div>
+                    <FieldLabel
+                      htmlFor="product_name"
+                      required
+                      hint={`${productName.length}/255`}
                     >
-                      {t.label}
-                    </button>
-                  ))}
-                </div>
+                      Product Name
+                    </FieldLabel>
+                    <input
+                      id="product_name"
+                      type="text"
+                      maxLength={255}
+                      value={productName}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setProductName(val);
+                        if (!slugLocked) {
+                          setSlug(generateProductSlug(val));
+                        }
+                        if (error) setError('');
+                      }}
+                      placeholder="Enter product name"
+                      className={INPUT_CLASS}
+                    />
+                  </div>
 
-                <div className="mt-5 border border-[#E6E6E6] bg-white p-4">
-                  {tab === 'inventory' && (
+                  {/* Slug & Product Code */}
+                  <div className="grid gap-4 md:grid-cols-2">
                     <div>
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <h4 className="text-[15px] font-semibold">Inventory & Pricing</h4>
-                        {serverEffectivePrice && (
-                          <span className="rounded-lg bg-emerald-50 border border-emerald-200 px-3 py-1 text-[12px] font-semibold text-emerald-700">
-                            Server Effective Price: ₹{serverEffectivePrice}
-                          </span>
-                        )}
-                      </div>
-                      <div className="mt-5 grid gap-5 md:grid-cols-2">
-                        <div>
-                          <Label htmlFor="product-code">Product Code</Label>
-                          <input
-                            id="product-code"
-                            value={productCode}
-                            onChange={(e) => setProductCode(e.target.value)}
-                            maxLength={100}
-                            placeholder="Eg: JOY-01"
-                            className={INPUT_CLASS}
-                          />
-                        </div>
-                        <div>
-                          <Label htmlFor="sku">SKU</Label>
-                          <input
-                            id="sku"
-                            value={sku}
-                            onChange={(e) => setSku(e.target.value)}
-                            maxLength={100}
-                            placeholder="Eg: JOY-SIMPLE"
-                            className={INPUT_CLASS}
-                          />
-                        </div>
-                        <div>
-                          <Label htmlFor="minimum-quantity">Min Order Quantity</Label>
-                          <input
-                            id="minimum-quantity"
-                            type="number"
-                            min="1"
-                            step="1"
-                            value={minQty}
-                            onChange={(e) => setMinQty(e.target.value)}
-                            className={INPUT_CLASS}
-                          />
-                        </div>
-                        <div>
-                          <Label htmlFor="maximum-quantity">Max Order Quantity (blank = no max)</Label>
-                          <input
-                            id="maximum-quantity"
-                            type="number"
-                            min="1"
-                            step="1"
-                            placeholder="No limit"
-                            value={maxQty}
-                            onChange={(e) => setMaxQty(e.target.value)}
-                            className={INPUT_CLASS}
-                          />
-                        </div>
-
-                        <div>
-                          <Label htmlFor="regular-price">Regular Price (MRP)</Label>
-                          <input
-                            id="regular-price"
-                            type="number"
-                            min="0"
-                            step="0.01"
-                            value={regular}
-                            onChange={(e) => {
-                              const nextReg = e.target.value;
-                              setRegular(nextReg);
-                              if (pricingMode === 'percent' && offer.trim()) {
-                                setSale(salePriceFrom(nextReg, offer));
-                              } else if (sale.trim()) {
-                                setOffer(offerPercentFrom(nextReg, sale));
-                              }
-                            }}
-                            placeholder="Eg: 1000"
-                            className={INPUT_CLASS}
-                          />
-                        </div>
-                        <div>
-                          <Label htmlFor="sale-price">Sale Price (Offer Price)</Label>
-                          <input
-                            id="sale-price"
-                            type="number"
-                            min="0"
-                            step="0.01"
-                            value={sale}
-                            onChange={(e) => {
-                              const nextSale = e.target.value;
-                              setPricingMode('manual');
-                              setSale(nextSale);
-                              setOffer(offerPercentFrom(regular, nextSale));
-                            }}
-                            placeholder="Eg: 900"
-                            className={INPUT_CLASS}
-                          />
-                        </div>
-                        <div>
-                          <Label htmlFor="offer-percent">Offer Percent (%)</Label>
-                          <input
-                            id="offer-percent"
-                            type="number"
-                            min="0"
-                            max="100"
-                            step="0.01"
-                            value={offer}
-                            onChange={(e) => {
-                              const nextOffer = e.target.value;
-                              setPricingMode(nextOffer.trim() ? 'percent' : 'manual');
-                              setOffer(nextOffer);
-                              setSale(salePriceFrom(regular, nextOffer));
-                            }}
-                            placeholder="Eg: 10"
-                            className={INPUT_CLASS}
-                          />
-                        </div>
-                        <div>
-                          <Label htmlFor="stock-quantity">Stock Quantity</Label>
-                          <input
-                            id="stock-quantity"
-                            type="number"
-                            min="0"
-                            step="1"
-                            value={stock}
-                            onChange={(e) => setStock(e.target.value)}
-                            placeholder="Eg: 25"
-                            className={INPUT_CLASS}
-                          />
-                        </div>
-
-                        {/* Special & Festival Discounts */}
-                        <div className="rounded-xl border border-gray-200 bg-gray-50 p-3.5 space-y-2">
-                          <label className="flex items-center gap-2 text-[13px] font-semibold text-gray-800 cursor-pointer">
-                            <input
-                              type="checkbox"
-                              checked={specialDiscountEnabled}
-                              onChange={(e) => setSpecialDiscountEnabled(e.target.checked)}
-                              className="h-4 w-4 accent-[#F47C35]"
-                            />
-                            <span>Enable Special Discount</span>
-                          </label>
-                          <input
-                            type="number"
-                            min="0"
-                            max="100"
-                            step="0.01"
-                            disabled={!specialDiscountEnabled}
-                            value={specialDiscountPercent}
-                            onChange={(e) => setSpecialDiscountPercent(e.target.value)}
-                            placeholder="Special Discount %"
-                            className={INPUT_CLASS}
-                          />
-                        </div>
-
-                        <div className="rounded-xl border border-gray-200 bg-gray-50 p-3.5 space-y-2">
-                          <label className="flex items-center gap-2 text-[13px] font-semibold text-gray-800 cursor-pointer">
-                            <input
-                              type="checkbox"
-                              checked={festivalOfferEnabled}
-                              onChange={(e) => setFestivalOfferEnabled(e.target.checked)}
-                              className="h-4 w-4 accent-[#F47C35]"
-                            />
-                            <span>Enable Festival Offer</span>
-                          </label>
-                          <input
-                            type="number"
-                            min="0"
-                            max="100"
-                            step="0.01"
-                            disabled={!festivalOfferEnabled}
-                            value={festivalOfferPercent}
-                            onChange={(e) => setFestivalOfferPercent(e.target.value)}
-                            placeholder="Festival Offer %"
-                            className={INPUT_CLASS}
-                          />
-                        </div>
-                      </div>
+                      <FieldLabel htmlFor="slug" required>
+                        URL Slug
+                      </FieldLabel>
+                      <input
+                        id="slug"
+                        type="text"
+                        value={slug}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setSlug(val);
+                          setSlugLocked(Boolean(val.trim()));
+                        }}
+                        placeholder="auto-generated-from-name"
+                        className={`${INPUT_CLASS} font-mono text-[12.5px]`}
+                      />
                     </div>
-                  )}
 
-                  {tab === 'shipping' && (
-                    <div className="space-y-5">
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <div>
-                          <h4 className="text-[15px] font-semibold text-gray-900">
-                            Product Specifications
-                          </h4>
-                          <p className="text-[12px] text-gray-500">
-                            Click a standard preset chip or choose <span className="font-semibold text-[#F47C35]">+ Custom</span> to type your own value.
-                          </p>
-                        </div>
-                      </div>
-
-                      {/* 1. Tax & Compliance */}
-                      <div className="rounded-xl border border-[#EAEAEA] bg-[#FAFAFA] p-4 space-y-4">
-                        <h5 className="text-[13px] font-bold uppercase tracking-wider text-[#0D2B53]">
-                          1. Tax & Compliance (GST & HSN)
-                        </h5>
-                        <div className="grid gap-4 md:grid-cols-2">
-                          <div>
-                            <Label htmlFor="spec-gst">GST Rate (%)</Label>
-                            <PresetChipsWithCustom
-                              id="spec-gst"
-                              value={gstRate}
-                              onChange={setGstRate}
-                              presets={GST_PRESETS}
-                              suffix="%"
-                              type="number"
-                              placeholder="Enter custom GST % (e.g. 12)"
-                            />
-                          </div>
-                          <div>
-                            <Label htmlFor="spec-hsn">HSN Code</Label>
-                            <PresetChipsWithCustom
-                              id="spec-hsn"
-                              value={hsnCode}
-                              onChange={setHsnCode}
-                              presets={HSN_PRESETS}
-                              placeholder="Enter 4 to 8 digit HSN code (e.g. 961900)"
-                            />
-                          </div>
-                        </div>
-
-                        <div>
-                          <Label htmlFor="spec-barcode">Barcode / EAN (optional)</Label>
-                          <input
-                            id="spec-barcode"
-                            value={barcode}
-                            onChange={(e) => {
-                              const val = e.target.value;
-                              setBarcode(val);
-                              setTerms((prev) => prev.map((t) => ({ ...t, barcode: val })));
-                            }}
-                            placeholder="Eg: 8901234567890"
-                            className={INPUT_CLASS}
-                          />
-                        </div>
-                      </div>
-
-                      {/* 2. Product Attributes & Packaging */}
-                      <div className="rounded-xl border border-[#EAEAEA] bg-[#FAFAFA] p-4 space-y-4">
-                        <h5 className="text-[13px] font-bold uppercase tracking-wider text-[#0D2B53]">
-                          2. Product Attributes & Packaging
-                        </h5>
-                        <div className="grid gap-4 md:grid-cols-2">
-                          <div>
-                            <Label htmlFor="spec-target-audience">Target Audience</Label>
-                            <PresetChipsWithCustom
-                              id="spec-target-audience"
-                              value={targetAudience}
-                              onChange={setTargetAudience}
-                              presets={AUDIENCE_PRESETS}
-                              placeholder="Enter custom target audience"
-                            />
-                          </div>
-                          <div>
-                            <Label htmlFor="spec-package-type">Package Type</Label>
-                            <PresetChipsWithCustom
-                              id="spec-package-type"
-                              value={packageType}
-                              onChange={setPackageType}
-                              presets={PACKAGE_TYPE_PRESETS}
-                              placeholder="Enter custom package type"
-                            />
-                          </div>
-                          <div>
-                            <Label htmlFor="spec-shelf-life">Shelf Life</Label>
-                            <PresetChipsWithCustom
-                              id="spec-shelf-life"
-                              value={shelfLife}
-                              onChange={setShelfLife}
-                              presets={SHELF_LIFE_PRESETS}
-                              placeholder="Enter custom shelf life (e.g. 24 Months)"
-                            />
-                          </div>
-                          <div>
-                            <Label htmlFor="spec-material">Material</Label>
-                            <PresetChipsWithCustom
-                              id="spec-material"
-                              value={material}
-                              onChange={setMaterial}
-                              presets={MATERIAL_PRESETS}
-                              placeholder="Enter custom material"
-                            />
-                          </div>
-                          <div>
-                            <Label htmlFor="spec-water-resistant">Water Resistant</Label>
-                            <div className="flex flex-wrap gap-2">
-                              {[
-                                { value: 'true', label: 'Yes (Water Resistant)' },
-                                { value: 'false', label: 'No' },
-                                { value: '', label: 'Not Specified' },
-                              ].map((opt) => {
-                                const active = waterResistant === opt.value;
-                                return (
-                                  <button
-                                    key={opt.label}
-                                    type="button"
-                                    onClick={() => setWaterResistant(opt.value)}
-                                    className={`rounded-lg border px-3 py-2 text-[12px] font-medium transition cursor-pointer ${
-                                      active
-                                        ? 'border-[#F47C35] bg-[#FFF4EE] text-[#F47C35] font-semibold'
-                                        : 'border-[#E2E8F0] bg-white text-[#475569] hover:bg-slate-50'
-                                    }`}
-                                  >
-                                    {opt.label}
-                                  </button>
-                                );
-                              })}
-                            </div>
-                          </div>
-                          <div className="md:col-span-2">
-                            <Label htmlFor="spec-hazardous">Hazardous / Safety Clause</Label>
-                            <PresetChipsWithCustom
-                              id="spec-hazardous"
-                              value={hazardousClause}
-                              onChange={setHazardousClause}
-                              presets={HAZARDOUS_PRESETS}
-                              placeholder="Enter custom safety or hazardous clause"
-                            />
-                          </div>
-
-                          {/* 1. Product Usage Status (Disposable / Reusable) */}
-                          <div className="md:col-span-2">
-                            <Label htmlFor="spec-usage-status">Product Usage Status (Disposable / Reusable)</Label>
-                            <div id="spec-usage-status" className="flex flex-wrap gap-2">
-                              {[
-                                { label: 'Disposable', value: false, id: 'usage-status-disposable' },
-                                { label: 'Reusable', value: true, id: 'usage-status-reusable' },
-                                { label: 'Not Applicable', value: null, id: 'usage-status-na' },
-                              ].map((opt) => {
-                                const active = reusable === opt.value;
-                                return (
-                                  <button
-                                    key={opt.label}
-                                    id={opt.id}
-                                    type="button"
-                                    onClick={() => {
-                                      setReusable(opt.value);
-                                      setAdditionalDetails((prev) => ({
-                                        ...prev,
-                                        reusable: opt.value === null ? '' : String(opt.value),
-                                      }));
-                                    }}
-                                    className={`rounded-lg border px-3 py-2 text-[12px] font-medium transition cursor-pointer ${
-                                      active
-                                        ? 'border-[#F47C35] bg-[#FFF4EE] text-[#F47C35] font-semibold'
-                                        : 'border-[#E2E8F0] bg-white text-[#475569] hover:bg-slate-50'
-                                    }`}
-                                  >
-                                    {opt.label}
-                                  </button>
-                                );
-                              })}
-                            </div>
-                          </div>
-
-                          {/* 2. Accessories Along With Product? */}
-                          <div className="md:col-span-2">
-                            <Label htmlFor="spec-has-accessories">Accessories Along With Product?</Label>
-                            <div id="spec-has-accessories" className="flex flex-wrap gap-2">
-                              {[
-                                { label: 'No', value: false, id: 'accessories-no' },
-                                { label: 'Yes', value: true, id: 'accessories-yes' },
-                              ].map((opt) => {
-                                const active = hasAccessories === opt.value;
-                                return (
-                                  <button
-                                    key={opt.label}
-                                    id={opt.id}
-                                    type="button"
-                                    onClick={() => {
-                                      setHasAccessories(opt.value);
-                                      if (!opt.value) {
-                                        setAccessoriesText('');
-                                        setAdditionalDetails((prev) => ({ ...prev, accessories: '' }));
-                                      }
-                                    }}
-                                    className={`rounded-lg border px-3 py-2 text-[12px] font-medium transition cursor-pointer ${
-                                      active
-                                        ? 'border-[#F47C35] bg-[#FFF4EE] text-[#F47C35] font-semibold'
-                                        : 'border-[#E2E8F0] bg-white text-[#475569] hover:bg-slate-50'
-                                    }`}
-                                  >
-                                    {opt.label}
-                                  </button>
-                                );
-                              })}
-                            </div>
-                            {hasAccessories && (
-                              <div className="mt-3">
-                                <Label htmlFor="spec-accessories" required>
-                                  Specify included accessories
-                                </Label>
-                                <textarea
-                                  id="spec-accessories"
-                                  value={accessoriesText}
-                                  onChange={(e) => {
-                                    const val = e.target.value;
-                                    setAccessoriesText(val);
-                                    setAdditionalDetails((prev) => ({ ...prev, accessories: val }));
-                                  }}
-                                  placeholder="Enter included accessories (e.g. charging cable, user manual)"
-                                  className="mt-1 min-h-20 w-full rounded-lg border border-gray-300 bg-white p-3 text-[13px] outline-none focus:border-[#F47C35] focus:ring-2 focus:ring-[#F47C35]/10"
-                                />
-                              </div>
-                            )}
-                          </div>
-
-                          {/* 3. Condition of Item */}
-                          <div className="md:col-span-2">
-                            <Label htmlFor="spec-item-condition">Condition of Item</Label>
-                            <div id="spec-item-condition" className="flex flex-wrap gap-2">
-                              {[
-                                { label: 'New', value: 'new', id: 'condition-new' },
-                                { label: 'Refurbished', value: 'refurbished', id: 'condition-refurbished' },
-                              ].map((opt) => {
-                                const active = itemCondition === opt.value;
-                                return (
-                                  <button
-                                    key={opt.label}
-                                    id={opt.id}
-                                    type="button"
-                                    onClick={() => setItemCondition(opt.value as 'new' | 'refurbished')}
-                                    className={`rounded-lg border px-3 py-2 text-[12px] font-medium transition cursor-pointer ${
-                                      active
-                                        ? 'border-[#F47C35] bg-[#FFF4EE] text-[#F47C35] font-semibold'
-                                        : 'border-[#E2E8F0] bg-white text-[#475569] hover:bg-slate-50'
-                                    }`}
-                                  >
-                                    {opt.label}
-                                  </button>
-                                );
-                              })}
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* 3. Origin and Search Keywords */}
-                      <div className="rounded-xl border border-[#EAEAEA] bg-[#FAFAFA] p-4 space-y-4">
-                        <h5 className="text-[13px] font-bold uppercase tracking-wider text-[#0D2B53]">
-                          3. Origin and Search Keywords
-                        </h5>
-                        <div>
-                          <Label htmlFor="spec-manufactured-in">Country of Origin (Manufactured In)</Label>
-                          <PresetChipsWithCustom
-                            id="spec-manufactured-in"
-                            value={manufacturedIn}
-                            onChange={setManufacturedIn}
-                            presets={ORIGIN_PRESETS}
-                            placeholder="Enter country of origin"
-                          />
-                        </div>
-
-                        <div>
-                          <Label htmlFor="spec-keywords">Search Keywords</Label>
-                          <div className="flex flex-wrap gap-1.5 mb-2">
-                            {keywordsText
-                              .split(',')
-                              .map((k) => k.trim())
-                              .filter(Boolean)
-                              .map((kw) => (
-                                <span
-                                  key={kw}
-                                  className="inline-flex items-center gap-1.5 rounded-full bg-[#FFF4EE] border border-[#F47C35]/40 px-3 py-1 text-[12px] font-medium text-[#F47C35]"
-                                >
-                                  {kw}
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      const next = keywordsText
-                                        .split(',')
-                                        .map((k) => k.trim())
-                                        .filter((k) => k && k !== kw)
-                                        .join(', ');
-                                      setKeywordsText(next);
-                                    }}
-                                    className="hover:text-[#C23D22] cursor-pointer"
-                                  >
-                                    ×
-                                  </button>
-                                </span>
-                              ))}
-                          </div>
-                          <div className="flex gap-2">
-                            <input
-                              id="spec-keywords"
-                              value={keywordDraft}
-                              onChange={(e) => setKeywordDraft(e.target.value)}
-                              onKeyDown={(e) => {
-                                if (e.key === 'Enter' || e.key === ',') {
-                                  e.preventDefault();
-                                  const clean = keywordDraft.replace(/,/g, '').trim();
-                                  if (!clean) return;
-                                  const existing = keywordsText
-                                    .split(',')
-                                    .map((k) => k.trim())
-                                    .filter(Boolean);
-                                  if (!existing.includes(clean)) {
-                                    setKeywordsText([...existing, clean].join(', '));
-                                  }
-                                  setKeywordDraft('');
-                                }
-                              }}
-                              placeholder="Type a keyword and press Enter (or comma) to add tag..."
-                              className={INPUT_CLASS}
-                            />
-                            <button
-                              type="button"
-                              onClick={() => {
-                                const clean = keywordDraft.replace(/,/g, '').trim();
-                                if (!clean) return;
-                                const existing = keywordsText
-                                  .split(',')
-                                  .map((k) => k.trim())
-                                  .filter(Boolean);
-                                if (!existing.includes(clean)) {
-                                  setKeywordsText([...existing, clean].join(', '));
-                                }
-                                setKeywordDraft('');
-                              }}
-                              className="h-12 shrink-0 rounded-lg bg-[#0D2B53] px-4 text-[13px] font-semibold text-white hover:bg-[#163C70] cursor-pointer"
-                            >
-                              + Add Keyword
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* 4. Gift Options & Gift Wrap Availability */}
-                      <div className="rounded-xl border border-[#EAEAEA] bg-[#FAFAFA] p-4 space-y-4">
-                        <h5 className="text-[13px] font-bold uppercase tracking-wider text-[#0D2B53]">
-                          4. Gift Options & Gift Wrap Availability
-                        </h5>
-
-                        {/* Gift Options Availability */}
-                        <div className="space-y-2">
-                          <Label htmlFor="spec-gift-options-avail">Gift Options Available?</Label>
-                          <div id="spec-gift-options-avail" className="flex flex-wrap gap-2">
-                            {[
-                              { label: 'No', value: false, id: 'gift-options-no' },
-                              { label: 'Yes', value: true, id: 'gift-options-yes' },
-                            ].map((opt) => {
-                              const active = giftOptionsAvailable === opt.value;
-                              return (
-                                <button
-                                  key={opt.label}
-                                  id={opt.id}
-                                  type="button"
-                                  onClick={() => {
-                                    setGiftOptionsAvailable(opt.value);
-                                    if (!opt.value) setGiftOptionsCharge('');
-                                  }}
-                                  className={`rounded-lg border px-3 py-2 text-[12px] font-medium transition cursor-pointer ${
-                                    active
-                                      ? 'border-[#F47C35] bg-[#FFF4EE] text-[#F47C35] font-semibold'
-                                      : 'border-[#E2E8F0] bg-white text-[#475569] hover:bg-slate-50'
-                                  }`}
-                                >
-                                  {opt.label}
-                                </button>
-                              );
-                            })}
-                          </div>
-                          {giftOptionsAvailable && (
-                            <div className="mt-3 max-w-xs">
-                              <Label htmlFor="spec-gift-options-charge" required>
-                                Gift Options Charge (₹)
-                              </Label>
-                              <div className="relative">
-                                <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-500 font-medium text-[14px]">
-                                  ₹
-                                </span>
-                                <input
-                                  id="spec-gift-options-charge"
-                                  type="number"
-                                  min="0"
-                                  step="0.01"
-                                  value={giftOptionsCharge}
-                                  onChange={(e) => setGiftOptionsCharge(e.target.value)}
-                                  placeholder="0.00"
-                                  className={`${INPUT_CLASS} pl-8`}
-                                />
-                              </div>
-                            </div>
-                          )}
-                        </div>
-
-                        {/* Gift Wrap Availability */}
-                        <div className="pt-3 border-t border-gray-200/80 space-y-2">
-                          <Label htmlFor="spec-gift-wrap-avail">Gift Wrap Available?</Label>
-                          <div id="spec-gift-wrap-avail" className="flex flex-wrap gap-2">
-                            {[
-                              { label: 'No', value: false, id: 'gift-wrap-no' },
-                              { label: 'Yes', value: true, id: 'gift-wrap-yes' },
-                            ].map((opt) => {
-                              const active = giftWrapAvailable === opt.value;
-                              return (
-                                <button
-                                  key={opt.label}
-                                  id={opt.id}
-                                  type="button"
-                                  onClick={() => {
-                                    setGiftWrapAvailable(opt.value);
-                                    if (!opt.value) setGiftWrapCharge('');
-                                  }}
-                                  className={`rounded-lg border px-3 py-2 text-[12px] font-medium transition cursor-pointer ${
-                                    active
-                                      ? 'border-[#F47C35] bg-[#FFF4EE] text-[#F47C35] font-semibold'
-                                      : 'border-[#E2E8F0] bg-white text-[#475569] hover:bg-slate-50'
-                                  }`}
-                                >
-                                  {opt.label}
-                                </button>
-                              );
-                            })}
-                          </div>
-                          {giftWrapAvailable && (
-                            <div className="mt-3 max-w-xs">
-                              <Label htmlFor="spec-gift-wrap-charge" required>
-                                Gift Wrap Charge (₹)
-                              </Label>
-                              <div className="relative">
-                                <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-500 font-medium text-[14px]">
-                                  ₹
-                                </span>
-                                <input
-                                  id="spec-gift-wrap-charge"
-                                  type="number"
-                                  min="0"
-                                  step="0.01"
-                                  value={giftWrapCharge}
-                                  onChange={(e) => setGiftWrapCharge(e.target.value)}
-                                  placeholder="0.00"
-                                  className={`${INPUT_CLASS} pl-8`}
-                                />
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  )}
-
-                  {tab === 'variants' && (
                     <div>
-                      <div className="flex flex-wrap items-center justify-between gap-4">
-                        <h4 className="text-[15px] font-semibold">Select Variant:</h4>
-                        <div className="w-full max-w-[260px]">
-                          <Select
-                            id="product-variant"
-                            value=""
-                            placeholder="Select Variant"
-                            options={variantTypesList.map((v) => ({
-                              value: v.id,
-                              label: selectedVariantTypeIds.includes(v.id) ? `✓ ${v.name}` : v.name,
-                            }))}
-                            onChange={selectVariantFromDropdown}
-                          />
-                        </div>
+                      <FieldLabel htmlFor="product_code" required>
+                        Product Code
+                      </FieldLabel>
+                      <div className="flex gap-2">
+                        <input
+                          id="product_code"
+                          type="text"
+                          value={productCode}
+                          onChange={(e) => setProductCode(e.target.value)}
+                          placeholder="e.g., PRD-48291"
+                          className={`${INPUT_CLASS} font-mono text-[12.5px]`}
+                        />
+                        <button
+                          type="button"
+                          onClick={handleGenerateProductCode}
+                          className="inline-flex h-11 shrink-0 items-center gap-1.5 rounded-xl border border-[#DCE0E8] bg-[#F8FAFC] px-3 text-[12px] font-semibold text-[#0D2B53] hover:border-[#F47C35] hover:text-[#F47C35] cursor-pointer"
+                        >
+                          <Wand2 size={14} />
+                          <span>Generate</span>
+                        </button>
                       </div>
-
-                      {selectedVariantTypeIds.length > 0 ? (
-                        <div className="mt-5">
-                          {/* Clean Horizontal Variant Type Tab Bar */}
-                          <div className="flex flex-wrap items-center gap-2.5 border-b border-[#E6E6E6] pb-3">
-                            {selectedVariantTypeIds.map((vId) => {
-                              const vt = variantTypesList.find((v) => v.id === vId);
-                              if (!vt) return null;
-                              const isCurrentVt = (activeVariantTabId || selectedVariantTypeIds[0]) === vId;
-                              return (
-                                <div
-                                  key={vId}
-                                  className={`inline-flex h-10 items-center rounded-lg border text-[12px] font-medium shadow-2xs transition ${
-                                    isCurrentVt
-                                      ? 'border-[#D6A7EA] bg-[#F6ECFA] text-[#111]'
-                                      : 'border-[#ECECEC] bg-white text-[#555] hover:bg-[#FAFAFA]'
-                                  }`}
-                                >
-                                  <button
-                                    type="button"
-                                    onClick={() => setActiveVariantTabId(vId)}
-                                    className="h-full px-4 font-semibold cursor-pointer"
-                                  >
-                                    {vt.name}
-                                  </button>
-                                  <button
-                                    type="button"
-                                    title={`Remove ${vt.name}`}
-                                    onClick={() => toggleVariantType(vId)}
-                                    className="mr-2 flex h-5 w-5 items-center justify-center rounded text-[#999] hover:bg-black/5 hover:text-[#E14C2A] cursor-pointer"
-                                  >
-                                    ×
-                                  </button>
-                                </div>
-                              );
-                            })}
-                          </div>
-
-                          {/* Active Variant Type's Selectable Options & "Done" Button */}
-                          {(() => {
-                            const currentVId = activeVariantTabId || selectedVariantTypeIds[0];
-                            const vt = variantTypesList.find((v) => v.id === currentVId);
-                            if (!vt) return null;
-                            const selectedForCurrent = selectedOptionsByVariant[currentVId] || [];
-                            const customInputVal = customOptionInputByVariant[currentVId] || '';
-                            const totalSelectedCount = selectedVariantTypeIds.reduce(
-                              (sum, vId) => sum + (selectedOptionsByVariant[vId]?.length || 0),
-                              0
-                            );
-                            const activeTypesForSummary = selectedVariantTypeIds
-                              .map((vId) => (selectedOptionsByVariant[vId] || []).filter((o) => o.trim()).length)
-                              .filter((count) => count > 0);
-                            const totalCombinationsCount =
-                              activeTypesForSummary.length > 0
-                                ? activeTypesForSummary.reduce((prod, count) => prod * count, 1)
-                                : 0;
-
-                            // Combine vt.terms + any selected options into a deduplicated display list
-                            const allOptionNames: string[] = [];
-                            const seenLower = new Set<string>();
-                            for (const item of vt.terms) {
-                              const clean = item.name.trim();
-                              if (clean && !seenLower.has(clean.toLowerCase())) {
-                                seenLower.add(clean.toLowerCase());
-                                allOptionNames.push(clean);
-                              }
-                            }
-                            for (const opt of selectedForCurrent) {
-                              const clean = opt.trim();
-                              if (clean && !seenLower.has(clean.toLowerCase())) {
-                                seenLower.add(clean.toLowerCase());
-                                allOptionNames.push(clean);
-                              }
-                            }
-
-                            return (
-                              <div className="mt-4 rounded-xl border border-[#EAEAEA] bg-[#FAFAFA] p-4">
-                                <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
-                                  <div>
-                                    <span className="text-[13px] font-semibold text-[#111]">
-                                      {vt.name} — Select Option {selectedForCurrent[0] ? `(${selectedForCurrent[0]})` : ''}
-                                    </span>
-                                    <p className="text-[11px] text-[#666]">
-                                      Select an option from the dropdown below, then click <strong>Done</strong> to configure details in Terms.
-                                    </p>
-                                  </div>
-                                  <div className="inline-flex items-center gap-1.5">
-                                    <input
-                                      type="text"
-                                      value={customInputVal}
-                                      onChange={(e) =>
-                                        setCustomOptionInputByVariant((prev) => ({
-                                          ...prev,
-                                          [currentVId]: e.target.value,
-                                        }))
-                                      }
-                                      onKeyDown={(e) => {
-                                        if (e.key === 'Enter') {
-                                          e.preventDefault();
-                                          handleAddOptionToVariant(currentVId);
-                                        }
-                                      }}
-                                      placeholder={`New ${vt.name} option...`}
-                                      className="h-9 w-40 rounded-lg border border-[#D7D7D7] bg-white px-3 text-[12px] outline-none focus:border-[#F47C35]"
-                                    />
-                                    <button
-                                      type="button"
-                                      onClick={() => handleAddOptionToVariant(currentVId)}
-                                      className="h-9 rounded-lg bg-[#0D2B53] px-3 text-[12px] font-semibold text-white hover:bg-[#163C70] cursor-pointer"
-                                    >
-                                      + Add Option
-                                    </button>
-                                  </div>
-                                </div>
-
-                                {/* Dropdown to select the one option */}
-                                <div className="mt-3 max-w-sm">
-                                  <label
-                                    htmlFor={`select-option-${currentVId}`}
-                                    className="block text-[12px] font-medium text-gray-700 mb-1"
-                                  >
-                                    Select {vt.name} Option:
-                                  </label>
-                                  <Select
-                                    id={`select-option-${currentVId}`}
-                                    value={selectedForCurrent[0] || ''}
-                                    placeholder={`Select ${vt.name} Option`}
-                                    options={allOptionNames.map((optName) => ({
-                                      value: optName,
-                                      label: optName,
-                                    }))}
-                                    onChange={(val) => {
-                                      setError('');
-                                      setVariantDoneNotice('');
-                                      setSelectedOptionsByVariant((prev) => ({
-                                        ...prev,
-                                        [currentVId]: val ? [val] : [],
-                                      }));
-                                    }}
-                                  />
-                                </div>
-
-                                {selectedForCurrent[0] && (
-                                  <div className="mt-3 flex items-center gap-2">
-                                    <span className="text-[12px] font-medium text-gray-600">
-                                      Selected Option:
-                                    </span>
-                                    <span className="inline-flex items-center gap-1.5 rounded-lg border border-[#F47C35] bg-[#FFF4EE] px-3 py-1 text-[13px] font-semibold text-[#F47C35]">
-                                      <span>✓ {selectedForCurrent[0]}</span>
-                                      <button
-                                        type="button"
-                                        onClick={() =>
-                                          setSelectedOptionsByVariant((prev) => ({
-                                            ...prev,
-                                            [currentVId]: [],
-                                          }))
-                                        }
-                                        className="ml-1 text-[13px] text-gray-400 hover:text-red-500 cursor-pointer"
-                                        title="Clear selection"
-                                      >
-                                        ×
-                                      </button>
-                                    </span>
-                                  </div>
-                                )}
-
-                                {/* Footer Bar with Selection Summary & "Done" Button */}
-                                <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[#E8E8E8] bg-white px-4 py-3">
-                                  <div className="text-[12px] text-[#444]">
-                                    {selectedForCurrent.length > 0 ? (
-                                      <span>
-                                        Option <strong className="text-[#F47C35]">{selectedForCurrent[0]}</strong> selected for <strong>{vt.name}</strong>. Click <strong>Done</strong> to configure details.
-                                      </span>
-                                    ) : (
-                                      <span className="text-[#888]">
-                                        Please select an option from the dropdown above.
-                                      </span>
-                                    )}
-                                    {variantDoneNotice && (
-                                      <span className="ml-2 text-emerald-600 font-medium">
-                                        • {variantDoneNotice}
-                                      </span>
-                                    )}
-                                  </div>
-                                  <div className="flex items-center gap-2">
-                                    {selectedForCurrent.length > 0 && (
-                                      <button
-                                        type="button"
-                                        onClick={() =>
-                                          setSelectedOptionsByVariant((prev) => ({
-                                            ...prev,
-                                            [currentVId]: [],
-                                          }))
-                                        }
-                                        className="h-9 rounded-lg border border-gray-300 bg-white px-3 text-[12px] font-medium text-gray-600 hover:bg-gray-50 cursor-pointer"
-                                      >
-                                        Clear {vt.name}
-                                      </button>
-                                    )}
-                                    <button
-                                      type="button"
-                                      onClick={handleConfirmVariantsDone}
-                                      className="h-9 rounded-lg bg-[#F47C35] px-5 text-[13px] font-semibold text-white shadow-xs hover:bg-[#E96F29] transition-colors cursor-pointer"
-                                    >
-                                      Done ({selectedForCurrent.length}) →
-                                    </button>
-                                  </div>
-                                </div>
-                              </div>
-                            );
-                          })()}
-                        </div>
-                      ) : (
-                        <p className="mt-4 rounded-lg border border-dashed border-[#D7D7D7] px-4 py-6 text-center text-[12px] text-[#888]">
-                          Select one or more variant types from the dropdown above.
-                        </p>
-                      )}
                     </div>
-                  )}
+                  </div>
 
-                  {tab === 'terms' && (
-                    <div>
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <div>
-                          <h4 className="text-[15px] font-semibold">Terms & Per-Size Pack Configuration</h4>
-                          <p className="text-[12px] text-gray-500">
-                            Configure Unit Count (per pack), SKU, and weight for each size/option tab.
-                          </p>
-                        </div>
-                      </div>
-                      {terms.length > 0 ? (
-                        <div className="mt-4">
-                          {/* Separate Option Tabs Bar */}
-                          <div className="flex flex-wrap gap-2 border-b border-[#E7E7E7] pb-3">
-                            {terms.map((t, idx) => {
-                              const activeTermKey =
-                                openTerm && terms.some((item) => item.key === openTerm)
-                                  ? openTerm
-                                  : terms[0]?.key;
-                              const open = activeTermKey === t.key;
-                              return (
-                                <button
-                                  key={t.key}
-                                  type="button"
-                                  onClick={() => setOpenTerm(t.key)}
-                                  className={`inline-flex h-9 items-center gap-2 rounded-lg border px-3.5 text-[12px] font-semibold transition cursor-pointer ${
-                                    open
-                                      ? 'border-[#D6A7EA] bg-[#F6ECFA] text-[#5B2182]'
-                                      : 'border-[#E0E0E0] bg-white text-[#333] hover:bg-gray-50'
-                                  }`}
-                                >
-                                  <span className="text-[11px] opacity-70">#{idx + 1}</span>
-                                  <span>
-                                    {t.variantTypeName ? `${t.variantTypeName}: ${t.name}` : t.name}
-                                    {Object.entries(t.attributes || {})
-                                      .filter(([attribute]) => attribute !== t.variantTypeName)
-                                      .map(([, value]) => ` / ${value}`)
-                                      .join('')}
-                                  </span>
-                                  {t.unitCount && (
-                                    <span className="rounded bg-orange-100 px-1.5 py-0.5 text-[10px] font-bold text-[#F47C35]">
-                                      {t.unitCount} pcs
-                                    </span>
-                                  )}
-                                </button>
-                              );
-                            })}
-                          </div>
+                  {/* Short Description */}
+                  <div>
+                    <FieldLabel
+                      htmlFor="short_description"
+                      hint={`${shortDescription.length}/300`}
+                    >
+                      Short Description
+                    </FieldLabel>
+                    <textarea
+                      id="short_description"
+                      rows={2}
+                      maxLength={300}
+                      value={shortDescription}
+                      onChange={(e) => setShortDescription(e.target.value)}
+                      placeholder="Enter a short summary of the product..."
+                      className={TEXTAREA_CLASS}
+                    />
+                  </div>
 
-                          {terms.map((t) => {
-                            const activeTermKey =
-                              openTerm && terms.some((item) => item.key === openTerm)
-                                ? openTerm
-                                : terms[0]?.key;
-                            if (activeTermKey !== t.key) return null;
-                            return (
-                              <div key={t.key} className="mt-4 rounded-xl border border-[#E7E7E7] bg-[#FAFAFA] p-4 space-y-4">
-                                <div className="flex items-center justify-between border-b border-[#EEE] pb-3">
-                                  <div className="flex items-center gap-2">
-                                    <span className="text-[12px] font-medium text-[#666]">
-                                      {t.variantTypeName || 'Option'} Tab Name:
-                                    </span>
-                                    <input
-                                      type="text"
-                                      value={t.name}
-                                      onChange={(e) => {
-                                        const newName = e.target.value;
-                                        patchTerm(t.key, {
-                                          name: newName,
-                                          attributes: {
-                                            ...t.attributes,
-                                            [t.variantTypeName || 'Size']: newName,
-                                          },
-                                        });
-                                      }}
-                                      className="h-8 rounded-md border border-[#D7D7D7] bg-white px-2.5 text-[13px] font-semibold text-[#F47C35] outline-none focus:border-[#F47C35]"
-                                    />
-                                  </div>
-                                  <button
-                                    type="button"
-                                    onClick={() => void handleRemoveTerm(t)}
-                                    className="text-[12px] font-semibold text-[#E14C2A] hover:underline cursor-pointer"
-                                  >
-                                    Remove Option
-                                  </button>
-                                </div>
+                  {/* Full Description */}
+                  <div>
+                    <FieldLabel
+                      htmlFor="full_description"
+                      hint={`${fullDescription.length}/4000`}
+                    >
+                      Full Description
+                    </FieldLabel>
+                    <textarea
+                      id="full_description"
+                      rows={6}
+                      maxLength={4000}
+                      value={fullDescription}
+                      onChange={(e) => setFullDescription(e.target.value)}
+                      placeholder="Write the complete product description..."
+                      className={TEXTAREA_CLASS}
+                    />
+                  </div>
 
-                                {Object.entries(t.attributes || {}).filter(([attribute]) => attribute !== t.variantTypeName).map(([attribute, value]) => (
-                                  <div key={attribute}>
-                                    <Label htmlFor={`attribute-${t.key}-${attribute}`}>{attribute}</Label>
-                                    <input id={`attribute-${t.key}-${attribute}`} value={value}
-                                      onChange={(event) => patchTerm(t.key, { attributes: { ...t.attributes, [attribute]: event.target.value } })}
-                                      className={INPUT_CLASS} />
-                                  </div>
-                                ))}
-
-                                {/* Unit Count (per pack) for this Size/Option */}
-                                <div className="rounded-xl border border-[#EAEAEA] bg-white p-3.5">
-                                  <Label htmlFor={`term-unit-count-${t.key}`}>
-                                    Unit Count (per pack) for <span className="text-[#F47C35] font-semibold">{t.name}</span>
-                                  </Label>
-                                  <PresetChipsWithCustom
-                                    id={`term-unit-count-${t.key}`}
-                                    value={t.unitCount}
-                                    onChange={(val) => patchTerm(t.key, { unitCount: val })}
-                                    presets={UNIT_COUNT_PRESETS}
-                                    suffix=" pcs"
-                                    type="number"
-                                    placeholder="Enter custom unit count for this size (e.g. 10)"
-                                  />
-                                </div>
-
-                                {/* Variant SKU, Display Name, Weight (grams) */}
-                                <div className="grid gap-4 md:grid-cols-2">
-                                  <div>
-                                    <Label htmlFor={`term-sku-${t.key}`}>
-                                      Variant SKU (auto-generated if blank)
-                                    </Label>
-                                    <input
-                                      id={`term-sku-${t.key}`}
-                                      value={t.sku}
-                                      onChange={(e) => patchTerm(t.key, { sku: e.target.value })}
-                                      placeholder={`Eg: ${(sku || productCode || 'SKU').toUpperCase()}-${t.name.toUpperCase()}`}
-                                      className={termInputBase}
-                                    />
-                                  </div>
-                                  <div>
-                                    <Label htmlFor={`term-vname-${t.key}`}>
-                                      Variant Display Name (optional)
-                                    </Label>
-                                    <input
-                                      id={`term-vname-${t.key}`}
-                                      value={t.variantName}
-                                      onChange={(e) => patchTerm(t.key, { variantName: e.target.value })}
-                                      placeholder={
-                                        t.unitCount
-                                          ? `${t.name} (Pack of ${t.unitCount})`
-                                          : `Eg: ${t.name} Size`
-                                      }
-                                      className={termInputBase}
-                                    />
-                                  </div>
-                                  <div>
-                                    <div className="flex items-center justify-between">
-                                      <Label htmlFor={`term-weight-${t.key}`}>Weight (in grams)</Label>
-                                      {defaultWeightGrams && !t.weightGrams ? (
-                                        <span className="text-[10px] font-medium text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded">
-                                          Auto-inherited ({defaultWeightGrams}g)
-                                        </span>
-                                      ) : null}
-                                    </div>
-                                    <input
-                                      id={`term-weight-${t.key}`}
-                                      type="number"
-                                      min="0"
-                                      step="1"
-                                      value={t.weightGrams}
-                                      onChange={(e) => patchTerm(t.key, { weightGrams: e.target.value })}
-                                      placeholder={defaultWeightGrams ? `Default: ${defaultWeightGrams}g (from Section 3)` : 'Eg: 450'}
-                                      className={termInputBase}
-                                    />
-                                    <p className="mt-1 text-[11px] text-slate-500">
-                                      {defaultWeightGrams
-                                        ? `Inherited from Section 3 Package Weight (${defaultWeightGrams}g). Change only if this variant weighs differently.`
-                                        : 'Leave blank to use base product package weight.'}
-                                    </p>
-                                  </div>
-                                </div>
-
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setVariantDoneNotice(`Option "${t.name}" details confirmed.`);
-                                  }}
-                                  className="h-10 rounded-lg bg-[#F47C35] px-6 text-[13px] font-semibold text-white cursor-pointer hover:bg-[#E96F29] transition-colors"
-                                >
-                                  Done
-                                </button>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      ) : (
-                        <p className="mt-4 px-4 py-8 text-center text-[12px] text-[#999] border border-[#E7E7E7]">
-                          Select one or more variants in the Variants tab before configuring terms.
-                        </p>
-                      )}
+                  {/* Key Features & Highlights */}
+                  <div className="space-y-4 pt-1">
+                    <div className={SUBCARD_CLASS}>
+                      <FieldLabel
+                        htmlFor="key_features_input"
+                        hint={`${keyFeatures.length} added`}
+                      >
+                        Key Features
+                      </FieldLabel>
+                      <p className="mb-3 text-[12px] text-[#64748B]">
+                        Press Enter to add each feature, or paste a multiline list.
+                      </p>
+                      <StringArrayBuilder
+                        id="key_features_input"
+                        items={keyFeatures}
+                        onChange={setKeyFeatures}
+                        placeholder="Type a key feature (e.g., 100% Organic Cotton) and press Enter"
+                        emptyText="No key features added yet."
+                      />
                     </div>
-                  )}
+
+                    <div className={SUBCARD_CLASS}>
+                      <FieldLabel
+                        htmlFor="highlights_input"
+                        hint={`${highlights.length} added`}
+                      >
+                        Product Highlights
+                      </FieldLabel>
+                      <p className="mb-3 text-[12px] text-[#64748B]">
+                        Short standout highlights shown on the product card/page.
+                      </p>
+                      <StringArrayBuilder
+                        id="highlights_input"
+                        items={highlights}
+                        onChange={setHighlights}
+                        placeholder="Type a highlight (e.g., Hypoallergenic & Breathable) and press Enter"
+                        emptyText="No highlights added yet."
+                        quickSuggestions={[
+                          '100% Organic',
+                          'BPA Free',
+                          'Dermatologically Tested',
+                          'Made in India',
+                        ]}
+                      />
+                    </div>
+                  </div>
                 </div>
               </div>
-            </div>
 
-            {/* ------------------------- right column ------------------------ */}
-            <div className="space-y-5">
-              <section className={sectionCard}>
-                <h3 className="text-[16px] font-semibold text-[#0D2B53]">Product Image</h3>
-                <input
-                  ref={fileRef}
-                  type="file"
-                  multiple
-                  accept={IMAGE_RULES.accept}
-                  onChange={(e) => void onPickImages(e)}
-                  className="sr-only"
-                />
-                <input
-                  ref={replaceFileInputRef}
-                  type="file"
-                  accept={IMAGE_RULES.accept}
-                  onChange={async (e) => {
-                    const file = e.target.files?.[0];
-                    e.target.value = '';
-                    const targetKey = replacingImageKey;
-                    setReplacingImageKey(null);
-                    if (!file || !targetKey) return;
-                    const targetImg = images.find((x) => x.key === targetKey);
-                    if (!targetImg) return;
-                    const validationError = validateProductImages(
-                      [file],
-                      images.length - 1,
-                      editId && targetImg.backendImageId ? 0 : images.filter((image) => image.key !== targetKey && image.file && !image.backendImageId)
-                        .reduce((sum, image) => sum + (image.file?.size || 0), 0),
-                      'replace'
-                    );
-                    if (validationError) {
-                      setError(validationError);
-                      return;
-                    }
+              {/* RIGHT: Type & Status, Product Images, and Product Classification */}
+              <div className="space-y-5">
+                {/* 1. Product Type & Status Card */}
+                <div className={CARD_CLASS}>
+                  <h3 className="mb-3.5 text-[15px] font-bold text-[#0F172A]">
+                    Product Type & Status
+                  </h3>
 
-                    if (editId && targetImg.backendImageId) {
-                      setReplacingImage(true);
-                      try {
-                        const replaced = await replaceAdminProductImage(editId, targetImg.backendImageId, file);
-                        if (!replaced?.image_url) throw new Error('The saved image URL was not returned. Refresh the product to check its image.');
-                        setImages((prev) =>
-                          prev.map((x) =>
-                            x.key === targetKey
-                              ? { ...x, src: replaced.image_url, name: file.name, size: file.size, file: undefined }
-                              : x
-                          )
+                  {/* Product Type Selector: Simple Product vs Variable Product */}
+                  <div>
+                    <FieldLabel required>Product Type</FieldLabel>
+                    <div className="grid grid-cols-2 gap-2.5">
+                      {(
+                        [
+                          {
+                            value: 'simple',
+                            title: 'Simple Product',
+                            desc: 'Single standalone item',
+                            icon: Box,
+                          },
+                          {
+                            value: 'variable',
+                            title: 'Variable Product',
+                            desc: 'Has size/color variants',
+                            icon: Layers,
+                          },
+                        ] as const
+                      ).map((opt) => {
+                        const Icon = opt.icon;
+                        const selected = productType === opt.value;
+                        return (
+                          <button
+                            key={opt.value}
+                            type="button"
+                            onClick={() => setProductType(opt.value)}
+                            className={`flex flex-col items-start rounded-xl border p-3 text-left transition-all cursor-pointer ${
+                              selected
+                                ? 'border-[#F47C35] bg-[#FFF4ED]/70 text-[#0F172A] ring-2 ring-[#F47C35]/15'
+                                : 'border-[#E2E8F0] bg-[#F8FAFC] text-[#475569] hover:border-[#CBD5E1] hover:bg-white'
+                            }`}
+                          >
+                            <div className="flex w-full items-center justify-between">
+                              <Icon
+                                size={16}
+                                className={selected ? 'text-[#F47C35]' : 'text-[#64748B]'}
+                              />
+                              <span
+                                className={`h-3.5 w-3.5 rounded-full border ${
+                                  selected
+                                    ? 'border-[#F47C35] bg-[#F47C35] ring-2 ring-white ring-inset'
+                                    : 'border-[#CBD5E1] bg-white'
+                                }`}
+                              />
+                            </div>
+                            <span className="mt-2 text-[12.5px] font-bold">{opt.title}</span>
+                            <span className="text-[10.5px] text-[#64748B]">{opt.desc}</span>
+                          </button>
                         );
-                        if (targetImg.src.startsWith('blob:')) URL.revokeObjectURL(targetImg.src);
-                      } catch (err: any) {
-                        setError(err?.message || 'Failed to replace product image.');
-                      } finally {
-                        setReplacingImage(false);
-                      }
-                    } else {
-                      const newBlobUrl = URL.createObjectURL(file);
-                      setImages((prev) =>
-                        prev.map((x) =>
-                          x.key === targetKey
-                            ? { ...x, src: newBlobUrl, name: file.name, size: file.size, file }
-                            : x
-                        )
-                      );
-                    }
-                  }}
-                  className="sr-only"
-                />
-                <button
-                  type="button"
-                  onClick={() => fileRef.current?.click()}
-                  className="mt-5 flex h-[190px] w-full flex-col items-center justify-center rounded-xl border-2 border-dashed border-[#B9B9B9] bg-white px-3 text-center cursor-pointer"
-                >
-                  <FileUp size={22} />
-                  <span className="mt-4 text-[14px] font-semibold">
-                    Upload Product Image
-                  </span>
-                  <span className="mt-1 text-[10px] text-[#666]">{IMAGE_RULES.requirements}</span>
-                </button>
-                {images.length > 0 && (
-                  <div className="mt-4 grid grid-cols-3 gap-2">
-                    {images.map((img, i) => {
-                      const isPrimary = img.isPrimary ?? i === 0;
-                      const isDeletingThis = deletingImageKey === img.key;
-                      const isSettingPrimaryThis = settingPrimaryKey === img.key;
-                      return (
-                        <div key={img.key} className="group relative aspect-square overflow-hidden rounded-lg border bg-white">
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img src={img.src} alt={`Product upload ${i + 1}`} className="h-full w-full object-contain" />
-                          <div className="absolute top-1 right-1 z-10 flex items-center gap-1">
-                            <button
-                              type="button"
-                              title="Replace this image"
-                              disabled={isDeletingThis}
-                              onClick={(e) => {
-                                e.preventDefault();
-                                e.stopPropagation();
-                                setReplacingImageKey(img.key);
-                                replaceFileInputRef.current?.click();
-                              }}
-                              className="flex h-6 w-6 items-center justify-center rounded bg-white/95 text-[#0D2B53] shadow-2xs hover:bg-orange-50 hover:text-[#F47C35] cursor-pointer disabled:opacity-50"
-                            >
-                              <RefreshCw size={12} />
-                            </button>
-                            {editId && img.backendImageId && !isPrimary && (
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Product Status Selector */}
+                  <div className="mt-4">
+                    <FieldLabel htmlFor="product_status" required>
+                      Product Status
+                    </FieldLabel>
+                    <div className="relative">
+                      <select
+                        id="product_status"
+                        value={productStatus}
+                        onChange={(e) => setProductStatus(e.target.value as NewProductStatus)}
+                        className={`${INPUT_CLASS} appearance-none pr-10 font-semibold`}
+                      >
+                        <option value="active">Active (Published)</option>
+                        <option value="draft">Draft</option>
+                        <option value="inactive">Inactive</option>
+                        <option value="archived">Archived</option>
+                      </select>
+                      <ChevronDown
+                        size={16}
+                        className="pointer-events-none absolute top-1/2 right-3.5 -translate-y-1/2 text-[#64748B]"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* 2. Product Images Upload Card */}
+                <div className={CARD_CLASS}>
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-[15px] font-bold text-[#0F172A]">Product Image</h3>
+                    <span className="text-[11px] font-semibold text-[#64748B]">
+                      {images.length}/{MAX_PRODUCT_IMAGES} images
+                    </span>
+                  </div>
+
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    multiple
+                    accept={IMAGE_RULES.accept}
+                    onChange={handlePickImages}
+                    className="sr-only"
+                  />
+                  <input
+                    ref={replaceInputRef}
+                    type="file"
+                    accept={IMAGE_RULES.accept}
+                    onChange={(e) => void handleReplaceImageFile(e)}
+                    className="sr-only"
+                  />
+
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    className="mt-3 flex h-[170px] w-full flex-col items-center justify-center rounded-xl border-2 border-dashed border-[#CBD5E1] bg-[#F8FAFC] px-3 text-center transition-colors hover:border-[#F47C35] hover:bg-[#FFF4ED]/30 cursor-pointer"
+                  >
+                    <div className="flex h-10 w-10 items-center justify-center rounded-full bg-white text-[#F47C35] shadow-2xs">
+                      <FileUp size={20} />
+                    </div>
+                    <span className="mt-2.5 text-[13px] font-bold text-[#0F172A]">
+                      Upload Product Image
+                    </span>
+                    <span className="mt-1 text-[10.5px] text-[#64748B]">
+                      {IMAGE_RULES.requirements}
+                    </span>
+                  </button>
+
+                  {images.length > 0 && (
+                    <div className="mt-3.5 grid grid-cols-3 gap-2">
+                      {images.map((img, idx) => {
+                        const isPrimary = img.isPrimary ?? idx === 0;
+                        const isBusy = imageActionBusyKey === img.key;
+                        return (
+                          <div
+                            key={img.key}
+                            className="group relative aspect-square overflow-hidden rounded-xl border border-[#E2E8F0] bg-white"
+                          >
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img
+                              src={img.src}
+                              alt={img.name}
+                              className="h-full w-full object-contain"
+                            />
+                            <div className="absolute top-1 right-1 flex items-center gap-1">
+                              {!isPrimary && (
+                                <button
+                                  type="button"
+                                  title="Set as primary image"
+                                  disabled={isBusy}
+                                  onClick={() => void handleSetPrimaryImage(img)}
+                                  className="flex h-6 w-6 items-center justify-center rounded-md bg-white/95 text-amber-500 shadow-2xs hover:bg-amber-50 cursor-pointer"
+                                >
+                                  <Star size={12} />
+                                </button>
+                              )}
                               <button
                                 type="button"
-                                title="Set as Primary Image"
-                                disabled={isSettingPrimaryThis || isDeletingThis}
-                                onClick={(e) => {
-                                  e.preventDefault();
-                                  e.stopPropagation();
-                                  void handleSetPrimaryEditorImage(img);
+                                title="Replace image"
+                                disabled={isBusy}
+                                onClick={() => {
+                                  setReplacingKey(img.key);
+                                  replaceInputRef.current?.click();
                                 }}
-                                className="flex h-6 w-6 items-center justify-center rounded bg-white/95 text-amber-500 shadow-2xs hover:bg-amber-50 cursor-pointer disabled:opacity-50"
+                                className="flex h-6 w-6 items-center justify-center rounded-md bg-white/95 text-[#0D2B53] shadow-2xs hover:text-[#F47C35] cursor-pointer"
                               >
-                                {isSettingPrimaryThis ? (
-                                  <Loader2 size={12} className="animate-spin text-amber-500" />
+                                <RefreshCw size={11} />
+                              </button>
+                              <button
+                                type="button"
+                                title="Remove image"
+                                disabled={isBusy}
+                                onClick={() => void handleRemoveImage(img)}
+                                className="flex h-6 w-6 items-center justify-center rounded-md bg-white/95 text-[#E33D25] shadow-2xs hover:bg-red-50 cursor-pointer"
+                              >
+                                {isBusy ? (
+                                  <Loader2 size={12} className="animate-spin" />
                                 ) : (
-                                  <Star size={12} />
+                                  <Trash2 size={12} />
                                 )}
                               </button>
-                            )}
-                            <button
-                              type="button"
-                              title="Delete image"
-                              disabled={isDeletingThis}
-                              onClick={(e) => {
-                                e.preventDefault();
-                                e.stopPropagation();
-                                void handleDeleteEditorImage(img);
-                              }}
-                              className="flex h-6 w-6 items-center justify-center rounded bg-white/95 text-[#D43B28] shadow-2xs hover:bg-red-50 cursor-pointer disabled:opacity-50"
-                            >
-                              {isDeletingThis ? (
-                                <Loader2 size={12} className="animate-spin text-[#D43B28]" />
-                              ) : (
-                                <Trash2 size={13} />
-                              )}
-                            </button>
-                          </div>
-                          {isPrimary && (
-                            <span className="absolute bottom-1 left-1 rounded bg-[#17375F] px-1.5 py-0.5 text-[8px] text-white">
-                              Primary
-                            </span>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-                <div className="mt-2 flex items-center justify-between text-[10px] text-[#888]">
-                  <span>
-                    {(totalImageBytes / (1024 * 1024)).toFixed(2)} / 10.00 MiB selected
-                  </span>
-                  <span>{images.length > MAX_PRODUCT_IMAGES ? `${images.length} saved images` : `${images.length}/${MAX_PRODUCT_IMAGES} images`}</span>
-                </div>
-                {images.length > MAX_PRODUCT_IMAGES && <p className="mt-2 text-xs text-gray-600">All saved images are retained. You can replace or delete them. Fewer than six must remain before adding another image.</p>}
-              </section>
-
-              <section className={sectionCard}>
-                <h3 className="text-[16px] font-semibold text-[#0D2B53]">Product Categories</h3>
-                <p className="mt-1 text-[11px] text-[#6E6E6E]">
-                  Select a root category to view and choose its sub-categories.
-                </p>
-                <div className="mt-3 max-h-[340px] overflow-y-auto pr-1">
-                  {categoriesList.map((c) => {
-                    const active = c.active !== false;
-                    const isRootSelected = categoryId === c.id;
-                    return (
-                      <div key={c.id} className="border-b border-[#E1E1E1] last:border-b-0">
-                        <label
-                          className={`flex min-h-11 items-center gap-2.5 px-2 text-[12px] font-semibold transition-colors ${
-                            active ? 'cursor-pointer' : 'cursor-not-allowed text-[#999]'
-                          } ${isRootSelected ? 'bg-[#FFF5EF] text-[#0D2B53] rounded-t-lg' : ''}`}
-                        >
-                          <input
-                            type="radio"
-                            name="product-root-category"
-                            disabled={!active}
-                            checked={isRootSelected}
-                            onChange={() => {
-                              setCategoryId(c.id);
-                              setSubCategoryId('');
-                              setError('');
-                            }}
-                            className="h-[18px] w-[18px] accent-[#F47C35]"
-                          />
-                          {isRootSelected ? (
-                            <ChevronDown size={14} className="text-[#F47C35] shrink-0" />
-                          ) : (
-                            <ChevronRight size={14} className="text-[#888] shrink-0" />
-                          )}
-                          <span className="truncate">{c.name}</span>
-                          {c.subs.length > 0 && (
-                            <span className="ml-auto rounded-full bg-white border border-[#E2E8F0] px-2 py-0.5 text-[10px] font-medium text-[#555]">
-                              {c.subs.length} sub{c.subs.length === 1 ? '' : 's'}
-                            </span>
-                          )}
-                          {!active && (
-                            <span className="ml-auto rounded-full bg-[#F1F1F1] px-2 py-0.5 text-[9px] font-medium text-[#777]">
-                              Inactive
-                            </span>
-                          )}
-                        </label>
-
-                        {/* Sub-categories are ONLY visible after selecting this root category */}
-                        {isRootSelected && (
-                          <div className="border-l-2 border-[#F47C35]/40 ml-4 my-1 pl-2 space-y-0.5">
-                            {c.subs.length === 0 ? (
-                              <p className="px-3 py-2 text-[11px] italic text-[#888]">
-                                No sub-categories under this root category.
-                              </p>
-                            ) : (
-                              c.subs.map((s) => {
-                                const subActive = active && s.active !== false;
-                                const isSubSelected = subCategoryId === s.id;
-                                return (
-                                  <label
-                                    key={s.id}
-                                    className={`flex min-h-9 items-center gap-2.5 rounded-md px-3 text-[11px] transition-colors ${
-                                      subActive
-                                        ? 'cursor-pointer text-[#333] hover:bg-white'
-                                        : 'cursor-not-allowed text-[#A0A0A0]'
-                                    } ${isSubSelected ? 'bg-white font-semibold text-[#F47C35] shadow-2xs' : ''}`}
-                                  >
-                                    <input
-                                      type="radio"
-                                      name="product-subcategory"
-                                      disabled={!subActive}
-                                      checked={isSubSelected}
-                                      onChange={() => {
-                                        setCategoryId(c.id);
-                                        setSubCategoryId(s.id);
-                                        setError('');
-                                      }}
-                                      className="h-4 w-4 accent-[#F47C35]"
-                                    />
-                                    <span aria-hidden="true" className="text-[#F47C35] font-bold">
-                                      ↳
-                                    </span>
-                                    <span className="truncate">{s.name}</span>
-                                    {!subActive && (
-                                      <span className="ml-auto text-[9px]">Inactive</span>
-                                    )}
-                                  </label>
-                                );
-                              })
+                            </div>
+                            {isPrimary && (
+                              <span className="absolute bottom-1 left-1 rounded bg-[#0D2B53] px-1.5 py-0.5 text-[9px] font-semibold text-white">
+                                Primary
+                              </span>
                             )}
                           </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                  {categoriesList.length === 0 && (
-                    <p className="py-6 text-center text-[11px] text-[#888]">No active categories are available.</p>
+                        );
+                      })}
+                    </div>
                   )}
-                </div>
-              </section>
 
-              <section className={sectionCard}>
-                <label htmlFor="product-brand" className="text-base font-semibold text-[#0D2B53]">
-                  Brand (Optional)
-                </label>
-                <div className="mt-4 flex items-center gap-2">
-                  <select
-                    id="product-brand"
-                    value={brand}
-                    onChange={(e) => setBrand(e.target.value)}
-                    className="h-12 min-w-0 flex-1 rounded-md border border-gray-300 bg-white px-3 text-base"
-                  >
-                    <option value="">Unbranded</option>
-                    {brandsList.map((b) => (
-                      <option key={b.id} value={b.id}>
-                        {b.name}
-                      </option>
-                    ))}
-                  </select>
-                  {brand && (
+                  <div className="mt-2.5 flex items-center justify-between text-[11px] text-[#64748B]">
+                    <span>{(totalImageBytes / (1024 * 1024)).toFixed(2)} / 10.00 MiB selected</span>
+                    <span>{images.length}/{MAX_PRODUCT_IMAGES}</span>
+                  </div>
+                </div>
+
+                {/* 3. Product Classification Card */}
+                <div className={CARD_CLASS}>
+                  <h3 className="mb-3.5 text-[15px] font-bold text-[#0F172A]">
+                    Product Classification
+                  </h3>
+
+                  <div className="space-y-4">
+                    {/* Root Category */}
+                    <div>
+                      <FieldLabel htmlFor="category_id">Category</FieldLabel>
+                      <div className="relative">
+                        <select
+                          id="category_id"
+                          value={categoryId}
+                          onChange={(e) => {
+                            setCategoryId(e.target.value);
+                            setSubcategoryId('');
+                          }}
+                          className={`${INPUT_CLASS} appearance-none pr-10`}
+                        >
+                          <option value="">Select category</option>
+                          {categoriesList.map((c) => (
+                            <option key={c.id} value={c.id}>
+                              {c.name}
+                            </option>
+                          ))}
+                        </select>
+                        <ChevronDown
+                          size={16}
+                          className="pointer-events-none absolute top-1/2 right-3.5 -translate-y-1/2 text-[#64748B]"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Subcategory */}
+                    <div>
+                      <FieldLabel htmlFor="subcategory_id">Subcategory</FieldLabel>
+                      <div className="relative">
+                        <select
+                          id="subcategory_id"
+                          value={subcategoryId}
+                          disabled={!selectedCategory}
+                          onChange={(e) => setSubcategoryId(e.target.value)}
+                          className={`${INPUT_CLASS} appearance-none pr-10`}
+                        >
+                          <option value="">
+                            {selectedCategory
+                              ? 'Select subcategory'
+                              : 'Select a category first'}
+                          </option>
+                          {selectedCategory?.subcategories.map((sub) => (
+                            <option key={sub.id} value={sub.id}>
+                              {sub.name}
+                            </option>
+                          ))}
+                        </select>
+                        <ChevronDown
+                          size={16}
+                          className="pointer-events-none absolute top-1/2 right-3.5 -translate-y-1/2 text-[#64748B]"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Brand */}
+                    <div>
+                      <FieldLabel htmlFor="brand_id">Brand</FieldLabel>
+                      <div className="relative">
+                        <select
+                          id="brand_id"
+                          value={brandId}
+                          onChange={(e) => setBrandId(e.target.value)}
+                          className={`${INPUT_CLASS} appearance-none pr-10`}
+                        >
+                          <option value="">Unbranded / Select Brand</option>
+                          {brandsList.map((b) => (
+                            <option key={b.id} value={b.id}>
+                              {b.name}
+                            </option>
+                          ))}
+                        </select>
+                        <ChevronDown
+                          size={16}
+                          className="pointer-events-none absolute top-1/2 right-3.5 -translate-y-1/2 text-[#64748B]"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Vendor */}
+                    <div>
+                      <FieldLabel htmlFor="vendor_id">Vendor</FieldLabel>
+                      <div className="relative">
+                        <select
+                          id="vendor_id"
+                          value={vendorId}
+                          onChange={(e) => setVendorId(e.target.value)}
+                          className={`${INPUT_CLASS} appearance-none pr-10`}
+                        >
+                          <option value="">Select vendor</option>
+                          {vendorsList.map((v) => (
+                            <option key={v.id} value={v.id}>
+                              {v.name}
+                            </option>
+                          ))}
+                        </select>
+                        <ChevronDown
+                          size={16}
+                          className="pointer-events-none absolute top-1/2 right-3.5 -translate-y-1/2 text-[#64748B]"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* ============================================================== */}
+            {/* FROM PRICING DOWNWARDS: FULL 100% WIDTH                        */}
+            {/* ============================================================== */}
+
+            {/* 2. PRICING, TAX & INVENTORY (FULL WIDTH) */}
+            <div className={CARD_CLASS}>
+              <SectionHeader
+                icon={DollarSign}
+                title="Pricing, Tax & Inventory"
+                subtitle="Configure MRP, selling price, cost price, GST tax rate, HSN code, SKU, barcode, and stock levels."
+              />
+
+              <div className="grid gap-5 xl:grid-cols-[1.35fr_1fr]">
+                {/* Left: Product Pricing */}
+                <div className={SUBCARD_CLASS}>
+                  <h4 className="mb-3.5 text-[14px] font-bold text-[#0F172A]">
+                    Product Pricing
+                  </h4>
+
+                  <div className="grid items-end gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                    <div>
+                      <FieldLabel htmlFor="mrp">MRP</FieldLabel>
+                      <div className="relative">
+                        <span className="pointer-events-none absolute top-1/2 left-3.5 -translate-y-1/2 text-[14px] font-semibold text-[#64748B]">
+                          ₹
+                        </span>
+                        <input
+                          id="mrp"
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={mrp}
+                          onChange={(e) => handleMrpChange(e.target.value)}
+                          placeholder="1000"
+                          className={`${INPUT_CLASS} pl-8`}
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <FieldLabel htmlFor="discount_percent">Discount (%)</FieldLabel>
+                      <div className="relative">
+                        <input
+                          id="discount_percent"
+                          type="number"
+                          min="0"
+                          max="100"
+                          step="0.01"
+                          value={discountPercent}
+                          onChange={(e) => handleDiscountPercentChange(e.target.value)}
+                          placeholder="10"
+                          className={`${INPUT_CLASS} pr-9`}
+                        />
+                        <span className="pointer-events-none absolute top-1/2 right-3.5 -translate-y-1/2 text-[13px] font-semibold text-[#64748B]">
+                          %
+                        </span>
+                      </div>
+                    </div>
+
+                    <div>
+                      <FieldLabel htmlFor="selling_price">Selling Price</FieldLabel>
+                      <div className="relative">
+                        <span className="pointer-events-none absolute top-1/2 left-3.5 -translate-y-1/2 text-[14px] font-semibold text-[#F47C35]">
+                          ₹
+                        </span>
+                        <input
+                          id="selling_price"
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={sellingPrice}
+                          onChange={(e) => handleSellingPriceChange(e.target.value)}
+                          placeholder="900"
+                          className={`${INPUT_CLASS} pl-8 font-semibold`}
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <FieldLabel htmlFor="cost_price">Cost Price</FieldLabel>
+                      <div className="relative">
+                        <span className="pointer-events-none absolute top-1/2 left-3.5 -translate-y-1/2 text-[14px] font-semibold text-[#64748B]">
+                          ₹
+                        </span>
+                        <input
+                          id="cost_price"
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={costPrice}
+                          onChange={(e) => setCostPrice(e.target.value)}
+                          placeholder="0.00"
+                          className={`${INPUT_CLASS} pl-8`}
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Live Margin & Discount Summary Bar */}
+                  <div className="mt-4 flex flex-wrap items-center gap-3 rounded-xl border border-[#E2E8F0] bg-white px-4 py-2.5 text-[12px]">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[#64748B]">Discount:</span>
+                      {pricingMetrics.sellingExceedsMrp ? (
+                        <span className="font-semibold text-rose-600">
+                          Selling price exceeds MRP!
+                        </span>
+                      ) : pricingMetrics.discountPct !== null ? (
+                        <span className="rounded-md bg-emerald-50 px-2 py-0.5 font-bold text-emerald-700">
+                          {pricingMetrics.discountPct}% OFF MRP
+                        </span>
+                      ) : (
+                        <span className="text-[#94A3B8]">—</span>
+                      )}
+                    </div>
+
+                    <span className="text-[#CBD5E1]">|</span>
+
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[#64748B]">Profit Margin:</span>
+                      {pricingMetrics.sellingBelowCost ? (
+                        <span className="font-semibold text-amber-700">
+                          Below cost (₹{pricingMetrics.profitPerUnit})
+                        </span>
+                      ) : pricingMetrics.profitPerUnit !== null ? (
+                        <span className="rounded-md bg-blue-50 px-2 py-0.5 font-bold text-blue-700">
+                          ₹{pricingMetrics.profitPerUnit} ({pricingMetrics.marginPct}%)
+                        </span>
+                      ) : (
+                        <span className="text-[#94A3B8]">—</span>
+                      )}
+                    </div>
+
+                    {pricingMetrics.taxAmount !== null && (
+                      <>
+                        <span className="text-[#CBD5E1]">|</span>
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-[#64748B]">Included Tax ({taxRate || 0}%):</span>
+                          <span className="font-semibold text-[#334155]">
+                            ₹{pricingMetrics.taxAmount}
+                          </span>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                </div>
+
+                {/* Right: Tax & Compliance */}
+                <div className={SUBCARD_CLASS}>
+                  <h4 className="mb-3.5 text-[14px] font-bold text-[#0F172A]">
+                    Tax & Compliance
+                  </h4>
+
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <div>
+                      <FieldLabel htmlFor="tax_rate">Tax Rate (GST %)</FieldLabel>
+                      <div className="relative">
+                        <input
+                          id="tax_rate"
+                          type="number"
+                          min="0"
+                          max="100"
+                          step="0.01"
+                          value={taxRate}
+                          onChange={(e) => setTaxRate(e.target.value)}
+                          placeholder="18"
+                          className={`${INPUT_CLASS} pr-9`}
+                        />
+                        <span className="pointer-events-none absolute top-1/2 right-3.5 -translate-y-1/2 text-[13px] font-semibold text-[#64748B]">
+                          %
+                        </span>
+                      </div>
+                      <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
+                        <span className="text-[11px] text-[#64748B]">Slabs:</span>
+                        {TAX_SLABS.map((slab) => (
+                          <button
+                            key={slab}
+                            type="button"
+                            onClick={() => setTaxRate(slab)}
+                            className={`rounded-md px-2.5 py-0.5 text-[11px] font-semibold transition-colors cursor-pointer ${
+                              taxRate === slab
+                                ? 'bg-[#F47C35] text-white'
+                                : 'border border-[#E2E8F0] bg-white text-[#475569] hover:border-[#F47C35]'
+                            }`}
+                          >
+                            {slab}%
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div>
+                      <FieldLabel htmlFor="hsn_code">HSN Code</FieldLabel>
+                      <input
+                        id="hsn_code"
+                        type="text"
+                        value={hsnCode}
+                        onChange={(e) => setHsnCode(e.target.value)}
+                        placeholder="e.g., 61112000"
+                        className={`${INPUT_CLASS} font-mono`}
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Identification & Inventory across full width */}
+              <div className="mt-5 grid gap-5 lg:grid-cols-2">
+                <div className={SUBCARD_CLASS}>
+                  <h4 className="mb-3.5 text-[14px] font-bold text-[#0F172A]">
+                    Product Identification
+                  </h4>
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <div>
+                      <FieldLabel htmlFor="sku">SKU (Stock Keeping Unit)</FieldLabel>
+                      <div className="flex gap-2">
+                        <input
+                          id="sku"
+                          type="text"
+                          value={sku}
+                          onChange={(e) => setSku(e.target.value)}
+                          placeholder="e.g., MB-BAB-SWA-104"
+                          className={`${INPUT_CLASS} font-mono text-[12.5px]`}
+                        />
+                        <button
+                          type="button"
+                          onClick={handleGenerateSku}
+                          className="inline-flex h-11 shrink-0 items-center gap-1 rounded-xl border border-[#DCE0E8] bg-white px-3 text-[12px] font-semibold text-[#0D2B53] hover:border-[#F47C35] hover:text-[#F47C35] cursor-pointer"
+                        >
+                          <Wand2 size={14} />
+                          <span>Auto</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    <div>
+                      <FieldLabel htmlFor="barcode">Barcode (EAN / UPC)</FieldLabel>
+                      <input
+                        id="barcode"
+                        type="text"
+                        value={barcode}
+                        onChange={(e) => setBarcode(e.target.value)}
+                        placeholder="e.g., 8901234567890"
+                        className={`${INPUT_CLASS} font-mono text-[12.5px]`}
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <div className={SUBCARD_CLASS}>
+                  <h4 className="mb-3.5 text-[14px] font-bold text-[#0F172A]">
+                    Inventory Information
+                  </h4>
+
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <div>
+                      <FieldLabel htmlFor="stock_quantity">Stock Quantity</FieldLabel>
+                      <input
+                        id="stock_quantity"
+                        type="number"
+                        min="0"
+                        step="1"
+                        value={stockQuantity}
+                        onChange={(e) => setStockQuantity(e.target.value)}
+                        placeholder="0"
+                        className={INPUT_CLASS}
+                      />
+                    </div>
+
+                    <div>
+                      <FieldLabel htmlFor="min_stock_quantity">
+                        Minimum Stock Quantity
+                      </FieldLabel>
+                      <input
+                        id="min_stock_quantity"
+                        type="number"
+                        min="0"
+                        step="1"
+                        value={minStockQuantity}
+                        onChange={(e) => setMinStockQuantity(e.target.value)}
+                        placeholder="5"
+                        className={INPUT_CLASS}
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* 3. PRODUCT PROPERTIES, PHYSICAL SPECS & ATTRIBUTES (FULL WIDTH) */}
+            <div className={CARD_CLASS}>
+              <SectionHeader
+                icon={Ruler}
+                title="Product Properties & Physical Specifications"
+                subtitle="Material, colour, size, model details, weight, dimensions, and custom specifications."
+              />
+
+              <div className="space-y-5">
+                {/* Product Properties + Physical Specifications */}
+                <div className="grid gap-5 xl:grid-cols-[1.2fr_1fr]">
+                  <div className={SUBCARD_CLASS}>
+                    <h4 className="mb-3.5 text-[14px] font-bold text-[#0F172A]">
+                      Product Properties
+                    </h4>
+
+                    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                      <div>
+                        <FieldLabel htmlFor="material">Material</FieldLabel>
+                        <input
+                          id="material"
+                          type="text"
+                          value={material}
+                          onChange={(e) => setMaterial(e.target.value)}
+                          placeholder="e.g., Organic Cotton"
+                          className={INPUT_CLASS}
+                        />
+                      </div>
+
+                      <div>
+                        <FieldLabel htmlFor="colour">Colour</FieldLabel>
+                        <input
+                          id="colour"
+                          type="text"
+                          value={colour}
+                          onChange={(e) => setColour(e.target.value)}
+                          placeholder="e.g., Pastel Peach"
+                          className={INPUT_CLASS}
+                        />
+                      </div>
+
+                      <div>
+                        <FieldLabel htmlFor="size">Size</FieldLabel>
+                        <input
+                          id="size"
+                          type="text"
+                          value={size}
+                          onChange={(e) => setSize(e.target.value)}
+                          placeholder="e.g., 0–6 Months"
+                          className={INPUT_CLASS}
+                        />
+                      </div>
+
+                      <div>
+                        <FieldLabel htmlFor="model_name">Model Name</FieldLabel>
+                        <input
+                          id="model_name"
+                          type="text"
+                          value={modelName}
+                          onChange={(e) => setModelName(e.target.value)}
+                          placeholder="e.g., CloudSoft Series"
+                          className={INPUT_CLASS}
+                        />
+                      </div>
+
+                      <div>
+                        <FieldLabel htmlFor="model_number">Model Number</FieldLabel>
+                        <input
+                          id="model_number"
+                          type="text"
+                          value={modelNumber}
+                          onChange={(e) => setModelNumber(e.target.value)}
+                          placeholder="e.g., CS-MSW-2026"
+                          className={`${INPUT_CLASS} font-mono text-[12.5px]`}
+                        />
+                      </div>
+
+                      <div>
+                        <FieldLabel htmlFor="warranty">Warranty</FieldLabel>
+                        <input
+                          id="warranty"
+                          type="text"
+                          value={warranty}
+                          onChange={(e) => setWarranty(e.target.value)}
+                          placeholder="e.g., 6 Months Warranty"
+                          className={INPUT_CLASS}
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Physical Specifications */}
+                  <div className={SUBCARD_CLASS}>
+                    <h4 className="mb-3.5 text-[14px] font-bold text-[#0F172A]">
+                      Physical Specifications (Net Product)
+                    </h4>
+
+                    <div className="space-y-4">
+                      <div>
+                        <FieldLabel htmlFor="product_weight">Product Weight</FieldLabel>
+                        <div className="flex max-w-xs">
+                          <input
+                            id="product_weight"
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            value={productWeight}
+                            onChange={(e) => setProductWeight(e.target.value)}
+                            placeholder="e.g., 250"
+                            className={`${INPUT_CLASS} rounded-r-none border-r-0`}
+                          />
+                          <select
+                            aria-label="Weight Unit"
+                            value={weightUnit}
+                            onChange={(e) => setWeightUnit(e.target.value as NewWeightUnit)}
+                            className="h-11 rounded-r-xl border border-[#DCE0E8] bg-[#F1F5F9] px-4 text-[13px] font-semibold text-[#0D2B53] outline-none focus:border-[#F47C35]"
+                          >
+                            <option value="g">g</option>
+                            <option value="kg">kg</option>
+                            <option value="mg">mg</option>
+                            <option value="lb">lb</option>
+                            <option value="oz">oz</option>
+                          </select>
+                        </div>
+                      </div>
+
+                      <div>
+                        <FieldLabel htmlFor="product_length">
+                          Product Dimensions (Length × Width × Height)
+                        </FieldLabel>
+                        <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-[1fr_1fr_1fr_auto]">
+                          <input
+                            id="product_length"
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            value={productLength}
+                            onChange={(e) => setProductLength(e.target.value)}
+                            placeholder="Length"
+                            aria-label="Product Length"
+                            className={INPUT_CLASS}
+                          />
+                          <input
+                            id="product_width"
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            value={productWidth}
+                            onChange={(e) => setProductWidth(e.target.value)}
+                            placeholder="Width"
+                            aria-label="Product Width"
+                            className={INPUT_CLASS}
+                          />
+                          <input
+                            id="product_height"
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            value={productHeight}
+                            onChange={(e) => setProductHeight(e.target.value)}
+                            placeholder="Height"
+                            aria-label="Product Height"
+                            className={INPUT_CLASS}
+                          />
+                          <select
+                            aria-label="Dimension Unit"
+                            value={dimensionUnit}
+                            onChange={(e) => setDimensionUnit(e.target.value as NewDimensionUnit)}
+                            className="h-11 rounded-xl border border-[#DCE0E8] bg-[#F1F5F9] px-4 text-[13px] font-semibold text-[#0D2B53] outline-none focus:border-[#F47C35]"
+                          >
+                            <option value="cm">cm</option>
+                            <option value="mm">mm</option>
+                            <option value="in">in</option>
+                            <option value="m">m</option>
+                          </select>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Additional Information: specifications{} & additional_attributes{} */}
+                <div className="grid gap-5 lg:grid-cols-2">
+                  <KeyValueMapBuilder
+                    title="Technical Specifications"
+                    description="Key–value specifications shown in the product specs table."
+                    pairs={specificationsList}
+                    onChange={setSpecificationsList}
+                    keyPlaceholder="Specification name"
+                    valuePlaceholder="Enter specification value"
+                    suggestedKeys={SUGGESTED_SPEC_KEYS}
+                  />
+
+                  <KeyValueMapBuilder
+                    title="Additional Attributes"
+                    description="Custom product attributes and extra metadata pairs (e.g. product_group_code)."
+                    pairs={additionalAttributesList}
+                    onChange={setAdditionalAttributesList}
+                    keyPlaceholder="Attribute name"
+                    valuePlaceholder="Enter attribute value"
+                    suggestedKeys={SUGGESTED_ATTR_KEYS}
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* 4. PACKAGING & MANUFACTURER INFORMATION (FULL WIDTH) */}
+            <div className={CARD_CLASS}>
+              <SectionHeader
+                icon={Truck}
+                title="Packaging & Manufacturer Information"
+                subtitle="Package dimensions, box contents, and manufacturer/importer compliance details."
+              />
+
+              <div className="grid gap-5 xl:grid-cols-2">
+                {/* Packaging Information */}
+                <div className={SUBCARD_CLASS}>
+                  <div className="mb-3.5 flex flex-wrap items-center justify-between gap-2">
+                    <h4 className="text-[14px] font-bold text-[#0F172A]">
+                      Packaging Information
+                    </h4>
                     <button
                       type="button"
-                      onClick={() => setBrand('')}
-                      className="text-sm text-[#C35A20] underline"
-                      aria-label="Clear brand"
+                      onClick={handleCopyDimensionsToPackage}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-[#DCE0E8] bg-white px-3 py-1.5 text-[12px] font-semibold text-[#0D2B53] hover:border-[#F47C35] hover:text-[#F47C35] cursor-pointer"
                     >
-                      Clear
+                      <Copy size={13} />
+                      <span>Copy from Product Dimensions</span>
                     </button>
-                  )}
+                  </div>
+
+                  <div className="grid gap-3.5 sm:grid-cols-2 lg:grid-cols-4">
+                    <div>
+                      <FieldLabel htmlFor="package_weight" hint={`in ${weightUnit}`}>
+                        Package Weight
+                      </FieldLabel>
+                      <input
+                        id="package_weight"
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={packageWeight}
+                        onChange={(e) => setPackageWeight(e.target.value)}
+                        placeholder="320"
+                        className={INPUT_CLASS}
+                      />
+                    </div>
+
+                    <div>
+                      <FieldLabel htmlFor="package_length" hint={`in ${dimensionUnit}`}>
+                        Package Length
+                      </FieldLabel>
+                      <input
+                        id="package_length"
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={packageLength}
+                        onChange={(e) => setPackageLength(e.target.value)}
+                        placeholder="24"
+                        className={INPUT_CLASS}
+                      />
+                    </div>
+
+                    <div>
+                      <FieldLabel htmlFor="package_width" hint={`in ${dimensionUnit}`}>
+                        Package Width
+                      </FieldLabel>
+                      <input
+                        id="package_width"
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={packageWidth}
+                        onChange={(e) => setPackageWidth(e.target.value)}
+                        placeholder="18"
+                        className={INPUT_CLASS}
+                      />
+                    </div>
+
+                    <div>
+                      <FieldLabel htmlFor="package_height" hint={`in ${dimensionUnit}`}>
+                        Package Height
+                      </FieldLabel>
+                      <input
+                        id="package_height"
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={packageHeight}
+                        onChange={(e) => setPackageHeight(e.target.value)}
+                        placeholder="5"
+                        className={INPUT_CLASS}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="mt-4">
+                    <FieldLabel
+                      htmlFor="package_contents_input"
+                      hint={`${packageContents.length} items`}
+                    >
+                      Package Contents (What&apos;s in the Box)
+                    </FieldLabel>
+                    <StringArrayBuilder
+                      id="package_contents_input"
+                      items={packageContents}
+                      onChange={setPackageContents}
+                      placeholder="e.g., 1 × Main Unit, 1 × User Manual"
+                      emptyText="Add items included inside the package."
+                      quickSuggestions={[
+                        '1 × Main Unit',
+                        '1 × User Manual',
+                        '1 × Warranty Card',
+                      ]}
+                    />
+                  </div>
                 </div>
-                <p className="mt-2 text-sm text-gray-600">Leave blank for an unbranded product.</p>
-              </section>
+
+                {/* Manufacturer Information */}
+                <div className={SUBCARD_CLASS}>
+                  <h4 className="mb-3.5 text-[14px] font-bold text-[#0F172A]">
+                    Manufacturer Information
+                  </h4>
+
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <div>
+                      <FieldLabel htmlFor="manufacturer_name">Manufacturer Name</FieldLabel>
+                      <input
+                        id="manufacturer_name"
+                        type="text"
+                        value={manufacturerName}
+                        onChange={(e) => setManufacturerName(e.target.value)}
+                        placeholder="Enter manufacturer name"
+                        className={INPUT_CLASS}
+                      />
+                    </div>
+
+                    <div>
+                      <FieldLabel htmlFor="manufacturer_part_number">
+                        Manufacturer Part Number
+                      </FieldLabel>
+                      <input
+                        id="manufacturer_part_number"
+                        type="text"
+                        value={manufacturerPartNumber}
+                        onChange={(e) => setManufacturerPartNumber(e.target.value)}
+                        placeholder="e.g., MPN-88412"
+                        className={`${INPUT_CLASS} font-mono text-[12.5px]`}
+                      />
+                    </div>
+
+                    <div>
+                      <FieldLabel htmlFor="country_of_origin">Country of Origin</FieldLabel>
+                      <input
+                        id="country_of_origin"
+                        type="text"
+                        value={countryOfOrigin}
+                        onChange={(e) => setCountryOfOrigin(e.target.value)}
+                        placeholder="e.g., India"
+                        className={INPUT_CLASS}
+                      />
+                    </div>
+
+                    <div>
+                      <FieldLabel htmlFor="imported_by">Imported By</FieldLabel>
+                      <input
+                        id="imported_by"
+                        type="text"
+                        value={importedBy}
+                        onChange={(e) => setImportedBy(e.target.value)}
+                        placeholder="Importer name & address (if applicable)"
+                        className={INPUT_CLASS}
+                      />
+                    </div>
+
+                    <div className="sm:col-span-2">
+                      <FieldLabel htmlFor="marketed_by">Marketed By</FieldLabel>
+                      <input
+                        id="marketed_by"
+                        type="text"
+                        value={marketedBy}
+                        onChange={(e) => setMarketedBy(e.target.value)}
+                        placeholder="Marketed by company name & address"
+                        className={INPUT_CLASS}
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
             </div>
-          </div>
-          <AdditionalProductDetails
-            values={additionalDetails}
-            onChange={setAdditionalDetails}
-            brandName={brandName !== 'Unbranded' ? brandName : ''}
-            companyName={companyName.trim()}
-            categoryName={(subCategoryId ? category?.subs.find((s) => s.id === subCategoryId)?.name : null) || category?.name || ''}
-            productId={editId}
-          />
+
+            {/* 5. USAGE, CARE, SAFETY & RETURN POLICY (FULL WIDTH) */}
+            <div className={CARD_CLASS}>
+              <SectionHeader
+                icon={ShieldCheck}
+                title="Usage, Care, Safety & Return Policy"
+                subtitle="Customer instructions for usage, washing/care, safety warnings, and return eligibility."
+              />
+
+              <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-4">
+                <div className={SUBCARD_CLASS}>
+                  <FieldLabel htmlFor="usage_instructions">Usage Instructions</FieldLabel>
+                  <textarea
+                    id="usage_instructions"
+                    rows={4}
+                    value={usageInstructions}
+                    onChange={(e) => setUsageInstructions(e.target.value)}
+                    placeholder="How to use or assemble the product..."
+                    className={TEXTAREA_CLASS}
+                  />
+                </div>
+
+                <div className={SUBCARD_CLASS}>
+                  <FieldLabel htmlFor="care_instructions">Care Instructions</FieldLabel>
+                  <textarea
+                    id="care_instructions"
+                    rows={4}
+                    value={careInstructions}
+                    onChange={(e) => setCareInstructions(e.target.value)}
+                    placeholder="Washing, storage, or maintenance instructions..."
+                    className={TEXTAREA_CLASS}
+                  />
+                </div>
+
+                <div className={SUBCARD_CLASS}>
+                  <FieldLabel htmlFor="safety_information">Safety Information</FieldLabel>
+                  <textarea
+                    id="safety_information"
+                    rows={4}
+                    value={safetyInformation}
+                    onChange={(e) => setSafetyInformation(e.target.value)}
+                    placeholder="Important safety warnings or age advisories..."
+                    className={TEXTAREA_CLASS}
+                  />
+                </div>
+
+                <div className={SUBCARD_CLASS}>
+                  <FieldLabel htmlFor="return_policy">Return Policy</FieldLabel>
+                  <textarea
+                    id="return_policy"
+                    rows={4}
+                    value={returnPolicy}
+                    onChange={(e) => setReturnPolicy(e.target.value)}
+                    placeholder="Specify return or replacement policy..."
+                    className={TEXTAREA_CLASS}
+                  />
+                  <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                    <span className="text-[11px] font-medium text-[#64748B]">Presets:</span>
+                    {RETURN_POLICY_PRESETS.map((preset) => (
+                      <button
+                        key={preset.label}
+                        type="button"
+                        onClick={() => setReturnPolicy(preset.text)}
+                        className="rounded-md border border-[#E2E8F0] bg-white px-2 py-0.5 text-[10.5px] font-medium text-[#475569] transition-colors hover:border-[#F47C35] hover:text-[#F47C35] cursor-pointer"
+                      >
+                        {preset.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* 6. SEO INFORMATION & SEARCH PREVIEW (FULL WIDTH) */}
+            <div className={CARD_CLASS}>
+              <SectionHeader
+                icon={Globe}
+                title="SEO Information"
+                subtitle="Search engine meta title, description, keywords, and canonical URL."
+                action={
+                  <button
+                    type="button"
+                    onClick={handleAutoFillSeo}
+                    className="inline-flex items-center gap-1.5 rounded-xl border border-[#DCE0E8] bg-[#F8FAFC] px-3.5 py-2 text-[12px] font-semibold text-[#0D2B53] hover:border-[#F47C35] hover:text-[#F47C35] cursor-pointer"
+                  >
+                    <Wand2 size={14} />
+                    <span>Auto-fill from Product Info</span>
+                  </button>
+                }
+              />
+
+              <div className="grid gap-6 lg:grid-cols-[1.3fr_1fr]">
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div className="sm:col-span-2">
+                    <FieldLabel
+                      htmlFor="meta_title"
+                      hint={`${metaTitle.length}/60 recommended`}
+                    >
+                      Meta Title
+                    </FieldLabel>
+                    <input
+                      id="meta_title"
+                      type="text"
+                      value={metaTitle}
+                      onChange={(e) => setMetaTitle(e.target.value)}
+                      placeholder={productName || 'Enter SEO page title'}
+                      className={INPUT_CLASS}
+                    />
+                  </div>
+
+                  <div className="sm:col-span-2">
+                    <FieldLabel
+                      htmlFor="meta_description"
+                      hint={`${metaDescription.length}/160 recommended`}
+                    >
+                      Meta Description
+                    </FieldLabel>
+                    <textarea
+                      id="meta_description"
+                      rows={3}
+                      value={metaDescription}
+                      onChange={(e) => setMetaDescription(e.target.value)}
+                      placeholder="Summary for search engine results..."
+                      className={TEXTAREA_CLASS}
+                    />
+                  </div>
+
+                  <div>
+                    <FieldLabel htmlFor="meta_keywords">Meta Keywords</FieldLabel>
+                    <input
+                      id="meta_keywords"
+                      type="text"
+                      value={metaKeywords}
+                      onChange={(e) => setMetaKeywords(e.target.value)}
+                      placeholder="Comma-separated keywords"
+                      className={INPUT_CLASS}
+                    />
+                  </div>
+
+                  <div>
+                    <FieldLabel htmlFor="canonical_url">Canonical URL</FieldLabel>
+                    <input
+                      id="canonical_url"
+                      type="url"
+                      value={canonicalUrl}
+                      onChange={(e) => setCanonicalUrl(e.target.value)}
+                      placeholder={`https://merabeta.com/products/${
+                        generateProductSlug(slug || productName) || 'product-slug'
+                      }`}
+                      className={`${INPUT_CLASS} font-mono text-[12.5px]`}
+                    />
+                  </div>
+                </div>
+
+                {/* Live Google Search Snippet Preview */}
+                <div className="flex flex-col justify-between rounded-2xl border border-[#E2E8F0] bg-[#F8FAFC] p-5">
+                  <div>
+                    <div className="mb-3 flex items-center gap-2 text-[12px] font-bold uppercase tracking-wider text-[#64748B]">
+                      <Search size={14} className="text-[#F47C35]" />
+                      <span>Search Engine Preview</span>
+                    </div>
+                    <div className="rounded-xl border border-[#E2E8F0] bg-white p-4 shadow-2xs">
+                      <p className="truncate text-[12px] text-[#0F172A]">
+                        merabeta.com › products ›{' '}
+                        <span className="text-[#64748B]">
+                          {generateProductSlug(slug || productName) || 'product-slug'}
+                        </span>
+                      </p>
+                      <h4 className="mt-1 line-clamp-1 text-[17px] font-medium text-[#1A0DAB]">
+                        {metaTitle.trim() || productName.trim() || 'Product Title Appears Here'}
+                      </h4>
+                      <p className="mt-1 line-clamp-2 text-[13px] leading-relaxed text-[#4D5156]">
+                        {metaDescription.trim() ||
+                          shortDescription.trim() ||
+                          fullDescription.trim() ||
+                          'Add a meta description or short description to preview how search engines summarize this product.'}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="mt-5 flex flex-wrap items-center justify-end gap-2.5 pt-3">
+                    <button
+                      type="button"
+                      disabled={saving || submitting || isLoadingProduct}
+                      onClick={() => void persistProductToBackend('draft')}
+                      className="inline-flex h-11 items-center justify-center gap-1.5 rounded-xl border border-[#DCE0E8] bg-white px-5 text-[13.5px] font-semibold text-[#334155] hover:bg-[#F8FAFC] disabled:opacity-60 cursor-pointer"
+                    >
+                      {saving && <Loader2 size={15} className="animate-spin" />}
+                      <span>{saving ? 'Saving Draft...' : 'Save as Draft'}</span>
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={saving || submitting || isLoadingProduct}
+                      className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-[#F47C35] px-6 text-[13.5px] font-semibold text-white shadow-xs hover:bg-[#E06924] disabled:opacity-60 cursor-pointer"
+                    >
+                      {submitting ? (
+                        <Loader2 size={16} className="animate-spin" />
+                      ) : (
+                        <CheckCircle2 size={16} />
+                      )}
+                      <span>
+                        {submitting
+                          ? 'Saving...'
+                          : isEditing
+                          ? 'Save Changes'
+                          : 'Publish Product'}
+                      </span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
           </fieldset>
         </form>
       </section>
 
+      {/* ==================================================================== */}
+      {/* PRODUCT REVIEW MODAL                                                 */}
+      {/* ==================================================================== */}
       {previewOpen && (
         <div
           role="dialog"
           aria-modal="true"
-          aria-labelledby="product-preview-title"
-          className="fixed inset-0 z-[80] flex items-center justify-center bg-[#162033]/50 p-3 sm:p-4 backdrop-blur-[2px] overflow-hidden"
+          aria-labelledby="schema-preview-modal-title"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-[#0F172A]/60 p-3 sm:p-5 backdrop-blur-xs"
           onMouseDown={(e) => {
-            if (e.currentTarget === e.target && !submitting) {
-              if (successMessage) router.push('/admin/products');
-              else setPreviewOpen(false);
-            }
+            if (e.target === e.currentTarget && !submitting) setPreviewOpen(false);
           }}
         >
-          <div className="flex max-h-[90vh] w-full max-w-[800px] flex-col rounded-2xl bg-white shadow-2xl overflow-hidden">
-            <header className="flex items-start justify-between border-b border-gray-100 px-5 sm:px-6 py-4 bg-white flex-shrink-0">
+          <div className="flex max-h-[90vh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
+            <header className="flex flex-wrap items-center justify-between gap-3 border-b border-[#E2E8F0] px-6 py-4">
               <div>
-                <h2 id="product-preview-title" className="text-[18px] sm:text-[20px] font-bold text-gray-900">
-                  {successMessage
-                    ? isEditing
-                      ? 'Product updated'
-                      : 'Product published'
-                    : isEditing
-                    ? 'Edit product preview'
-                    : 'Product preview'}
+                <h2
+                  id="schema-preview-modal-title"
+                  className="text-[18px] font-bold text-[#0F172A]"
+                >
+                  Product Summary Preview
                 </h2>
-                <p className="mt-0.5 text-[12px] sm:text-[13px] text-gray-500">
-                  {successMessage || (isEditing ? 'Review details before updating product in catalog.' : 'Review details before saving and publishing to catalog.')}
+                <p className="text-[12.5px] text-[#64748B]">
+                  Review product details before saving to catalog.
                 </p>
               </div>
+
               {!submitting && (
                 <button
                   type="button"
-                  aria-label="Close product preview"
-                  onClick={() => (successMessage ? router.push('/admin/products') : setPreviewOpen(false))}
-                  className="flex h-8 w-8 items-center justify-center rounded-full text-gray-500 hover:bg-gray-100 transition-colors"
+                  onClick={() => setPreviewOpen(false)}
+                  aria-label="Close modal"
+                  className="flex h-8 w-8 items-center justify-center rounded-full text-[#64748B] hover:bg-[#F1F5F9] cursor-pointer"
                 >
                   <X size={18} />
                 </button>
               )}
             </header>
 
-            {successMessage ? (
-              <div className="flex flex-col items-center px-6 py-12 text-center">
-                <span className="flex h-16 w-16 items-center justify-center rounded-full bg-emerald-50 text-emerald-600">
-                  <CheckCircle2 size={34} />
-                </span>
-                <p className="mt-4 text-[15px] font-medium text-gray-800">{successMessage}</p>
-                <button
-                  type="button"
-                  onClick={() => router.push('/admin/products')}
-                  className="mt-6 h-11 rounded-lg bg-[#F47C35] px-8 text-[14px] font-semibold text-white hover:bg-[#E96F29] shadow-sm transition-colors"
-                >
-                  View products
-                </button>
-              </div>
-            ) : (
-              <>
-                <div className="flex-1 overflow-y-auto px-5 sm:px-6 py-4 space-y-4">
-                  <div className="grid gap-5 md:grid-cols-[180px_minmax(0,1fr)]">
-                    <div>
-                      {images.length > 0 ? (
-                        <div className="grid grid-cols-3 sm:grid-cols-2 gap-2">
-                          {images.slice(0, 4).map((img, idx) => (
-                            <div
-                              key={img.key}
-                              className="relative aspect-square rounded-lg border border-gray-200 bg-gray-50 overflow-hidden"
-                            >
-                              {/* eslint-disable-next-line @next/next/no-img-element */}
-                              <img
-                                src={img.src}
-                                alt={img.name}
-                                className="h-full w-full object-contain"
-                              />
-                              {idx === 0 && (
-                                <span className="absolute bottom-1 left-1 rounded bg-[#17375F] px-1 py-0.5 text-[8px] font-semibold text-white">
-                                  Primary
-                                </span>
-                              )}
-                            </div>
-                          ))}
-                        </div>
-                      ) : (
-                        <div className="flex h-20 sm:h-28 md:h-36 items-center justify-center rounded-lg border border-dashed border-gray-300 bg-gray-50 text-[12px] text-gray-400">
-                          No images attached
-                        </div>
-                      )}
-                    </div>
+            <div className="flex-1 overflow-y-auto p-6">
+              <div className="space-y-6 text-[13px]">
+                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                  <div className="rounded-xl border border-[#E2E8F0] bg-[#F8FAFC] p-3.5">
+                    <span className="text-[11px] text-[#64748B]">Product Type & Status</span>
+                    <p className="mt-1 font-bold capitalize text-[#0F172A]">
+                      {productType} Product · {productStatus}
+                    </p>
+                  </div>
+                  <div className="rounded-xl border border-[#E2E8F0] bg-[#F8FAFC] p-3.5">
+                    <span className="text-[11px] text-[#64748B]">Selling Price / MRP</span>
+                    <p className="mt-1 font-bold text-[#0F172A]">
+                      ₹{sellingPrice || '0'}{' '}
+                      <span className="font-normal text-[#64748B]">/ MRP ₹{mrp || '0'}</span>
+                    </p>
+                  </div>
+                  <div className="rounded-xl border border-[#E2E8F0] bg-[#F8FAFC] p-3.5">
+                    <span className="text-[11px] text-[#64748B]">SKU & HSN Code</span>
+                    <p className="mt-1 font-mono font-semibold text-[#0F172A]">
+                      {sku || '—'} · HSN: {hsnCode || '—'}
+                    </p>
+                  </div>
+                  <div className="rounded-xl border border-[#E2E8F0] bg-[#F8FAFC] p-3.5">
+                    <span className="text-[11px] text-[#64748B]">Inventory</span>
+                    <p className="mt-1 font-bold text-[#0F172A]">
+                      {stockQuantity || 0} units (Min: {minStockQuantity || 0})
+                    </p>
+                  </div>
+                </div>
 
-                    <dl className="grid grid-cols-[85px_1fr] sm:grid-cols-[105px_1fr] gap-x-3 gap-y-2.5 text-[13px]">
-                      <dt className="text-gray-500 font-medium">Product</dt>
-                      <dd className="font-semibold text-gray-900 break-words">{name.trim()}</dd>
-
-                      <dt className="text-gray-500 font-medium">Slug</dt>
-                      <dd className="font-mono text-[12px] text-gray-700 break-all">
-                        {generateProductSlug(slug.trim() || name.trim())}
+                <div className="grid gap-5 md:grid-cols-2">
+                  <div className="rounded-xl border border-[#E2E8F0] p-4">
+                    <h4 className="mb-2.5 text-[12px] font-bold uppercase text-[#F47C35]">
+                      Core Product Details
+                    </h4>
+                    <dl className="grid grid-cols-[140px_1fr] gap-y-2 text-[12.5px]">
+                      <dt className="text-[#64748B]">Product Name</dt>
+                      <dd className="font-semibold text-[#0F172A]">{productName || '—'}</dd>
+                      <dt className="text-[#64748B]">Slug</dt>
+                      <dd className="font-mono text-[#334155]">{nativeWritePayload.slug}</dd>
+                      <dt className="text-[#64748B]">Product Code</dt>
+                      <dd className="font-mono">{productCode || '—'}</dd>
+                      <dt className="text-[#64748B]">Barcode</dt>
+                      <dd className="font-mono">{barcode || '—'}</dd>
+                      <dt className="text-[#64748B]">Category / Sub</dt>
+                      <dd>
+                        {selectedCategory?.name || categoryId || '—'}
+                        {subcategoryId
+                          ? ` / ${
+                              selectedCategory?.subcategories.find((s) => s.id === subcategoryId)
+                                ?.name || subcategoryId
+                            }`
+                          : ''}
                       </dd>
-
-                      <dt className="text-gray-500 font-medium">Status</dt>
-                      <dd className="capitalize font-medium">
-                        <span
-                          className={`inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium ${
-                            productStatus === 'active'
-                              ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                              : productStatus === 'draft'
-                              ? 'bg-amber-50 text-amber-700 border border-amber-200'
-                              : productStatus === 'inactive'
-                              ? 'bg-rose-50 text-rose-700 border border-rose-200'
-                              : 'bg-gray-100 text-gray-700 border border-gray-200'
-                          }`}
-                        >
-                          {productStatus}
-                        </span>
+                      <dt className="text-[#64748B]">Brand / Vendor</dt>
+                      <dd>
+                        {brandsList.find((b) => b.id === brandId)?.name || brandId || '—'} /{' '}
+                        {vendorsList.find((v) => v.id === vendorId)?.name || vendorId || '—'}
                       </dd>
-
-                      <dt className="text-gray-500 font-medium">Category</dt>
-                      <dd className="text-gray-800">
-                        {category?.name || 'Unassigned'}
-                        {subCategoryId ? ` / ${category?.subs.find((s) => s.id === subCategoryId)?.name}` : ''}
+                      <dt className="text-[#64748B]">Cost / Tax Rate</dt>
+                      <dd>
+                        ₹{costPrice || '—'} / {taxRate || 0}%
                       </dd>
-
-                      <dt className="text-gray-500 font-medium">Brand</dt>
-                      <dd className="text-gray-800">{brandName}</dd>
-
-                      {shortDescription.trim() && (
-                        <>
-                          <dt className="text-gray-500 font-medium">Short Desc</dt>
-                          <dd className="text-gray-800 break-words">{shortDescription.trim()}</dd>
-                        </>
-                      )}
-
-                      {description.trim() && (
-                        <>
-                          <dt className="text-gray-500 font-medium">Description</dt>
-                          <dd className="text-gray-800 whitespace-pre-line break-words max-h-32 overflow-y-auto pr-1">
-                            {description.trim()}
-                          </dd>
-                        </>
-                      )}
-
-                      {details.length > 0 && (
-                        <>
-                          <dt className="text-gray-500 font-medium">Details</dt>
-                          <dd className="text-gray-800 max-h-32 overflow-y-auto pr-1">
-                            <ul className="list-disc pl-4 space-y-0.5">
-                              {details.map((d) => (
-                                <li key={d}>{d}</li>
-                              ))}
-                            </ul>
-                          </dd>
-                        </>
-                      )}
                     </dl>
                   </div>
 
-                  <ProductDetailSummary values={additionalDetails} />
-                  {error && (
-                    <p
-                      role="alert"
-                      className="rounded-lg border border-red-200 bg-red-50 px-4 py-2.5 text-[13px] text-red-700 font-medium"
-                    >
-                      {error}
-                    </p>
-                  )}
+                  <div className="rounded-xl border border-[#E2E8F0] p-4">
+                    <h4 className="mb-2.5 text-[12px] font-bold uppercase text-[#F47C35]">
+                      Extended Specifications
+                    </h4>
+                    <dl className="grid grid-cols-[145px_1fr] gap-y-2 text-[12.5px]">
+                      <dt className="text-[#64748B]">Key Features</dt>
+                      <dd>{keyFeatures.length} items</dd>
+                      <dt className="text-[#64748B]">Highlights</dt>
+                      <dd>{highlights.length} items</dd>
+                      <dt className="text-[#64748B]">Properties</dt>
+                      <dd>
+                        {[material, colour, size, modelName].filter(Boolean).join(' · ') || '—'}
+                      </dd>
+                      <dt className="text-[#64748B]">Weight & Dimensions</dt>
+                      <dd>
+                        {productWeight ? `${productWeight}${weightUnit}` : '—'} ·{' '}
+                        {productLength || '0'}×{productWidth || '0'}×{productHeight || '0'}{' '}
+                        {dimensionUnit}
+                      </dd>
+                      <dt className="text-[#64748B]">Manufacturer</dt>
+                      <dd>
+                        {manufacturerName || '—'} ({countryOfOrigin || '—'})
+                      </dd>
+                      <dt className="text-[#64748B]">Package Contents</dt>
+                      <dd>{packageContents.length} items</dd>
+                      <dt className="text-[#64748B]">Specifications</dt>
+                      <dd>
+                        {Object.keys(nativeWritePayload.details?.specifications || {}).length} keys
+                      </dd>
+                    </dl>
+                  </div>
                 </div>
+              </div>
+            </div>
 
-                <footer className="flex-shrink-0 border-t border-gray-100 bg-gray-50 px-5 sm:px-6 py-3 sm:py-4 flex flex-col-reverse sm:flex-row sm:justify-end gap-2 sm:gap-3">
-                  <button
-                    type="button"
-                    disabled={submitting}
-                    onClick={() => {
-                      setPreviewOpen(false);
-                      setError('');
-                    }}
-                    className="h-10 sm:h-11 w-full sm:w-auto rounded-lg border border-gray-300 bg-white px-5 text-[13px] sm:text-[14px] font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-60 transition-colors"
-                  >
-                    Back to edit
-                  </button>
-                  <button
-                    type="button"
-                    disabled={submitting}
-                    onClick={() => void confirmPublish()}
-                    className="h-10 sm:h-11 w-full sm:w-auto flex items-center justify-center gap-2 rounded-lg bg-[#F47C35] px-6 text-[13px] sm:text-[14px] font-semibold text-white hover:bg-[#E96F29] disabled:opacity-60 shadow-sm transition-colors cursor-pointer"
-                  >
-                    {submitting && <Loader2 size={16} className="animate-spin" />}
-                    {submitting
-                      ? 'Saving...'
-                      : isEditing
-                      ? 'Confirm & Save Changes'
-                      : productStatus === 'draft'
-                      ? 'Confirm & Save Draft'
-                      : productStatus === 'active'
-                      ? 'Confirm & Publish'
-                      : 'Confirm & Save'}
-                  </button>
-                </footer>
-              </>
-            )}
+            <footer className="flex items-center justify-end gap-3 border-t border-[#E2E8F0] bg-[#F8FAFC] px-6 py-4">
+              <button
+                type="button"
+                disabled={submitting}
+                onClick={() => setPreviewOpen(false)}
+                className="h-10 rounded-xl border border-[#DCE0E8] bg-white px-4 text-[13px] font-semibold text-[#334155] hover:bg-[#F1F5F9] disabled:opacity-60 cursor-pointer"
+              >
+                Back to Editing
+              </button>
+              <button
+                type="button"
+                disabled={submitting}
+                onClick={() => void persistProductToBackend()}
+                className="inline-flex h-10 items-center gap-2 rounded-xl bg-[#F47C35] px-6 text-[13px] font-semibold text-white shadow-xs hover:bg-[#E06924] disabled:opacity-60 cursor-pointer"
+              >
+                {submitting ? (
+                  <Loader2 size={16} className="animate-spin" />
+                ) : (
+                  <CheckCircle2 size={16} />
+                )}
+                <span>
+                  {submitting
+                    ? 'Saving...'
+                    : isEditing
+                    ? 'Confirm & Update'
+                    : 'Confirm & Publish'}
+                </span>
+              </button>
+            </footer>
           </div>
         </div>
       )}
@@ -4287,7 +3229,7 @@ export default function ProductEditor({ initialIsEdit = false }: ProductEditorPr
     <Suspense
       fallback={
         <div className="flex min-h-[400px] items-center justify-center">
-          <Loader2 className="h-8 w-8 animate-spin text-[#F47C35]" />
+          <div className="h-8 w-8 animate-spin rounded-full border-3 border-[#F47C35] border-t-transparent" />
         </div>
       }
     >
