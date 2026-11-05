@@ -112,10 +112,55 @@ export async function getAdminCategoriesTree(params?: {
 }
 
 export async function getAllAdminCategories(): Promise<BackendCategory[]> {
-  return collectAllPages(
-    (offset, limit) => getAdminCategories({ limit, offset }),
-    (category) => category.category_id ?? category.id!
-  );
+  const byId = new Map<string, BackendCategory>();
+
+  const addCat = (c: any, parentIdFallback?: number | string | null) => {
+    if (!c || typeof c !== 'object') return;
+    const rawId = c.category_id ?? c.id;
+    if (rawId == null) return;
+    const idStr = String(rawId);
+    const parentId =
+      c.parent_category_id ?? c.parent_id ?? parentIdFallback ?? null;
+    byId.set(idStr, {
+      ...byId.get(idStr),
+      ...c,
+      category_id: Number(rawId) || rawId,
+      id: rawId,
+      category_name: c.category_name || c.name || 'Category',
+      parent_category_id: parentId != null ? Number(parentId) || parentId : null,
+    });
+
+    const nested = Array.isArray(c.subcategories)
+      ? c.subcategories
+      : Array.isArray(c.children)
+      ? c.children
+      : [];
+    for (const child of nested) {
+      addCat(child, rawId);
+    }
+  };
+
+  const [treeResult, pagedResult] = await Promise.allSettled([
+    getAdminCategoriesTree(),
+    collectAllPages(
+      (offset, limit) => getAdminCategories({ limit, offset }),
+      (category) => category.category_id ?? category.id!
+    ),
+  ]);
+
+  if (treeResult.status === 'fulfilled' && Array.isArray(treeResult.value)) {
+    for (const node of treeResult.value) {
+      addCat(node, null);
+    }
+  }
+
+  if (pagedResult.status === 'fulfilled' && Array.isArray(pagedResult.value)) {
+    for (const item of pagedResult.value) {
+      addCat(item, item.parent_category_id ?? (item as any).parent_id ?? null);
+    }
+  }
+
+  return Array.from(byId.values());
 }
 
 export async function getAdminCategoryById(

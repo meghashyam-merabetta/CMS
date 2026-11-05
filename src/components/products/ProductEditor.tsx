@@ -23,16 +23,21 @@ import {
   Trash2,
   Truck,
   Wand2,
+  Warehouse as WarehouseIcon,
   X,
 } from 'lucide-react';
 import {
+  BackendProductInventoryRow,
+  BackendWarehouse,
   createNativeAdminProduct,
   deleteAdminProductImage,
   generateIdempotencyKey,
   generateProductSlug,
   getAdminProductById,
   getAdminProductImages,
+  getAdminProductInventory,
   getAdminVendors,
+  getAdminWarehouses,
   MAX_PRODUCT_IMAGES,
   MAX_TOTAL_IMAGE_BYTES,
   NativeProductWritePayload,
@@ -41,6 +46,7 @@ import {
   NewProductType,
   NewWeightUnit,
   replaceAdminProductImage,
+  setAdminProductInventory,
   setPrimaryProductImage,
   toNonNegativeDecimal,
   toNonNegativeSafeInt,
@@ -597,6 +603,9 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
   // Inventory Information
   const [stockQuantity, setStockQuantity] = useState('0');
   const [minStockQuantity, setMinStockQuantity] = useState('5');
+  const [warehousesList, setWarehousesList] = useState<BackendWarehouse[]>([]);
+  const [selectedWarehouseId, setSelectedWarehouseId] = useState<string>('');
+  const [inventoryRows, setInventoryRows] = useState<BackendProductInventoryRow[]>([]);
 
   /* ======================================================================== */
   /* 2. TABLE: product_details (nested inside `details`) STATE                */
@@ -682,7 +691,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
     async function loadDropdownData() {
       setLoadingDropdowns(true);
       try {
-        const [catsResult, brandsResult, vendorsResult] = await Promise.allSettled([
+        const [catsResult, brandsResult, vendorsResult, warehousesResult] = await Promise.allSettled([
           getAdminCategoriesTree().catch(async () => {
             const rootsRes = await getAdminCategories({
               roots_only: true,
@@ -693,6 +702,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
           }),
           getAdminBrands({ limit: 100, offset: 0 }),
           getAdminVendors({ limit: 100, offset: 0 }),
+          getAdminWarehouses({ limit: 100, offset: 0 }).catch(() => []),
         ]);
 
         if (cancelled) return;
@@ -775,6 +785,15 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
               }))
               .filter((v) => Boolean(v.id))
           );
+        }
+
+        // Parse Warehouses
+        if (warehousesResult.status === 'fulfilled' && Array.isArray(warehousesResult.value)) {
+          const whs = warehousesResult.value.filter((w) => w.is_active !== false);
+          setWarehousesList(whs);
+          if (whs.length > 0) {
+            setSelectedWarehouseId((prev) => prev || String(whs[0].id ?? whs[0].warehouse_id ?? ''));
+          }
         }
       } finally {
         if (!cancelled) setLoadingDropdowns(false);
@@ -890,6 +909,22 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
         setMinStockQuantity(
           String(prod.min_stock_quantity ?? invSummary?.minimum_stock_level ?? 5)
         );
+
+        // Fetch live warehouse inventory rows
+        getAdminProductInventory(targetId)
+          .then((rows) => {
+            if (Array.isArray(rows) && rows.length > 0) {
+              setInventoryRows(rows);
+              const first = rows[0];
+              if (first.warehouse_id != null) {
+                setSelectedWarehouseId(String(first.warehouse_id));
+              }
+              if (first.available_quantity != null) {
+                setStockQuantity(String(first.available_quantity));
+              }
+            }
+          })
+          .catch(() => {});
 
         // Details object (`details` or `product_details` or flat fallback)
         const d = prod.details || prod.product_details || prod;
@@ -1038,6 +1073,23 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
   /* ------------------------- Build Native Backend Payload ----------------- */
   const nativeWritePayload = useMemo<NativeProductWritePayload>(() => {
     const finalSlug = generateProductSlug(slug.trim() || productName.trim());
+    const stockQtyNum = parseNullableNumber(stockQuantity);
+    const minStockNum = parseNullableNumber(minStockQuantity);
+    const chosenWhId =
+      toSafePositiveInt(selectedWarehouseId) ||
+      (warehousesList.length > 0
+        ? toSafePositiveInt(warehousesList[0].id ?? warehousesList[0].warehouse_id)
+        : null);
+
+    const initialInv =
+      stockQtyNum != null && chosenWhId != null
+        ? {
+            warehouse_id: chosenWhId,
+            total_quantity: Math.max(0, Math.floor(stockQtyNum)),
+            available_quantity: Math.max(0, Math.floor(stockQtyNum)),
+            minimum_stock_level: minStockNum != null ? Math.max(0, Math.floor(minStockNum)) : 5,
+          }
+        : null;
 
     return {
       product_code: productCode.trim(),
@@ -1056,8 +1108,9 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
       cost_price: toNonNegativeDecimal(costPrice, 2),
       tax_rate: toNonNegativeDecimal(taxRate, 2),
       hsn_code: cleanNullableString(hsnCode),
-      stock_quantity: toNonNegativeSafeInt(stockQuantity, 0),
+      stock_quantity: initialInv ? initialInv.available_quantity : null,
       min_stock_quantity: toNonNegativeSafeInt(minStockQuantity, 0),
+      initial_inventory: initialInv,
       details: {
         short_description: cleanNullableString(shortDescription),
         full_description: cleanNullableString(fullDescription),
@@ -1123,6 +1176,8 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
     hsnCode,
     stockQuantity,
     minStockQuantity,
+    selectedWarehouseId,
+    warehousesList,
     shortDescription,
     fullDescription,
     keyFeatures,
@@ -1479,9 +1534,33 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
         activeProductId = newId;
         setSavedProductId(newId);
       } else {
-        // On PATCH, omit stock_quantity because warehouse availability maintains it after creation
-        const { stock_quantity: _omitStockOnPatch, ...patchPayload } = payloadToSend;
+        // On PATCH, omit stock_quantity and initial_inventory from product PATCH
+        const { stock_quantity: _omitStockOnPatch, initial_inventory: _omitInvOnPatch, ...patchPayload } = payloadToSend;
         await updateNativeAdminProduct(activeProductId, patchPayload);
+
+        // Update warehouse inventory via PUT /api/admin/products/:id/inventory
+        const chosenWhId =
+          toSafePositiveInt(selectedWarehouseId) ||
+          (warehousesList.length > 0
+            ? toSafePositiveInt(warehousesList[0].id ?? warehousesList[0].warehouse_id)
+            : null);
+        const stockQtyNum = parseNullableNumber(stockQuantity);
+        if (chosenWhId != null && stockQtyNum != null && activeProductId) {
+          try {
+            await setAdminProductInventory(activeProductId, {
+              warehouse_id: chosenWhId,
+              total_quantity: Math.max(0, Math.floor(stockQtyNum)),
+              available_quantity: Math.max(0, Math.floor(stockQtyNum)),
+              minimum_stock_level: toNonNegativeSafeInt(minStockQuantity, 5) ?? 5,
+            });
+            const freshRows = await getAdminProductInventory(activeProductId);
+            if (Array.isArray(freshRows) && freshRows.length > 0) {
+              setInventoryRows(freshRows);
+            }
+          } catch (invErr: any) {
+            console.warn('Inventory update note:', invErr?.message);
+          }
+        }
       }
 
       // STEP 2: Upload any pending local image files separately
@@ -2402,11 +2481,41 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                 </div>
 
                 <div className={SUBCARD_CLASS}>
-                  <h4 className="mb-3.5 text-[14px] font-bold text-[#0F172A]">
-                    Inventory Information
-                  </h4>
+                  <div className="flex items-center justify-between mb-3.5">
+                    <h4 className="text-[14px] font-bold text-[#0F172A]">
+                      Inventory Information
+                    </h4>
+                    {warehousesList.length > 0 && (
+                      <span className="text-[11px] font-medium text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200">
+                        {warehousesList.length} Warehouse{warehousesList.length > 1 ? 's' : ''} Connected
+                      </span>
+                    )}
+                  </div>
 
-                  <div className="grid gap-4 sm:grid-cols-2">
+                  <div className="grid gap-4 sm:grid-cols-3">
+                    <div>
+                      <FieldLabel htmlFor="warehouse_id">Assigned Warehouse</FieldLabel>
+                      <select
+                        id="warehouse_id"
+                        value={selectedWarehouseId}
+                        onChange={(e) => setSelectedWarehouseId(e.target.value)}
+                        className={INPUT_CLASS}
+                      >
+                        {warehousesList.length === 0 ? (
+                          <option value="">Default Central Depot</option>
+                        ) : (
+                          warehousesList.map((wh) => {
+                            const whId = String(wh.id ?? wh.warehouse_id ?? '');
+                            return (
+                              <option key={whId} value={whId}>
+                                {wh.warehouse_name || wh.warehouse_code} ({wh.city || 'Warehouse'})
+                              </option>
+                            );
+                          })
+                        )}
+                      </select>
+                    </div>
+
                     <div>
                       <FieldLabel htmlFor="stock_quantity">Stock Quantity</FieldLabel>
                       <input
@@ -2423,7 +2532,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
 
                     <div>
                       <FieldLabel htmlFor="min_stock_quantity">
-                        Minimum Stock Quantity
+                        Minimum Stock Level
                       </FieldLabel>
                       <input
                         id="min_stock_quantity"
@@ -2437,6 +2546,38 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                       />
                     </div>
                   </div>
+
+                  {/* Stock Table if live inventory rows exist */}
+                  {inventoryRows.length > 0 && (
+                    <div className="mt-4 overflow-hidden rounded-lg border border-[#E2E8F0]">
+                      <table className="w-full text-left text-[12px]">
+                        <thead className="bg-[#F8FAFC] text-[#475569] font-medium border-b border-[#E2E8F0]">
+                          <tr>
+                            <th className="px-3 py-2">Warehouse</th>
+                            <th className="px-3 py-2">Total Stock</th>
+                            <th className="px-3 py-2">Available</th>
+                            <th className="px-3 py-2">Damaged</th>
+                            <th className="px-3 py-2">Min Level</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-[#E2E8F0]">
+                          {inventoryRows.map((row, idx) => (
+                            <tr key={String(row.id ?? row.warehouse_id ?? idx)} className="hover:bg-slate-50">
+                              <td className="px-3 py-2 font-medium text-slate-800">
+                                {row.warehouse_name || row.warehouse_code || `Warehouse #${row.warehouse_id}`}
+                              </td>
+                              <td className="px-3 py-2 font-mono">{row.total_quantity}</td>
+                              <td className="px-3 py-2 font-semibold text-emerald-700 font-mono">
+                                {row.available_quantity}
+                              </td>
+                              <td className="px-3 py-2 text-rose-600 font-mono">{row.damaged_quantity || 0}</td>
+                              <td className="px-3 py-2 text-slate-600 font-mono">{row.minimum_stock_level ?? 5}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
