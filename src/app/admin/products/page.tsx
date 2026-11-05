@@ -447,12 +447,15 @@ export default function ProductManagementPage() {
 
   // Keep latest categories and brands in refs so loading them does NOT trigger a products re-fetch.
   const categoriesRef = useRef<BackendCategory[]>([]);
+  const [lookupsVersion, setLookupsVersion] = useState(0);
   const brandsRef = useRef<BackendBrand[]>([]);
   useEffect(() => {
     categoriesRef.current = categories;
+    if (categories.length > 0) setLookupsVersion((v) => v + 1);
   }, [categories]);
   useEffect(() => {
     brandsRef.current = brands;
+    if (brands.length > 0) setLookupsVersion((v) => v + 1);
   }, [brands]);
 
   // Debounced search so typing doesn't fire a request per keystroke.
@@ -469,8 +472,41 @@ export default function ProductManagementPage() {
   async function enrichVisibleProducts(records: ProductRecord[], backendItems: BackendProduct[]) {
     return Promise.all(records.map(async (record) => {
       const backend = backendItems.find((item) => String(item.product_id ?? item.id) === record.id);
-      const result = { ...record };
+      let result = { ...record };
       const warnings: string[] = [];
+
+      // The list endpoint may omit category/inventory data: read the detail record when missing.
+      if (!result.categoryId || result.stock <= 0) {
+        try {
+          const detail: any = await getAdminProductById(record.id);
+          if (detail) {
+            const merged = mapBackendProductToRecord(
+              { ...(backend || {}), ...detail } as BackendProduct,
+              0,
+              categoriesRef.current,
+              brandsRef.current
+            );
+            const invRows: any[] = Array.isArray(detail.inventory?.rows)
+              ? detail.inventory.rows
+              : Array.isArray(detail.inventory)
+              ? detail.inventory
+              : [];
+            const invAvailable = invRows.length
+              ? invRows.reduce((s, r) => s + (Number(r.available_quantity) || 0), 0)
+              : Number(detail.inventory?.available_quantity ?? detail.inventory?.total_available ?? 0) || 0;
+            result = {
+              ...result,
+              category: merged.category,
+              categoryId: merged.categoryId ?? result.categoryId,
+              brand: merged.brand,
+              stock: merged.stock > 0 ? merged.stock : invAvailable,
+            };
+          }
+        } catch {
+          // keep list values
+        }
+      }
+
       await Promise.all([
         !result.image ? getAdminProductImages(record.id).then((images) => {
           result.image = images.find((image) => image.is_primary)?.image_url || images[0]?.image_url;
@@ -637,7 +673,7 @@ export default function ProductManagementPage() {
         if (requestId === requestIdRef.current) setIsLoading(false);
       }
     },
-    [pageSize, currentPage, debouncedSearch, selectedCategory, selectedBrand, selectedStatus, sortBy, sortOrder]
+    [pageSize, currentPage, debouncedSearch, selectedCategory, selectedBrand, selectedStatus, sortBy, sortOrder, lookupsVersion]
   );
 
   React.useEffect(() => {

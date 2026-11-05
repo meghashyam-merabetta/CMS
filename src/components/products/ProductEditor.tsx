@@ -36,6 +36,7 @@ import {
   getAdminProductById,
   getAdminProductImages,
   getAdminProductInventory,
+  createAdminWarehouse,
   getAdminVendors,
   getAdminWarehouses,
   MAX_PRODUCT_IMAGES,
@@ -1092,6 +1093,24 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
   }, [mrp, sellingPrice, costPrice, taxRate]);
 
   /* ------------------------- Build Native Backend Payload ----------------- */
+  async function handleCreateMainWarehouse() {
+    try {
+      const wh = await createAdminWarehouse({
+        warehouse_code: 'MAIN',
+        warehouse_name: 'Main warehouse',
+        city: 'Pune',
+        state: 'Maharashtra',
+        country: 'India',
+        pincode: '411001',
+        is_active: true,
+      });
+      setWarehousesList([wh]);
+      setSelectedWarehouseId(String(wh.id ?? wh.warehouse_id ?? ''));
+    } catch (e: any) {
+      setError(e?.message || 'Failed to create warehouse');
+    }
+  }
+
   const nativeWritePayload = useMemo<NativeProductWritePayload>(() => {
     const finalSlug = generateProductSlug(slug.trim() || productName.trim());
     const stockQtyNum = parseNullableNumber(stockQuantity);
@@ -1528,6 +1547,18 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
 
     let activeProductId = savedProductId;
 
+    if (
+      !activeProductId &&
+      (parseNullableNumber(stockQuantity) ?? 0) > 0 &&
+      !payloadToSend.initial_inventory
+    ) {
+      setError('No warehouse exists, so stock cannot be saved. Click "Create Main Warehouse" in Inventory Information, then save again.');
+      setSaving(false);
+      setSubmitting(false);
+      saveInProgressRef.current = false;
+      return;
+    }
+
     try {
       // STEP 1: Create (POST) if no ID yet, or Update (PATCH) if ID already retained
       if (!activeProductId) {
@@ -1589,6 +1620,8 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
               `Product details were saved, but warehouse stock was not updated: ${invErr?.message || 'Inventory adjustment failed.'}`
             );
           }
+        } else if (stockQtyNum != null && stockQtyNum > 0 && chosenWhId == null) {
+          throw new Error('Product saved, but stock was not updated: no warehouse exists. Click "Create Main Warehouse" in Inventory Information first.');
         }
 
         // Confirm classification/status using a fresh read. Some backend versions
@@ -2553,6 +2586,19 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                     )}
                   </div>
 
+                  {warehousesList.length === 0 && (
+                    <div className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] text-amber-800">
+                      <span>No warehouse exists yet, so stock cannot be saved.</span>
+                      <button
+                        type="button"
+                        onClick={handleCreateMainWarehouse}
+                        className="rounded-md bg-[#F47C35] px-3 py-1 font-semibold text-white hover:bg-[#E96F29] cursor-pointer"
+                      >
+                        Create Main Warehouse
+                      </button>
+                    </div>
+                  )}
+
                   <div className="grid gap-4 sm:grid-cols-3">
                     <div>
                       <FieldLabel htmlFor="warehouse_id">Assigned Warehouse</FieldLabel>
@@ -2566,7 +2612,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                         className={INPUT_CLASS}
                       >
                         {warehousesList.length === 0 ? (
-                          <option value="">Default Central Depot</option>
+                          <option value="">No warehouse found</option>
                         ) : (
                           warehousesList.map((wh) => {
                             const whId = String(wh.id ?? wh.warehouse_id ?? '');
