@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   Search,
   Plus,
@@ -12,76 +12,51 @@ import {
   CheckCircle2,
   AlertTriangle
 } from 'lucide-react';
+import {
+  BackendWarehouse,
+  createAdminWarehouse,
+  deleteAdminWarehouse,
+  getAdminWarehouses,
+  updateAdminWarehouse,
+} from '@/services/api/adminProductsApi';
 
 interface Warehouse {
   id: string;
+  warehouseCode: string;
   warehouseName: string;
   formattedAddress: string;
+  city: string;
+  state: string;
+  pincode: string;
   contactName: string;
   contactPhone: string;
   active: boolean;
-  carrierReady: boolean;
   updatedAt: string;
 }
 
-const mockWarehouses: Warehouse[] = [
-  {
-    id: 'wh_1',
-    warehouseName: 'Bhiwandi Central Fulfillment Hub',
-    formattedAddress: 'Plot 42, Logistics Park, Mankoli, Bhiwandi, Thane, Maharashtra 421302',
-    contactName: 'Sanjay Patwardhan',
-    contactPhone: '+91 98201 11223',
-    active: true,
-    carrierReady: true,
-    updatedAt: '2025-09-28 10:15',
-  },
-  {
-    id: 'wh_2',
-    warehouseName: 'Okhla Industrial Logistics Depot',
-    formattedAddress: 'Phase III, Okhla Industrial Area, New Delhi, Delhi 110020',
-    contactName: 'Rajesh Mehra',
-    contactPhone: '+91 98110 44556',
-    active: true,
-    carrierReady: true,
-    updatedAt: '2025-09-25 14:30',
-  },
-  {
-    id: 'wh_3',
-    warehouseName: 'Electronic City South Distribution Hub',
-    formattedAddress: 'Hosur Main Road, Electronic City Phase 1, Bengaluru, Karnataka 560100',
-    contactName: 'Venkatesh Murthy',
-    contactPhone: '+91 97400 77889',
-    active: true,
-    carrierReady: true,
-    updatedAt: '2025-09-22 16:45',
-  },
-  {
-    id: 'wh_4',
-    warehouseName: 'Sanath Nagar Medical Depot',
-    formattedAddress: 'Industrial Estate, Sanath Nagar, Hyderabad, Telangana 500018',
-    contactName: 'K. Prabhakar Rao',
-    contactPhone: '+91 99891 22334',
-    active: true,
-    carrierReady: false,
-    updatedAt: '2025-09-18 11:20',
-  },
-  {
-    id: 'wh_5',
-    warehouseName: 'Ambattur Stockyard & Fulfillment',
-    formattedAddress: 'SIDCO Industrial Estate, Ambattur, Chennai, Tamil Nadu 600058',
-    contactName: 'Senthil Kumar',
-    contactPhone: '+91 94441 55667',
-    active: false,
-    carrierReady: false,
-    updatedAt: '2025-09-10 09:00',
-  },
-];
+function mapWarehouse(item: BackendWarehouse): Warehouse {
+  const id = item.id ?? item.warehouse_id;
+  return {
+    id: String(id ?? ''),
+    warehouseCode: item.warehouse_code || '',
+    warehouseName: item.warehouse_name || item.warehouse_code || `Warehouse #${id}`,
+    formattedAddress: [item.address_line1, item.address_line2].filter(Boolean).join(', '),
+    city: item.city || '',
+    state: item.state || '',
+    pincode: item.pincode || '',
+    contactName: item.contact_person || '',
+    contactPhone: item.contact_number || '',
+    active: item.is_active !== false,
+    updatedAt: item.updated_at ? new Date(item.updated_at).toLocaleString('en-IN') : '—',
+  };
+}
 
 export default function WarehousesPage() {
   const [search, setSearch] = useState('');
-  const [warehouses, setWarehouses] = useState<Warehouse[]>(mockWarehouses);
+  const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   // Modals
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
@@ -90,13 +65,33 @@ export default function WarehousesPage() {
 
   // Add form
   const [newWh, setNewWh] = useState({
+    warehouseCode: '',
     warehouseName: '',
     formattedAddress: '',
+    city: '',
+    state: '',
+    pincode: '',
     contactName: '',
     contactPhone: '',
     active: true,
-    carrierReady: true,
   });
+
+  const loadWarehouses = useCallback(async () => {
+    setIsRefreshing(true);
+    setErrorMessage(null);
+    try {
+      const rows = await getAdminWarehouses({ limit: 100, offset: 0 });
+      setWarehouses(rows.map(mapWarehouse).filter((row) => row.id));
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Warehouses could not be loaded.');
+    } finally {
+      setIsRefreshing(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadWarehouses();
+  }, [loadWarehouses]);
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
@@ -110,62 +105,67 @@ export default function WarehousesPage() {
       w.contactName.toLowerCase().includes(search.toLowerCase())
   );
 
-  const handleRefresh = () => {
-    setIsRefreshing(true);
-    setTimeout(() => {
-      setIsRefreshing(false);
-      showToast('Warehouse statuses synchronized with carrier APIs.');
-    }, 500);
-  };
+  const handleRefresh = () => void loadWarehouses();
 
-  const handleCreateWarehouse = (e: React.FormEvent) => {
+  const handleCreateWarehouse = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newWh.warehouseName.trim() || !newWh.formattedAddress.trim()) return;
-
-    const item: Warehouse = {
-      id: `wh_${Date.now()}`,
-      warehouseName: newWh.warehouseName,
-      formattedAddress: newWh.formattedAddress,
-      contactName: newWh.contactName,
-      contactPhone: newWh.contactPhone,
-      active: newWh.active,
-      carrierReady: newWh.carrierReady,
-      updatedAt: 'Just now',
-    };
-
-    setWarehouses([item, ...warehouses]);
-    setIsAddModalOpen(false);
-    setNewWh({
-      warehouseName: '',
-      formattedAddress: '',
-      contactName: '',
-      contactPhone: '',
-      active: true,
-      carrierReady: true,
-    });
-    showToast(`Warehouse "${item.warehouseName}" registered successfully.`);
+    setErrorMessage(null);
+    try {
+      const created = await createAdminWarehouse({
+        warehouse_code: newWh.warehouseCode.trim(),
+        warehouse_name: newWh.warehouseName.trim(),
+        address_line1: newWh.formattedAddress.trim(),
+        city: newWh.city.trim(),
+        state: newWh.state.trim(),
+        pincode: newWh.pincode.trim(),
+        contact_person: newWh.contactName.trim() || null,
+        contact_number: newWh.contactPhone.trim() || null,
+        is_active: newWh.active,
+      });
+      setWarehouses((previous) => [mapWarehouse(created), ...previous]);
+      setIsAddModalOpen(false);
+      setNewWh({ warehouseCode: '', warehouseName: '', formattedAddress: '', city: '', state: '', pincode: '', contactName: '', contactPhone: '', active: true });
+      showToast(`Warehouse "${newWh.warehouseName}" registered successfully.`);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Warehouse could not be created.');
+    }
   };
 
-  const handleSaveEdit = (e: React.FormEvent) => {
+  const handleSaveEdit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingWarehouse) return;
-
-    setWarehouses((prev) =>
-      prev.map((w) =>
-        w.id === editingWarehouse.id
-          ? { ...editingWarehouse, updatedAt: 'Just now' }
-          : w
-      )
-    );
-    showToast(`Warehouse "${editingWarehouse.warehouseName}" updated successfully.`);
-    setEditingWarehouse(null);
+    setErrorMessage(null);
+    try {
+      const updated = await updateAdminWarehouse(editingWarehouse.id, {
+        warehouse_code: editingWarehouse.warehouseCode.trim(),
+        warehouse_name: editingWarehouse.warehouseName.trim(),
+        address_line1: editingWarehouse.formattedAddress.trim(),
+        city: editingWarehouse.city.trim(),
+        state: editingWarehouse.state.trim(),
+        pincode: editingWarehouse.pincode.trim(),
+        contact_person: editingWarehouse.contactName.trim() || null,
+        contact_number: editingWarehouse.contactPhone.trim() || null,
+        is_active: editingWarehouse.active,
+      });
+      setWarehouses((prev) => prev.map((w) => w.id === editingWarehouse.id ? mapWarehouse(updated) : w));
+      showToast(`Warehouse "${editingWarehouse.warehouseName}" updated successfully.`);
+      setEditingWarehouse(null);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Warehouse could not be updated.');
+    }
   };
 
-  const handleConfirmDelete = () => {
+  const handleConfirmDelete = async () => {
     if (!warehouseToDelete) return;
-    setWarehouses((prev) => prev.filter((w) => w.id !== warehouseToDelete.id));
-    showToast(`Warehouse "${warehouseToDelete.warehouseName}" removed.`);
-    setWarehouseToDelete(null);
+    setErrorMessage(null);
+    try {
+      await deleteAdminWarehouse(warehouseToDelete.id);
+      setWarehouses((prev) => prev.filter((w) => w.id !== warehouseToDelete.id));
+      showToast(`Warehouse "${warehouseToDelete.warehouseName}" removed.`);
+      setWarehouseToDelete(null);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Warehouse could not be deleted.');
+    }
   };
 
   return (
@@ -180,6 +180,9 @@ export default function WarehousesPage() {
             <X size={14} />
           </button>
         </div>
+      )}
+      {errorMessage && (
+        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-[13px] font-medium text-red-700">{errorMessage}</div>
       )}
 
       <div className="rounded-2xl border border-[#DDE3EA] bg-white p-6 shadow-[0_2px_5px_rgba(15,23,42,0.05)]">
@@ -232,7 +235,7 @@ export default function WarehousesPage() {
           <table className="w-full min-w-[950px] text-left text-[13px]">
             <thead className="bg-[#E4E4E4] text-[#111111]">
               <tr>
-                {['Warehouse', 'Address', 'Contact', 'Active', 'Carrier ready', 'Updated', 'Action'].map((h) => (
+                {['Warehouse', 'Address', 'Contact', 'Active', 'Updated', 'Action'].map((h) => (
                   <th
                     key={h}
                     className={`px-4 py-3.5 font-medium border-r border-white last:border-r-0 ${
@@ -247,8 +250,8 @@ export default function WarehousesPage() {
             <tbody className="divide-y divide-[#E4E4E4] text-[12px] text-[#505050]">
               {filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="py-8 text-center text-gray-500">
-                    No warehouses found matching criteria.
+                  <td colSpan={6} className="py-8 text-center text-gray-500">
+                    {isRefreshing ? 'Loading warehouses…' : 'No warehouses found matching criteria.'}
                   </td>
                 </tr>
               ) : (
@@ -257,7 +260,7 @@ export default function WarehousesPage() {
                     <td className="px-4 py-4 font-semibold text-[#173153]">
                       <div className="flex items-center gap-2">
                         <WarehouseIcon size={16} className="text-[#F47C35] shrink-0" />
-                        <span>{w.warehouseName}</span>
+                        <span>{w.warehouseName}<span className="block text-[10px] font-normal text-slate-500">{w.warehouseCode}</span></span>
                       </div>
                     </td>
                     <td className="max-w-xs px-4 py-4 text-[#555]">{w.formattedAddress}</td>
@@ -274,15 +277,6 @@ export default function WarehousesPage() {
                         }`}
                       >
                         {w.active ? 'Active' : 'Inactive'}
-                      </span>
-                    </td>
-                    <td className="px-4 py-4">
-                      <span
-                        className={`font-semibold ${
-                          w.carrierReady ? 'text-[#168A2E]' : 'text-slate-500'
-                        }`}
-                      >
-                        {w.carrierReady ? 'Yes' : 'No'}
                       </span>
                     </td>
                     <td className="px-4 py-4 text-[#777]">{w.updatedAt}</td>
@@ -336,6 +330,10 @@ export default function WarehousesPage() {
 
             <div className="mt-4 space-y-4 text-[13px]">
               <div>
+                <label className="block font-medium text-gray-700">Warehouse Code</label>
+                <input type="text" required value={newWh.warehouseCode} onChange={(e) => setNewWh({ ...newWh, warehouseCode: e.target.value })} className="mt-1 h-10 w-full rounded-lg border border-[#D6DCE5] px-3 text-[13px] outline-none focus:border-[#F47C35]" />
+              </div>
+              <div>
                 <label className="block font-medium text-gray-700">Warehouse Name</label>
                 <input
                   type="text"
@@ -345,6 +343,12 @@ export default function WarehousesPage() {
                   onChange={(e) => setNewWh({ ...newWh, warehouseName: e.target.value })}
                   className="mt-1 h-10 w-full rounded-lg border border-[#D6DCE5] px-3 text-[13px] outline-none focus:border-[#F47C35]"
                 />
+              </div>
+
+              <div className="grid grid-cols-3 gap-3">
+                <div><label className="block font-medium text-gray-700">City</label><input type="text" required value={newWh.city} onChange={(e) => setNewWh({ ...newWh, city: e.target.value })} className="mt-1 h-10 w-full rounded-lg border border-[#D6DCE5] px-3 text-[13px] outline-none focus:border-[#F47C35]" /></div>
+                <div><label className="block font-medium text-gray-700">State</label><input type="text" required value={newWh.state} onChange={(e) => setNewWh({ ...newWh, state: e.target.value })} className="mt-1 h-10 w-full rounded-lg border border-[#D6DCE5] px-3 text-[13px] outline-none focus:border-[#F47C35]" /></div>
+                <div><label className="block font-medium text-gray-700">PIN Code</label><input type="text" required value={newWh.pincode} onChange={(e) => setNewWh({ ...newWh, pincode: e.target.value })} className="mt-1 h-10 w-full rounded-lg border border-[#D6DCE5] px-3 text-[13px] outline-none focus:border-[#F47C35]" /></div>
               </div>
 
               <div>
@@ -392,15 +396,6 @@ export default function WarehousesPage() {
                   />
                   <span>Warehouse Active</span>
                 </label>
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={newWh.carrierReady}
-                    onChange={(e) => setNewWh({ ...newWh, carrierReady: e.target.checked })}
-                    className="h-4 w-4 rounded accent-[#F47C35]"
-                  />
-                  <span>Carrier Pickup Ready</span>
-                </label>
               </div>
             </div>
 
@@ -443,6 +438,10 @@ export default function WarehousesPage() {
 
             <div className="mt-4 space-y-4 text-[13px]">
               <div>
+                <label className="block font-medium text-gray-700">Warehouse Code</label>
+                <input type="text" required value={editingWarehouse.warehouseCode} onChange={(e) => setEditingWarehouse({ ...editingWarehouse, warehouseCode: e.target.value })} className="mt-1 h-10 w-full rounded-lg border border-[#D6DCE5] px-3 text-[13px] outline-none focus:border-[#F47C35]" />
+              </div>
+              <div>
                 <label className="block font-medium text-gray-700">Warehouse Name</label>
                 <input
                   type="text"
@@ -453,6 +452,12 @@ export default function WarehousesPage() {
                   }
                   className="mt-1 h-10 w-full rounded-lg border border-[#D6DCE5] px-3 text-[13px] outline-none focus:border-[#F47C35]"
                 />
+              </div>
+
+              <div className="grid grid-cols-3 gap-3">
+                <div><label className="block font-medium text-gray-700">City</label><input type="text" required value={editingWarehouse.city} onChange={(e) => setEditingWarehouse({ ...editingWarehouse, city: e.target.value })} className="mt-1 h-10 w-full rounded-lg border border-[#D6DCE5] px-3 text-[13px] outline-none focus:border-[#F47C35]" /></div>
+                <div><label className="block font-medium text-gray-700">State</label><input type="text" required value={editingWarehouse.state} onChange={(e) => setEditingWarehouse({ ...editingWarehouse, state: e.target.value })} className="mt-1 h-10 w-full rounded-lg border border-[#D6DCE5] px-3 text-[13px] outline-none focus:border-[#F47C35]" /></div>
+                <div><label className="block font-medium text-gray-700">PIN Code</label><input type="text" required value={editingWarehouse.pincode} onChange={(e) => setEditingWarehouse({ ...editingWarehouse, pincode: e.target.value })} className="mt-1 h-10 w-full rounded-lg border border-[#D6DCE5] px-3 text-[13px] outline-none focus:border-[#F47C35]" /></div>
               </div>
 
               <div>
@@ -504,17 +509,6 @@ export default function WarehousesPage() {
                     className="h-4 w-4 rounded accent-[#F47C35]"
                   />
                   <span>Warehouse Active</span>
-                </label>
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={editingWarehouse.carrierReady}
-                    onChange={(e) =>
-                      setEditingWarehouse({ ...editingWarehouse, carrierReady: e.target.checked })
-                    }
-                    className="h-4 w-4 rounded accent-[#F47C35]"
-                  />
-                  <span>Carrier Pickup Ready</span>
                 </label>
               </div>
             </div>

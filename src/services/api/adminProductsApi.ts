@@ -572,6 +572,26 @@ export async function createAdminWarehouse(
   return res?.data ?? res;
 }
 
+export async function updateAdminWarehouse(
+  warehouseId: number | string,
+  payload: UpdateWarehousePayload
+): Promise<BackendWarehouse> {
+  const res = await apiFetch<any>(`${ADMIN_WAREHOUSES_ENDPOINT}/${warehouseId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  });
+  return res?.data ?? res;
+}
+
+export async function deleteAdminWarehouse(
+  warehouseId: number | string
+): Promise<void> {
+  await apiFetch(`${ADMIN_WAREHOUSES_ENDPOINT}/${warehouseId}`, {
+    method: 'DELETE',
+    body: JSON.stringify({}),
+  });
+}
+
 export async function getAdminProductInventory(
   productId: number | string
 ): Promise<BackendProductInventoryRow[]> {

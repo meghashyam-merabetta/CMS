@@ -31,6 +31,7 @@ import {
   resolvePrimaryProductImage,
   generateProductSlug,
   getAdminProductImages,
+  getAdminProductInventory,
   getAllAdminProductVariants,
   deleteAdminProductImage,
   setPrimaryProductImage,
@@ -480,6 +481,21 @@ export default function ProductManagementPage() {
             result.variantCount = variants.length;
             result.inventorySummary = summarizeProductInventory(backend!, variants);
           }).catch(() => warnings.push('Variants could not be loaded')) : Promise.resolve(),
+        getAdminProductInventory(record.id).then((rows) => {
+            if (rows.length === 0) return;
+            const available = rows.reduce((sum, row) => {
+              const value = Number(row.available_quantity);
+              return sum + (Number.isFinite(value) && value >= 0 ? value : 0);
+            }, 0);
+            result.stock = available;
+            result.inventorySummary = {
+              source: 'product',
+              stock: available,
+              minPrice: result.inventorySummary?.minPrice ?? result.price,
+              maxPrice: result.inventorySummary?.maxPrice ?? result.price,
+              activeVariantCount: 0,
+            };
+          }).catch(() => warnings.push('Warehouse stock could not be loaded')),
       ]);
       result.catalogWarning = warnings.join('. ');
       return result;
