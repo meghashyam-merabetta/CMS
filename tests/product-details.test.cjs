@@ -15,7 +15,6 @@ test('all 44 additional fields serialize and reload with appropriate types', () 
   assert.equal(typeof payload.net_weight, 'number');
   assert.deepEqual(payload.seller_pincodes, ['560001', '560002']);
 });
-
 test('blank fields remain omitted and clearing saved values sends null', () => {
   assert.deepEqual(details.serializeProductDetails({}), {});
   assert.deepEqual(details.serializeProductDetails({ model_number: '' }, { model_number: 'OLD' }), { model_number: null });
@@ -61,8 +60,8 @@ test('the section renders labelled controls and the preview shows entered values
   const html = renderToStaticMarkup(React.createElement(ui.default, { values, onChange() {} }));
   assert.match(html, /Additional Product Details/);
   assert.match(html, /Manufacturer SKU/);
-  assert.match(html, /Product Net Weight/);
-  assert.match(html, /Expiry Date \/ Months/);
+  assert.doesNotMatch(html, /Product dimensions &amp; dates/);
+  assert.doesNotMatch(html, /Product Net Weight/);
   assert.doesNotMatch(html, /for="detail-product_length"/);
   assert.match(html, /Sale Starts/);
   assert.match(html, /Battery Required/);

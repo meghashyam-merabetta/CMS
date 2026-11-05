@@ -64,26 +64,61 @@ function mapBackendProductToRecord(
     0;
   const price = Number(rawPrice) || 0;
   const regularPrice = Number(bp.regular_price ?? bp.mrp ?? price) || price;
-  const stock = Number(bp.stock_quantity ?? bp.stock ?? 0) || 0;
+  const stock = Number(
+    bp.stock_quantity ??
+    bp.stock ??
+    (bp as any).inventory?.available_quantity ??
+    (bp as any).inventory?.total_quantity ??
+    0
+  ) || 0;
 
   const prodCats = Array.isArray(bp.categories) ? bp.categories : [];
   const primaryCat =
-    prodCats.find((c) => c.ProductCategory?.is_primary) || prodCats[0] || null;
-  const primaryCatId = primaryCat
-    ? String(primaryCat.category_id ?? primaryCat.id ?? '')
-    : bp.primary_category_id != null
-    ? String(bp.primary_category_id)
-    : undefined;
+    prodCats.find((c: any) => c.ProductCategory?.is_primary) || prodCats[0] || null;
 
+  const directCatId =
+    bp.category_id != null && String(bp.category_id).trim() !== ''
+      ? String(bp.category_id).trim()
+      : undefined;
+  const directSubCatId =
+    (bp as any).subcategory_id != null && String((bp as any).subcategory_id).trim() !== ''
+      ? String((bp as any).subcategory_id).trim()
+      : undefined;
+
+  const primaryCatId =
+    directSubCatId ??
+    directCatId ??
+    (primaryCat
+      ? String(primaryCat.category_id ?? primaryCat.id ?? '')
+      : bp.primary_category_id != null
+      ? String(bp.primary_category_id)
+      : undefined);
+
+  const matchedSubCat = directSubCatId
+    ? cats.find((c) => String(c.category_id ?? c.id) === directSubCatId)
+    : null;
+  const matchedRootCat = directCatId
+    ? cats.find((c) => String(c.category_id ?? c.id) === directCatId)
+    : null;
   const matchedCatFromList =
     primaryCatId != null
       ? cats.find((c) => String(c.category_id ?? c.id) === primaryCatId)
       : null;
 
-  const categoryName =
-    prodCats.length > 0
-      ? prodCats.map((c) => c.category_name || c.name).filter(Boolean).join(', ')
-      : matchedCatFromList?.category_name || 'Uncategorized';
+  let categoryName = 'Uncategorized';
+  if ((bp as any).category_name) {
+    categoryName = (bp as any).category_name;
+  } else if ((bp as any).category?.category_name) {
+    categoryName = (bp as any).category.category_name;
+  } else if (matchedSubCat && matchedRootCat && String(matchedSubCat.id ?? matchedSubCat.category_id) !== String(matchedRootCat.id ?? matchedRootCat.category_id)) {
+    categoryName = `${matchedRootCat.category_name} > ${matchedSubCat.category_name}`;
+  } else if (matchedCatFromList?.category_name) {
+    categoryName = matchedCatFromList.category_name;
+  } else if (matchedRootCat?.category_name) {
+    categoryName = matchedRootCat.category_name;
+  } else if (prodCats.length > 0) {
+    categoryName = prodCats.map((c: any) => c.category_name || c.name).filter(Boolean).join(', ');
+  }
 
   const brandIdStr = bp.brand_id != null ? String(bp.brand_id) : '';
   const matchedBrand = brandIdStr

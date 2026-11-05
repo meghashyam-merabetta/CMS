@@ -69,6 +69,90 @@ export interface NativeProductDetailsPayload {
   specifications?: Record<string, string>;
   additional_attributes?: Record<string, string>;
 }
+export interface NativeProductInventoryWritePayload {
+  warehouse_id: number | string;
+  total_quantity: number;
+  available_quantity?: number;
+  damaged_quantity?: number;
+  in_transit_quantity?: number;
+  minimum_stock_level?: number;
+  maximum_stock_level?: number | null;
+  reorder_quantity?: number | null;
+  rack_number?: string | null;
+  shelf_number?: string | null;
+  bin_number?: string | null;
+}
+
+export interface BackendWarehouse {
+  id?: string | number;
+  warehouse_id?: string | number;
+  warehouse_code: string;
+  warehouse_name: string;
+  warehouse_type?: string | null;
+  contact_person?: string | null;
+  contact_number?: string | null;
+  email?: string | null;
+  address_line1?: string | null;
+  address_line2?: string | null;
+  city: string;
+  state: string;
+  country?: string;
+  pincode: string;
+  is_active?: boolean;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface CreateWarehousePayload {
+  warehouse_code: string;
+  warehouse_name: string;
+  warehouse_type?: string | null;
+  contact_person?: string | null;
+  contact_number?: string | null;
+  email?: string | null;
+  address_line1?: string | null;
+  address_line2?: string | null;
+  city: string;
+  state: string;
+  country?: string;
+  pincode: string;
+  is_active?: boolean;
+}
+
+export type UpdateWarehousePayload = Partial<CreateWarehousePayload>;
+
+export interface BackendProductInventoryRow {
+  id?: string | number;
+  inventory_id?: string | number;
+  product_id?: string | number;
+  warehouse_id: string | number;
+  warehouse_code?: string;
+  warehouse_name?: string;
+  city?: string;
+  state?: string;
+  total_quantity: number;
+  available_quantity: number;
+  reserved_quantity?: number;
+  damaged_quantity?: number;
+  in_transit_quantity?: number;
+  minimum_stock_level?: number;
+  maximum_stock_level?: number | null;
+  reorder_quantity?: number | null;
+  rack_number?: string | null;
+  shelf_number?: string | null;
+  bin_number?: string | null;
+  updated_at?: string;
+}
+
+export interface BackendProductInventorySummary {
+  total_quantity: number;
+  available_quantity: number;
+  reserved_quantity: number;
+  damaged_quantity: number;
+  in_transit_quantity: number;
+  minimum_stock_level?: number;
+  rows: BackendProductInventoryRow[];
+}
 
 export interface NativeProductWritePayload {
   product_code: string;
@@ -89,6 +173,7 @@ export interface NativeProductWritePayload {
   hsn_code?: string | null;
   stock_quantity?: number | null;
   min_stock_quantity?: number | null;
+  initial_inventory?: NativeProductInventoryWritePayload | null;
   details?: NativeProductDetailsPayload;
 }
 
@@ -124,6 +209,7 @@ export interface AdminProductsResponse {
 
 export const ADMIN_PRODUCTS_ENDPOINT = '/api/admin/products';
 export const ADMIN_VENDORS_ENDPOINT = '/api/admin/vendors';
+export const ADMIN_WAREHOUSES_ENDPOINT = '/api/admin/warehouses';
 
 export const PRODUCT_IMAGE_FIELD_NAME =
   process.env.NEXT_PUBLIC_PRODUCT_IMAGE_FIELD || 'uploadimage';
@@ -308,6 +394,31 @@ export function buildNativeProductRequestBody(
     if (msq !== null) body.min_stock_quantity = msq;
   }
 
+  if (payload.initial_inventory && isCreate) {
+    const inv = payload.initial_inventory;
+    const whId = toSafePositiveInt(inv.warehouse_id);
+    const totalQty = toNonNegativeSafeInt(inv.total_quantity, 0) ?? 0;
+    const availQty = inv.available_quantity !== undefined
+      ? toNonNegativeSafeInt(inv.available_quantity, totalQty) ?? totalQty
+      : totalQty;
+    if (whId !== null) {
+      body.initial_inventory = {
+        warehouse_id: whId,
+        total_quantity: totalQty,
+        available_quantity: availQty,
+        ...(inv.minimum_stock_level !== undefined ? { minimum_stock_level: toNonNegativeSafeInt(inv.minimum_stock_level, 0) ?? 0 } : {}),
+        ...(inv.maximum_stock_level !== undefined && inv.maximum_stock_level !== null ? { maximum_stock_level: toNonNegativeSafeInt(inv.maximum_stock_level, null) } : {}),
+        ...(inv.reorder_quantity !== undefined && inv.reorder_quantity !== null ? { reorder_quantity: toNonNegativeSafeInt(inv.reorder_quantity, null) } : {}),
+        ...(inv.damaged_quantity !== undefined ? { damaged_quantity: toNonNegativeSafeInt(inv.damaged_quantity, 0) ?? 0 } : {}),
+        ...(inv.in_transit_quantity !== undefined ? { in_transit_quantity: toNonNegativeSafeInt(inv.in_transit_quantity, 0) ?? 0 } : {}),
+        ...(inv.rack_number ? { rack_number: inv.rack_number.trim() } : {}),
+        ...(inv.shelf_number ? { shelf_number: inv.shelf_number.trim() } : {}),
+        ...(inv.bin_number ? { bin_number: inv.bin_number.trim() } : {}),
+      };
+      body.stock_quantity = availQty;
+    }
+  }
+
   if (payload.details !== undefined) {
     const d = payload.details;
     const detailsObj: Record<string, any> = {};
@@ -405,7 +516,7 @@ export function validateAdminProductRequestSize(
 }
 
 /* ========================================================================== */
-/* VENDORS DROPDOWN API                                                       */
+/* VENDORS & WAREHOUSES DROPDOWN API                                          */
 /* ========================================================================== */
 
 export async function getAdminVendors(params?: {
@@ -426,6 +537,80 @@ export async function getAdminVendors(params?: {
     return (res as ApiResponse<BackendVendor[]>).data;
   }
   return [];
+}
+
+export async function getAdminWarehouses(params?: {
+  limit?: number;
+  offset?: number;
+  is_active?: boolean;
+}): Promise<BackendWarehouse[]> {
+  const queryParams: Record<string, string | number | boolean | undefined> = {
+    limit: params?.limit ?? 100,
+    offset: params?.offset ?? 0,
+  };
+  if (params?.is_active !== undefined) {
+    queryParams.is_active = params.is_active;
+  }
+  const res = await apiFetch<ApiResponse<BackendWarehouse[]> | BackendWarehouse[]>(
+    ADMIN_WAREHOUSES_ENDPOINT,
+    { params: queryParams }
+  );
+  if (Array.isArray(res)) return res;
+  if (res && Array.isArray((res as ApiResponse<BackendWarehouse[]>).data)) {
+    return (res as ApiResponse<BackendWarehouse[]>).data;
+  }
+  return [];
+}
+
+export async function createAdminWarehouse(
+  payload: CreateWarehousePayload
+): Promise<BackendWarehouse> {
+  const res = await apiFetch<any>(ADMIN_WAREHOUSES_ENDPOINT, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+  return res?.data ?? res;
+}
+
+export async function getAdminProductInventory(
+  productId: number | string
+): Promise<BackendProductInventoryRow[]> {
+  const res = await apiFetch<any>(`${ADMIN_PRODUCTS_ENDPOINT}/${productId}/inventory`);
+  if (Array.isArray(res)) return res;
+  if (res && Array.isArray(res.data)) return res.data;
+  if (res && Array.isArray(res.inventory)) return res.inventory;
+  return [];
+}
+
+export async function setAdminProductInventory(
+  productId: number | string,
+  payload: NativeProductInventoryWritePayload
+): Promise<any> {
+  const whId = toSafePositiveInt(payload.warehouse_id);
+  const total = toNonNegativeSafeInt(payload.total_quantity, 0) ?? 0;
+  const avail = payload.available_quantity !== undefined
+    ? toNonNegativeSafeInt(payload.available_quantity, total) ?? total
+    : total;
+
+  const body: Record<string, any> = {
+    warehouse_id: whId,
+    total_quantity: total,
+    available_quantity: avail,
+    ...(payload.damaged_quantity !== undefined ? { damaged_quantity: toNonNegativeSafeInt(payload.damaged_quantity, 0) ?? 0 } : {}),
+    ...(payload.in_transit_quantity !== undefined ? { in_transit_quantity: toNonNegativeSafeInt(payload.in_transit_quantity, 0) ?? 0 } : {}),
+    ...(payload.minimum_stock_level !== undefined ? { minimum_stock_level: toNonNegativeSafeInt(payload.minimum_stock_level, 0) ?? 0 } : {}),
+    ...(payload.maximum_stock_level !== undefined && payload.maximum_stock_level !== null ? { maximum_stock_level: toNonNegativeSafeInt(payload.maximum_stock_level, null) } : {}),
+    ...(payload.reorder_quantity !== undefined && payload.reorder_quantity !== null ? { reorder_quantity: toNonNegativeSafeInt(payload.reorder_quantity, null) } : {}),
+    ...(payload.rack_number ? { rack_number: payload.rack_number.trim() } : {}),
+    ...(payload.shelf_number ? { shelf_number: payload.shelf_number.trim() } : {}),
+    ...(payload.bin_number ? { bin_number: payload.bin_number.trim() } : {}),
+  };
+
+  const res = await apiFetch<any>(`${ADMIN_PRODUCTS_ENDPOINT}/${productId}/inventory`, {
+    method: 'PUT',
+    body: JSON.stringify(body),
+  });
+  return res?.data ?? res;
 }
 
 /* ========================================================================== */
@@ -748,7 +933,6 @@ export async function removeAllAdminProductVariants(
 ): Promise<void> {
   // No-op in native schema
 }
-
 export async function getAdminProductVariantById(
   productId: number | string,
   variantId: number | string

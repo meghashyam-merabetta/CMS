@@ -11,8 +11,14 @@ import {
   generateModelNumber,
 } from '@/lib/productDetails';
 
+const EXCLUDED_GROUPS = new Set<string>([
+  'Product dimensions & dates',
+]);
+
 export function ProductDetailSummary({ values }: { values: ProductDetailValues }) {
-  const filled = PRODUCT_DETAIL_FIELDS.filter((field) => values[field.key]?.trim());
+  const filled = PRODUCT_DETAIL_FIELDS.filter(
+    (field) => !EXCLUDED_GROUPS.has(field.group) && values[field.key]?.trim()
+  );
   if (!filled.length) return null;
   return <details className="rounded-lg border border-gray-200 p-4">
     <summary className="cursor-pointer text-sm font-semibold">Additional Product Details ({filled.length})</summary>
@@ -46,7 +52,13 @@ export default function AdditionalProductDetails({
   categoryName?: string;
   productId?: string | number | null;
 }) {
-  const groups = [...new Set(PRODUCT_DETAIL_FIELDS.map((field) => field.group))];
+  const groups = [
+    ...new Set(
+      PRODUCT_DETAIL_FIELDS
+        .filter((field) => !EXCLUDED_GROUPS.has(field.group) && !EXCLUDED_DETAIL_FIELDS.has(field.key))
+        .map((field) => field.group)
+    ),
+  ];
   const inputClass = 'mt-1 h-11 w-full rounded-lg border border-gray-300 bg-white px-3 text-sm outline-none focus:border-[#F47C35]';
   const effectiveBrandOrCompany =
     (brandName && brandName !== 'Unbranded' ? brandName.trim() : '') ||
@@ -59,7 +71,9 @@ export default function AdditionalProductDetails({
       <summary className="cursor-pointer font-semibold text-[#0D2B53]">{group}</summary>
       {group === 'Accessories & features' ? <AccessoriesFeatureFields key={productId ?? 'new'} values={values} onChange={onChange} /> :
       <div className="mt-4 grid gap-4 sm:grid-cols-2">
-        {(PRODUCT_DETAIL_FIELDS as readonly (ProductDetailField & { key: ProductDetailKey })[]).filter((field) => field.group === group && !EXCLUDED_DETAIL_FIELDS.has(field.key)).map((field) => {
+        {(PRODUCT_DETAIL_FIELDS as readonly (ProductDetailField & { key: ProductDetailKey })[])
+          .filter((field) => field.group === group && !EXCLUDED_GROUPS.has(field.group) && !EXCLUDED_DETAIL_FIELDS.has(field.key))
+          .map((field) => {
           const id = `detail-${field.key}`;
           const isAutoSku = field.key === 'manufacturer_sku';
           const isAutoModel = field.key === 'model_number';
