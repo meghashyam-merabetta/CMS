@@ -145,6 +145,7 @@ export interface BackendProduct extends ProductSpecificationsFields {
   category_ids?: number[];
   primary_category_id?: number | null;
   category_id?: number | null;
+  subcategory_id?: number | null;
   variants?: BackendProductVariant[];
   prescription_required?: boolean;
   age_group?: string | null;

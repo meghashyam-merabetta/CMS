@@ -605,6 +605,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
   const [warehousesList, setWarehousesList] = useState<BackendWarehouse[]>([]);
   const [selectedWarehouseId, setSelectedWarehouseId] = useState<string>('');
   const [inventoryRows, setInventoryRows] = useState<BackendProductInventoryRow[]>([]);
+  const [inventoryDirty, setInventoryDirty] = useState(false);
 
   /* ======================================================================== */
   /* 2. TABLE: product_details (nested inside `details`) STATE                */
@@ -866,8 +867,21 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
         setBarcode(prod.barcode || '');
 
         setBrandId(prod.brand_id != null ? String(prod.brand_id) : '');
-        setCategoryId(prod.category_id != null ? String(prod.category_id) : '');
-        setSubcategoryId(prod.subcategory_id != null ? String(prod.subcategory_id) : '');
+        const assignedCategories = Array.isArray(prod.categories) ? prod.categories : [];
+        const assignedPrimary =
+          assignedCategories.find((item: any) => item?.ProductCategory?.is_primary) ||
+          assignedCategories[0];
+        const assignedPrimaryId = assignedPrimary?.category_id ?? assignedPrimary?.id;
+        const assignedParentId = assignedPrimary?.parent_category_id ?? assignedPrimary?.parent_id;
+        const loadedSubcategoryId =
+          prod.subcategory_id ??
+          (assignedParentId != null ? assignedPrimaryId : null);
+        const loadedCategoryId =
+          prod.category_id ??
+          assignedParentId ??
+          (loadedSubcategoryId == null ? assignedPrimaryId : null);
+        setCategoryId(loadedCategoryId != null ? String(loadedCategoryId) : '');
+        setSubcategoryId(loadedSubcategoryId != null ? String(loadedSubcategoryId) : '');
         setVendorId(prod.vendor_id != null ? String(prod.vendor_id) : '');
 
         if (prod.product_type) {
@@ -908,22 +922,30 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
         setMinStockQuantity(
           String(prod.min_stock_quantity ?? invSummary?.minimum_stock_level ?? 5)
         );
+        setInventoryDirty(false);
 
-        // Fetch live warehouse inventory rows
-        getAdminProductInventory(targetId)
-          .then((rows) => {
-            if (Array.isArray(rows) && rows.length > 0) {
-              setInventoryRows(rows);
-              const first = rows[0];
-              if (first.warehouse_id != null) {
-                setSelectedWarehouseId(String(first.warehouse_id));
-              }
-              if (first.available_quantity != null) {
-                setStockQuantity(String(first.available_quantity));
-              }
+        // Finish the authoritative inventory read before enabling the form so a
+        // late response cannot overwrite a user's first stock edit.
+        try {
+          const rows = await getAdminProductInventory(targetId);
+          if (Array.isArray(rows) && rows.length > 0) {
+            setInventoryRows(rows);
+            const first = rows[0];
+            if (first.warehouse_id != null) {
+              setSelectedWarehouseId(String(first.warehouse_id));
             }
-          })
-          .catch(() => {});
+            if (first.available_quantity != null) {
+              setStockQuantity(String(first.available_quantity));
+            }
+            if (first.minimum_stock_level != null) {
+              setMinStockQuantity(String(first.minimum_stock_level));
+            }
+          }
+          setInventoryDirty(false);
+        } catch {
+          // Product metadata remains editable when inventory is unavailable.
+          setInventoryDirty(false);
+        }
 
         // Details object (`details` or `product_details` or flat fallback)
         const d = prod.details || prod.product_details || prod;
@@ -1537,14 +1559,15 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
         const { stock_quantity: _omitStockOnPatch, initial_inventory: _omitInvOnPatch, ...patchPayload } = payloadToSend;
         await updateNativeAdminProduct(activeProductId, patchPayload);
 
-        // Update warehouse inventory via PUT /api/admin/products/:id/inventory
+        // Inventory adjustments are permission-protected. Only request one after
+        // the user actually changes warehouse, stock or minimum-stock fields.
         const chosenWhId =
           toSafePositiveInt(selectedWarehouseId) ||
           (warehousesList.length > 0
             ? toSafePositiveInt(warehousesList[0].id ?? warehousesList[0].warehouse_id)
             : null);
         const stockQtyNum = parseNullableNumber(stockQuantity);
-        if (chosenWhId != null && stockQtyNum != null && activeProductId) {
+        if (inventoryDirty && chosenWhId != null && stockQtyNum != null && activeProductId) {
           try {
             await setAdminProductInventory(activeProductId, {
               warehouse_id: chosenWhId,
@@ -1553,12 +1576,51 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
               minimum_stock_level: toNonNegativeSafeInt(minStockQuantity, 5) ?? 5,
             });
             const freshRows = await getAdminProductInventory(activeProductId);
-            if (Array.isArray(freshRows) && freshRows.length > 0) {
-              setInventoryRows(freshRows);
+            const savedRow = freshRows.find(
+              (row) => String(row.warehouse_id) === String(chosenWhId)
+            );
+            if (!savedRow || Number(savedRow.available_quantity) !== Math.max(0, Math.floor(stockQtyNum))) {
+              throw new Error('The backend accepted the request but did not return the updated warehouse quantity.');
             }
+            setInventoryRows(freshRows);
+            setInventoryDirty(false);
           } catch (invErr: any) {
-            console.warn('Inventory update note:', invErr?.message);
+            throw new Error(
+              `Product details were saved, but warehouse stock was not updated: ${invErr?.message || 'Inventory adjustment failed.'}`
+            );
           }
+        }
+
+        // Confirm classification/status using a fresh read. Some backend versions
+        // return assignments only in `categories`, while others expose direct IDs.
+        const refreshedProduct = await getAdminProductById(activeProductId);
+        const refreshedAssignments = Array.isArray(refreshedProduct.categories)
+          ? refreshedProduct.categories
+          : [];
+        const savedCategoryIds = new Set(
+          [
+            refreshedProduct.category_id,
+            refreshedProduct.subcategory_id,
+            refreshedProduct.primary_category_id,
+            ...refreshedAssignments.map((item: any) => item?.category_id ?? item?.id),
+          ]
+            .filter((value) => value != null)
+            .map(String)
+        );
+        const expectedClassificationId = subcategoryId || categoryId;
+        if (expectedClassificationId && !savedCategoryIds.has(String(expectedClassificationId))) {
+          throw new Error(
+            'Product details were saved, but the backend did not persist the selected category/subcategory.'
+          );
+        }
+        if (
+          effectiveStatus &&
+          refreshedProduct.product_status &&
+          refreshedProduct.product_status !== effectiveStatus
+        ) {
+          throw new Error(
+            `Product details were saved, but publish status remained ${refreshedProduct.product_status}.`
+          );
         }
       }
 
@@ -2497,7 +2559,10 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                       <select
                         id="warehouse_id"
                         value={selectedWarehouseId}
-                        onChange={(e) => setSelectedWarehouseId(e.target.value)}
+                        onChange={(e) => {
+                          setSelectedWarehouseId(e.target.value);
+                          setInventoryDirty(true);
+                        }}
                         className={INPUT_CLASS}
                       >
                         {warehousesList.length === 0 ? (
@@ -2523,7 +2588,10 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                         min="0"
                         step="1"
                         value={stockQuantity}
-                        onChange={(e) => setStockQuantity(e.target.value)}
+                        onChange={(e) => {
+                          setStockQuantity(e.target.value);
+                          setInventoryDirty(true);
+                        }}
                         placeholder="0"
                         className={INPUT_CLASS}
                       />
@@ -2539,7 +2607,10 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                         min="0"
                         step="1"
                         value={minStockQuantity}
-                        onChange={(e) => setMinStockQuantity(e.target.value)}
+                        onChange={(e) => {
+                          setMinStockQuantity(e.target.value);
+                          setInventoryDirty(true);
+                        }}
                         placeholder="5"
                         className={INPUT_CLASS}
                       />

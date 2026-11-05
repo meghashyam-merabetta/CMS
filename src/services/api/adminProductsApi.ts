@@ -553,7 +553,7 @@ export async function getAdminWarehouses(params?: {
   }
   const res = await apiFetch<ApiResponse<BackendWarehouse[]> | BackendWarehouse[]>(
     ADMIN_WAREHOUSES_ENDPOINT,
-    { params: queryParams }
+    { params: queryParams, cache: 'no-store' }
   );
   if (Array.isArray(res)) return res;
   if (res && Array.isArray((res as ApiResponse<BackendWarehouse[]>).data)) {
@@ -595,7 +595,9 @@ export async function deleteAdminWarehouse(
 export async function getAdminProductInventory(
   productId: number | string
 ): Promise<BackendProductInventoryRow[]> {
-  const res = await apiFetch<any>(`${ADMIN_PRODUCTS_ENDPOINT}/${productId}/inventory`);
+  const res = await apiFetch<any>(`${ADMIN_PRODUCTS_ENDPOINT}/${productId}/inventory`, {
+    cache: 'no-store',
+  });
   if (Array.isArray(res)) return res;
   if (res && Array.isArray(res.data)) return res.data;
   if (res && Array.isArray(res.inventory)) return res.inventory;
@@ -676,6 +678,7 @@ export async function getAdminProducts(
 
   const res = await apiFetch<ApiResponse<BackendProduct[]>>(ADMIN_PRODUCTS_ENDPOINT, {
     params: Object.keys(queryParams).length > 0 ? queryParams : undefined,
+    cache: 'no-store',
   });
 
   return {
