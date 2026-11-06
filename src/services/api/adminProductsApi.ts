@@ -297,7 +297,9 @@ export function generateProductSlug(input: string): string {
     .toLowerCase()
     .trim()
     .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '');
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 180)
+    .replace(/-+$/g, '');
   return cleaned || '';
 }
 
@@ -370,17 +372,25 @@ export function buildNativeProductRequestBody(
     body.product_status = payload.product_status;
   }
 
-  if (payload.mrp !== undefined) {
-    body.mrp = toNonNegativeDecimal(payload.mrp, 2);
+  if (payload.mrp !== undefined && payload.mrp !== null) {
+    const mrpVal = toNonNegativeDecimal(payload.mrp, 2);
+    if (mrpVal !== null) body.mrp = mrpVal;
   }
-  if (payload.selling_price !== undefined) {
-    body.selling_price = toNonNegativeDecimal(payload.selling_price, 2);
+  if (payload.selling_price !== undefined && payload.selling_price !== null) {
+    const sellVal = toNonNegativeDecimal(payload.selling_price, 2);
+    if (sellVal !== null) body.selling_price = sellVal;
   }
   if (payload.cost_price !== undefined) {
-    body.cost_price = toNonNegativeDecimal(payload.cost_price, 2);
+    const costVal = toNonNegativeDecimal(payload.cost_price, 2);
+    if (costVal !== null) {
+      body.cost_price = costVal;
+    } else if (!isCreate) {
+      body.cost_price = null;
+    }
   }
-  if (payload.tax_rate !== undefined) {
-    body.tax_rate = toNonNegativeDecimal(payload.tax_rate, 2);
+  if (payload.tax_rate !== undefined && payload.tax_rate !== null) {
+    const taxVal = toNonNegativeDecimal(payload.tax_rate, 2);
+    if (taxVal !== null) body.tax_rate = taxVal;
   }
   if (payload.hsn_code !== undefined) {
     body.hsn_code = payload.hsn_code?.trim() || null;
@@ -468,15 +478,27 @@ export function buildNativeProductRequestBody(
 
     for (const key of numericFields) {
       if (d[key] !== undefined) {
-        detailsObj[key] = toNonNegativeDecimal(d[key], 2);
+        const decVal = toNonNegativeDecimal(d[key], 2);
+        // Weight and dimension columns require > 0 when present; treat 0 as null
+        detailsObj[key] = decVal !== null && decVal > 0 ? decVal : null;
       }
     }
 
     if (d.weight_unit !== undefined) {
-      detailsObj.weight_unit = d.weight_unit || null;
+      const hasPositiveWeight =
+        (detailsObj.product_weight != null && detailsObj.product_weight > 0) ||
+        (detailsObj.package_weight != null && detailsObj.package_weight > 0);
+      detailsObj.weight_unit = hasPositiveWeight ? d.weight_unit || 'g' : null;
     }
     if (d.dimension_unit !== undefined) {
-      detailsObj.dimension_unit = d.dimension_unit || null;
+      const hasPositiveDim =
+        (detailsObj.product_length != null && detailsObj.product_length > 0) ||
+        (detailsObj.product_width != null && detailsObj.product_width > 0) ||
+        (detailsObj.product_height != null && detailsObj.product_height > 0) ||
+        (detailsObj.package_length != null && detailsObj.package_length > 0) ||
+        (detailsObj.package_width != null && detailsObj.package_width > 0) ||
+        (detailsObj.package_height != null && detailsObj.package_height > 0);
+      detailsObj.dimension_unit = hasPositiveDim ? d.dimension_unit || 'cm' : null;
     }
 
     if (d.key_features !== undefined) {

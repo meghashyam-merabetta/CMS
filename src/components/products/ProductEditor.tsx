@@ -3,6 +3,7 @@
 import React, { Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import {
+  AlertCircle,
   Box,
   CheckCircle2,
   ChevronDown,
@@ -559,7 +560,48 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
   /* ------------------------- Modal & Banner State ------------------------- */
   const [previewOpen, setPreviewOpen] = useState<boolean>(false);
   const [error, setError] = useState<string>('');
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [successBanner, setSuccessBanner] = useState<string>('');
+
+  function clearFieldError(fieldId: string) {
+    setFieldErrors((prev) => {
+      if (!prev[fieldId]) return prev;
+      const next = { ...prev };
+      delete next[fieldId];
+      return next;
+    });
+  }
+
+  function getFieldClass(fieldId: string, baseClass = INPUT_CLASS): string {
+    if (!fieldErrors[fieldId]) return baseClass;
+    return `${baseClass} !border-rose-500 !bg-rose-50/30 ring-2 ring-rose-500/20 focus:!border-rose-600`;
+  }
+
+  function renderFieldError(fieldId: string) {
+    const msg = fieldErrors[fieldId];
+    if (!msg) return null;
+    return (
+      <p className="mt-1.5 flex items-center gap-1 text-[11.5px] font-semibold text-rose-600">
+        <AlertCircle size={13} className="shrink-0" />
+        <span>{msg}</span>
+      </p>
+    );
+  }
+
+  function scrollToField(fieldId: string) {
+    if (typeof document === 'undefined') return;
+    setTimeout(() => {
+      const el = document.getElementById(fieldId);
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        if (typeof (el as HTMLElement).focus === 'function') {
+          (el as HTMLElement).focus({ preventScroll: true });
+        }
+      } else {
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      }
+    }, 60);
+  }
 
   /* ------------------------- Dropdown Options State ----------------------- */
   const [categoriesList, setCategoriesList] = useState<CategoryOption[]>([]);
@@ -1243,6 +1285,8 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
 
   function handleMrpChange(nextMrp: string) {
     setMrp(nextMrp);
+    clearFieldError('mrp');
+    clearFieldError('selling_price');
     const mrpNum = parseNullableNumber(nextMrp);
     const discNum = parseNullableNumber(discountPercent);
     const sellNum = parseNullableNumber(sellingPrice);
@@ -1260,6 +1304,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
 
   function handleDiscountPercentChange(nextDiscount: string) {
     setDiscountPercent(nextDiscount);
+    clearFieldError('selling_price');
     const mrpNum = parseNullableNumber(mrp);
     const discNum = parseNullableNumber(nextDiscount);
 
@@ -1271,6 +1316,8 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
 
   function handleSellingPriceChange(nextSelling: string) {
     setSellingPrice(nextSelling);
+    clearFieldError('selling_price');
+    clearFieldError('mrp');
     const mrpNum = parseNullableNumber(mrp);
     const sellNum = parseNullableNumber(nextSelling);
 
@@ -1294,6 +1341,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
       .replace(/[^A-Z]/g, 'X');
     const rand = Math.floor(10000 + Math.random() * 90000);
     setProductCode(`${prefix}-${rand}`);
+    clearFieldError('product_code');
   }
 
   function handleGenerateSku() {
@@ -1304,13 +1352,26 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
     const colorPart = colour.trim() ? `-${colour.trim().slice(0, 3).toUpperCase()}` : '';
     const rand = Math.floor(100 + Math.random() * 900);
     setSku(`MB-${catPart}-${namePart}${colorPart}-${rand}`);
+    clearFieldError('sku');
   }
 
   function handleCopyDimensionsToPackage() {
-    if (productWeight) setPackageWeight(productWeight);
-    if (productLength) setPackageLength(productLength);
-    if (productWidth) setPackageWidth(productWidth);
-    if (productHeight) setPackageHeight(productHeight);
+    if (productWeight) {
+      setPackageWeight(productWeight);
+      clearFieldError('package_weight');
+    }
+    if (productLength) {
+      setPackageLength(productLength);
+      clearFieldError('package_length');
+    }
+    if (productWidth) {
+      setPackageWidth(productWidth);
+      clearFieldError('package_width');
+    }
+    if (productHeight) {
+      setPackageHeight(productHeight);
+      clearFieldError('package_height');
+    }
   }
 
   function handleAutoFillSeo() {
@@ -1323,6 +1384,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
     const currentSlug = generateProductSlug(slug.trim() || productName.trim());
     if (!canonicalUrl.trim() && currentSlug) {
       setCanonicalUrl(`https://merabeta.com/products/${currentSlug}`);
+      clearFieldError('canonical_url');
     }
   }
 
@@ -1467,29 +1529,160 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
   /* VALIDATION & SAVE LIFECYCLE (POST -> RETAIN ID -> UPLOAD IMAGES / PATCH) */
   /* ======================================================================== */
 
-  function validateForm(): string {
+  function validateForm(targetStatus?: NewProductStatus): {
+    isValid: boolean;
+    firstFieldId: string | null;
+    firstMessage: string;
+    errors: Record<string, string>;
+  } {
+    const errors: Record<string, string> = {};
+    const effectiveStatus = targetStatus ?? productStatus;
+
+    const addErr = (fieldId: string, msg: string) => {
+      if (!errors[fieldId]) {
+        errors[fieldId] = msg;
+      }
+    };
+
+    // 1. Basic Information
     if (!productName.trim()) {
-      return 'Product Name is required.';
+      addErr('product_name', 'Product Name is required.');
+    } else if (productName.trim().length > 255) {
+      addErr('product_name', 'Product Name cannot exceed 255 characters.');
     }
-    if (!productCode.trim()) {
-      return 'Product Code is required (click "Generate" or enter a unique product code).';
-    }
+
     const finalSlug = generateProductSlug(slug.trim() || productName.trim());
     if (!finalSlug) {
-      return 'URL Slug is required.';
+      addErr('slug', 'URL Slug is required.');
     }
-    if (pricingMetrics.sellingExceedsMrp) {
-      return 'Selling Price cannot exceed MRP.';
+
+    if (!productCode.trim()) {
+      addErr('product_code', 'Product Code is required (click "Generate" or enter a unique code).');
     }
-    return '';
+
+    // 2. Category (required when publishing as Active)
+    if (effectiveStatus === 'active' && !toSafePositiveInt(categoryId)) {
+      addErr('category_id', 'Please select a Category before publishing this product.');
+    }
+
+    // 3. Pricing (MRP, Selling Price, Cost Price)
+    const mrpVal = parseNullableNumber(mrp);
+    const sellVal = parseNullableNumber(sellingPrice);
+    const costVal = parseNullableNumber(costPrice);
+
+    if (mrp.trim() === '' || mrpVal === null) {
+      addErr('mrp', 'MRP is required.');
+    } else if (mrpVal < 0) {
+      addErr('mrp', 'MRP cannot be negative.');
+    } else if (effectiveStatus === 'active' && mrpVal <= 0) {
+      addErr('mrp', 'MRP must be greater than ₹0 to publish.');
+    }
+
+    if (sellingPrice.trim() === '' || sellVal === null) {
+      addErr('selling_price', 'Selling Price is required.');
+    } else if (sellVal < 0) {
+      addErr('selling_price', 'Selling Price cannot be negative.');
+    } else if (effectiveStatus === 'active' && sellVal <= 0) {
+      addErr('selling_price', 'Selling Price must be greater than ₹0 to publish.');
+    } else if (mrpVal !== null && sellVal > mrpVal) {
+      addErr('selling_price', `Selling Price (₹${sellVal}) cannot exceed MRP (₹${mrpVal}).`);
+    }
+
+    if (costPrice.trim() !== '' && (costVal === null || costVal < 0)) {
+      addErr('cost_price', 'Cost Price must be 0 or greater.');
+    }
+
+    // 4. Tax Rate
+    const taxVal = parseNullableNumber(taxRate);
+    if (taxRate.trim() !== '' && (taxVal === null || taxVal < 0 || taxVal > 100)) {
+      addErr('tax_rate', 'Tax Rate must be between 0% and 100%.');
+    }
+
+    // 5. Inventory
+    const stockVal = parseNullableNumber(stockQuantity);
+    if (stockQuantity.trim() !== '' && (stockVal === null || stockVal < 0 || !Number.isInteger(stockVal))) {
+      addErr('stock_quantity', 'Stock Quantity must be a whole number (0 or greater).');
+    }
+
+    const minStockVal = parseNullableNumber(minStockQuantity);
+    if (minStockQuantity.trim() !== '' && (minStockVal === null || minStockVal < 0 || !Number.isInteger(minStockVal))) {
+      addErr('min_stock_quantity', 'Minimum Stock Level must be a whole number (0 or greater).');
+    }
+
+    // 6. Weights & Dimensions (if entered, must be > 0 to satisfy DB check constraints)
+    const positiveDecimalChecks: Array<{ id: string; raw: string; label: string }> = [
+      { id: 'product_weight', raw: productWeight, label: 'Product Weight' },
+      { id: 'product_length', raw: productLength, label: 'Product Length' },
+      { id: 'product_width', raw: productWidth, label: 'Product Width' },
+      { id: 'product_height', raw: productHeight, label: 'Product Height' },
+      { id: 'package_weight', raw: packageWeight, label: 'Package Weight' },
+      { id: 'package_length', raw: packageLength, label: 'Package Length' },
+      { id: 'package_width', raw: packageWidth, label: 'Package Width' },
+      { id: 'package_height', raw: packageHeight, label: 'Package Height' },
+    ];
+
+    for (const item of positiveDecimalChecks) {
+      if (item.raw.trim() !== '') {
+        const num = parseNullableNumber(item.raw);
+        if (num === null || num <= 0) {
+          addErr(item.id, `${item.label} must be greater than 0 (or leave blank).`);
+        }
+      }
+    }
+
+    // 7. Canonical URL (if entered, must be a valid http/https URL)
+    if (canonicalUrl.trim() !== '' && !/^https?:\/\/.+/i.test(canonicalUrl.trim())) {
+      addErr('canonical_url', 'Canonical URL must start with http:// or https://.');
+    }
+
+    const keys = Object.keys(errors);
+    const firstFieldId = keys[0] || null;
+    const firstMessage = firstFieldId ? errors[firstFieldId] : '';
+
+    return {
+      isValid: keys.length === 0,
+      firstFieldId,
+      firstMessage,
+      errors,
+    };
+  }
+
+  function inferFieldIdFromBackendError(msg: string): string | null {
+    const lower = msg.toLowerCase();
+    if (lower.includes('product_name') || lower.includes('product name')) return 'product_name';
+    if (lower.includes('slug')) return 'slug';
+    if (lower.includes('product_code') || lower.includes('product code')) return 'product_code';
+    if (lower.includes('subcategory')) return 'subcategory_id';
+    if (lower.includes('category')) return 'category_id';
+    if (lower.includes('brand')) return 'brand_id';
+    if (lower.includes('vendor')) return 'vendor_id';
+    if (lower.includes('selling_price') || lower.includes('selling price') || lower.includes('exceed mrp')) {
+      return 'selling_price';
+    }
+    if (lower.includes('mrp')) return 'mrp';
+    if (lower.includes('cost_price') || lower.includes('cost price')) return 'cost_price';
+    if (lower.includes('tax_rate') || lower.includes('tax')) return 'tax_rate';
+    if (lower.includes('sku')) return 'sku';
+    if (lower.includes('barcode')) return 'barcode';
+    if (lower.includes('warehouse')) return 'warehouse_id';
+    if (lower.includes('stock') || lower.includes('inventory')) return 'stock_quantity';
+    if (lower.includes('canonical')) return 'canonical_url';
+    if (lower.includes('weight')) return 'product_weight';
+    if (lower.includes('dimension') || lower.includes('length') || lower.includes('width') || lower.includes('height')) {
+      return 'product_length';
+    }
+    return null;
   }
 
   function handleOpenPreview(e: React.FormEvent) {
     e.preventDefault();
-    const validationError = validateForm();
-    if (validationError) {
-      setError(validationError);
-      window.scrollTo({ top: 0, behavior: 'smooth' });
+    const result = validateForm(productStatus);
+    setFieldErrors(result.errors);
+    if (!result.isValid) {
+      setError(result.firstMessage);
+      if (result.firstFieldId) {
+        scrollToField(result.firstFieldId);
+      }
       return;
     }
     setError('');
@@ -1499,15 +1692,18 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
   async function persistProductToBackend(statusOverride?: NewProductStatus) {
     if (saveInProgressRef.current) return;
 
-    const validationError = validateForm();
-    if (validationError) {
-      setError(validationError);
+    const effectiveStatus = statusOverride ?? productStatus;
+    const result = validateForm(effectiveStatus);
+    setFieldErrors(result.errors);
+    if (!result.isValid) {
+      setError(result.firstMessage);
       setPreviewOpen(false);
-      window.scrollTo({ top: 0, behavior: 'smooth' });
+      if (result.firstFieldId) {
+        scrollToField(result.firstFieldId);
+      }
       return;
     }
 
-    const effectiveStatus = statusOverride ?? productStatus;
     if (statusOverride) {
       setProductStatus(statusOverride);
     }
@@ -1691,7 +1887,13 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
         setError(baseMsg);
       }
       setPreviewOpen(false);
-      window.scrollTo({ top: 0, behavior: 'smooth' });
+      const inferredField = inferFieldIdFromBackendError(baseMsg);
+      if (inferredField) {
+        setFieldErrors((prev) => ({ ...prev, [inferredField]: baseMsg }));
+        scrollToField(inferredField);
+      } else {
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      }
     } finally {
       saveInProgressRef.current = false;
       setSaving(false);
@@ -1833,14 +2035,17 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                       onChange={(e) => {
                         const val = e.target.value;
                         setProductName(val);
+                        clearFieldError('product_name');
                         if (!slugLocked) {
                           setSlug(generateProductSlug(val));
+                          clearFieldError('slug');
                         }
                         if (error) setError('');
                       }}
                       placeholder="Enter product name"
-                      className={INPUT_CLASS}
+                      className={getFieldClass('product_name')}
                     />
+                    {renderFieldError('product_name')}
                   </div>
 
                   {/* Slug & Product Code */}
@@ -1857,10 +2062,12 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                           const val = e.target.value;
                           setSlug(val);
                           setSlugLocked(Boolean(val.trim()));
+                          clearFieldError('slug');
                         }}
                         placeholder="auto-generated-from-name"
-                        className={`${INPUT_CLASS} font-mono text-[12.5px]`}
+                        className={getFieldClass('slug', `${INPUT_CLASS} font-mono text-[12.5px]`)}
                       />
+                      {renderFieldError('slug')}
                     </div>
 
                     <div>
@@ -1872,19 +2079,26 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                           id="product_code"
                           type="text"
                           value={productCode}
-                          onChange={(e) => setProductCode(e.target.value)}
+                          onChange={(e) => {
+                            setProductCode(e.target.value);
+                            clearFieldError('product_code');
+                          }}
                           placeholder="e.g., PRD-48291"
-                          className={`${INPUT_CLASS} font-mono text-[12.5px]`}
+                          className={getFieldClass('product_code', `${INPUT_CLASS} font-mono text-[12.5px]`)}
                         />
                         <button
                           type="button"
-                          onClick={handleGenerateProductCode}
+                          onClick={() => {
+                            handleGenerateProductCode();
+                            clearFieldError('product_code');
+                          }}
                           className="inline-flex h-11 shrink-0 items-center gap-1.5 rounded-xl border border-[#DCE0E8] bg-[#F8FAFC] px-3 text-[12px] font-semibold text-[#0D2B53] hover:border-[#F47C35] hover:text-[#F47C35] cursor-pointer"
                         >
                           <Wand2 size={14} />
                           <span>Generate</span>
                         </button>
                       </div>
+                      {renderFieldError('product_code')}
                     </div>
                   </div>
 
@@ -2191,8 +2405,9 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                           onChange={(e) => {
                             setCategoryId(e.target.value);
                             setSubcategoryId('');
+                            clearFieldError('category_id');
                           }}
-                          className={`${INPUT_CLASS} appearance-none pr-10`}
+                          className={getFieldClass('category_id', `${INPUT_CLASS} appearance-none pr-10`)}
                         >
                           <option value="">Select category</option>
                           {categoriesList.map((c) => (
@@ -2206,6 +2421,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                           className="pointer-events-none absolute top-1/2 right-3.5 -translate-y-1/2 text-[#64748B]"
                         />
                       </div>
+                      {renderFieldError('category_id')}
                     </div>
 
                     {/* Subcategory */}
@@ -2308,9 +2524,9 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                     Product Pricing
                   </h4>
 
-                  <div className="grid items-end gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                  <div className="grid items-start gap-4 sm:grid-cols-2 lg:grid-cols-4">
                     <div>
-                      <FieldLabel htmlFor="mrp">MRP</FieldLabel>
+                      <FieldLabel htmlFor="mrp" required>MRP</FieldLabel>
                       <div className="relative">
                         <span className="pointer-events-none absolute top-1/2 left-3.5 -translate-y-1/2 text-[14px] font-semibold text-[#64748B]">
                           ₹
@@ -2323,9 +2539,10 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                           value={mrp}
                           onChange={(e) => handleMrpChange(e.target.value)}
                           placeholder="1000"
-                          className={`${INPUT_CLASS} pl-8`}
+                          className={getFieldClass('mrp', `${INPUT_CLASS} pl-8`)}
                         />
                       </div>
+                      {renderFieldError('mrp')}
                     </div>
 
                     <div>
@@ -2349,7 +2566,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                     </div>
 
                     <div>
-                      <FieldLabel htmlFor="selling_price">Selling Price</FieldLabel>
+                      <FieldLabel htmlFor="selling_price" required>Selling Price</FieldLabel>
                       <div className="relative">
                         <span className="pointer-events-none absolute top-1/2 left-3.5 -translate-y-1/2 text-[14px] font-semibold text-[#F47C35]">
                           ₹
@@ -2362,9 +2579,10 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                           value={sellingPrice}
                           onChange={(e) => handleSellingPriceChange(e.target.value)}
                           placeholder="900"
-                          className={`${INPUT_CLASS} pl-8 font-semibold`}
+                          className={getFieldClass('selling_price', `${INPUT_CLASS} pl-8 font-semibold`)}
                         />
                       </div>
+                      {renderFieldError('selling_price')}
                     </div>
 
                     <div>
@@ -2379,11 +2597,15 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                           min="0"
                           step="0.01"
                           value={costPrice}
-                          onChange={(e) => setCostPrice(e.target.value)}
+                          onChange={(e) => {
+                            setCostPrice(e.target.value);
+                            clearFieldError('cost_price');
+                          }}
                           placeholder="0.00"
-                          className={`${INPUT_CLASS} pl-8`}
+                          className={getFieldClass('cost_price', `${INPUT_CLASS} pl-8`)}
                         />
                       </div>
+                      {renderFieldError('cost_price')}
                     </div>
                   </div>
 
@@ -2452,21 +2674,28 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                           max="100"
                           step="0.01"
                           value={taxRate}
-                          onChange={(e) => setTaxRate(e.target.value)}
+                          onChange={(e) => {
+                            setTaxRate(e.target.value);
+                            clearFieldError('tax_rate');
+                          }}
                           placeholder="18"
-                          className={`${INPUT_CLASS} pr-9`}
+                          className={getFieldClass('tax_rate', `${INPUT_CLASS} pr-9`)}
                         />
                         <span className="pointer-events-none absolute top-1/2 right-3.5 -translate-y-1/2 text-[13px] font-semibold text-[#64748B]">
                           %
                         </span>
                       </div>
+                      {renderFieldError('tax_rate')}
                       <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
                         <span className="text-[11px] text-[#64748B]">Slabs:</span>
                         {TAX_SLABS.map((slab) => (
                           <button
                             key={slab}
                             type="button"
-                            onClick={() => setTaxRate(slab)}
+                            onClick={() => {
+                              setTaxRate(slab);
+                              clearFieldError('tax_rate');
+                            }}
                             className={`rounded-md px-2.5 py-0.5 text-[11px] font-semibold transition-colors cursor-pointer ${
                               taxRate === slab
                                 ? 'bg-[#F47C35] text-white'
@@ -2508,9 +2737,12 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                           id="sku"
                           type="text"
                           value={sku}
-                          onChange={(e) => setSku(e.target.value)}
+                          onChange={(e) => {
+                            setSku(e.target.value);
+                            clearFieldError('sku');
+                          }}
                           placeholder="e.g., MB-BAB-SWA-104"
-                          className={`${INPUT_CLASS} font-mono text-[12.5px]`}
+                          className={getFieldClass('sku', `${INPUT_CLASS} font-mono text-[12.5px]`)}
                         />
                         <button
                           type="button"
@@ -2521,6 +2753,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                           <span>Auto</span>
                         </button>
                       </div>
+                      {renderFieldError('sku')}
                     </div>
 
                     <div>
@@ -2529,10 +2762,14 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                         id="barcode"
                         type="text"
                         value={barcode}
-                        onChange={(e) => setBarcode(e.target.value)}
+                        onChange={(e) => {
+                          setBarcode(e.target.value);
+                          clearFieldError('barcode');
+                        }}
                         placeholder="e.g., 8901234567890"
-                        className={`${INPUT_CLASS} font-mono text-[12.5px]`}
+                        className={getFieldClass('barcode', `${INPUT_CLASS} font-mono text-[12.5px]`)}
                       />
+                      {renderFieldError('barcode')}
                     </div>
                   </div>
                 </div>
@@ -2568,8 +2805,11 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                       <select
                         id="warehouse_id"
                         value={selectedWarehouseId}
-                        onChange={(e) => setSelectedWarehouseId(e.target.value)}
-                        className={INPUT_CLASS}
+                        onChange={(e) => {
+                          setSelectedWarehouseId(e.target.value);
+                          clearFieldError('warehouse_id');
+                        }}
+                        className={getFieldClass('warehouse_id', INPUT_CLASS)}
                       >
                         {warehousesList.length === 0 ? (
                           <option value="">No warehouse found</option>
@@ -2584,6 +2824,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                           })
                         )}
                       </select>
+                      {renderFieldError('warehouse_id')}
                     </div>
 
                     <div>
@@ -2594,10 +2835,14 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                         min="0"
                         step="1"
                         value={stockQuantity}
-                        onChange={(e) => setStockQuantity(e.target.value)}
+                        onChange={(e) => {
+                          setStockQuantity(e.target.value);
+                          clearFieldError('stock_quantity');
+                        }}
                         placeholder="0"
-                        className={INPUT_CLASS}
+                        className={getFieldClass('stock_quantity', INPUT_CLASS)}
                       />
+                      {renderFieldError('stock_quantity')}
                     </div>
 
                     <div>
@@ -2610,10 +2855,14 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                         min="0"
                         step="1"
                         value={minStockQuantity}
-                        onChange={(e) => setMinStockQuantity(e.target.value)}
+                        onChange={(e) => {
+                          setMinStockQuantity(e.target.value);
+                          clearFieldError('min_stock_quantity');
+                        }}
                         placeholder="5"
-                        className={INPUT_CLASS}
+                        className={getFieldClass('min_stock_quantity', INPUT_CLASS)}
                       />
+                      {renderFieldError('min_stock_quantity')}
                     </div>
                   </div>
 
@@ -2756,12 +3005,18 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                           <input
                             id="product_weight"
                             type="number"
-                            min="0"
+                            min="0.01"
                             step="0.01"
                             value={productWeight}
-                            onChange={(e) => setProductWeight(e.target.value)}
+                            onChange={(e) => {
+                              setProductWeight(e.target.value);
+                              clearFieldError('product_weight');
+                            }}
                             placeholder="e.g., 250"
-                            className={`${INPUT_CLASS} rounded-r-none border-r-0`}
+                            className={getFieldClass(
+                              'product_weight',
+                              `${INPUT_CLASS} rounded-r-none border-r-0`
+                            )}
                           />
                           <select
                             aria-label="Weight Unit"
@@ -2776,6 +3031,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                             <option value="oz">oz</option>
                           </select>
                         </div>
+                        {renderFieldError('product_weight')}
                       </div>
 
                       <div>
@@ -2783,39 +3039,57 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                           Product Dimensions (Length × Width × Height)
                         </FieldLabel>
                         <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-[1fr_1fr_1fr_auto]">
-                          <input
-                            id="product_length"
-                            type="number"
-                            min="0"
-                            step="0.01"
-                            value={productLength}
-                            onChange={(e) => setProductLength(e.target.value)}
-                            placeholder="Length"
-                            aria-label="Product Length"
-                            className={INPUT_CLASS}
-                          />
-                          <input
-                            id="product_width"
-                            type="number"
-                            min="0"
-                            step="0.01"
-                            value={productWidth}
-                            onChange={(e) => setProductWidth(e.target.value)}
-                            placeholder="Width"
-                            aria-label="Product Width"
-                            className={INPUT_CLASS}
-                          />
-                          <input
-                            id="product_height"
-                            type="number"
-                            min="0"
-                            step="0.01"
-                            value={productHeight}
-                            onChange={(e) => setProductHeight(e.target.value)}
-                            placeholder="Height"
-                            aria-label="Product Height"
-                            className={INPUT_CLASS}
-                          />
+                          <div>
+                            <input
+                              id="product_length"
+                              type="number"
+                              min="0.01"
+                              step="0.01"
+                              value={productLength}
+                              onChange={(e) => {
+                                setProductLength(e.target.value);
+                                clearFieldError('product_length');
+                              }}
+                              placeholder="Length"
+                              aria-label="Product Length"
+                              className={getFieldClass('product_length', INPUT_CLASS)}
+                            />
+                            {renderFieldError('product_length')}
+                          </div>
+                          <div>
+                            <input
+                              id="product_width"
+                              type="number"
+                              min="0.01"
+                              step="0.01"
+                              value={productWidth}
+                              onChange={(e) => {
+                                setProductWidth(e.target.value);
+                                clearFieldError('product_width');
+                              }}
+                              placeholder="Width"
+                              aria-label="Product Width"
+                              className={getFieldClass('product_width', INPUT_CLASS)}
+                            />
+                            {renderFieldError('product_width')}
+                          </div>
+                          <div>
+                            <input
+                              id="product_height"
+                              type="number"
+                              min="0.01"
+                              step="0.01"
+                              value={productHeight}
+                              onChange={(e) => {
+                                setProductHeight(e.target.value);
+                                clearFieldError('product_height');
+                              }}
+                              placeholder="Height"
+                              aria-label="Product Height"
+                              className={getFieldClass('product_height', INPUT_CLASS)}
+                            />
+                            {renderFieldError('product_height')}
+                          </div>
                           <select
                             aria-label="Dimension Unit"
                             value={dimensionUnit}
@@ -2891,13 +3165,17 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                       <input
                         id="package_weight"
                         type="number"
-                        min="0"
+                        min="0.01"
                         step="0.01"
                         value={packageWeight}
-                        onChange={(e) => setPackageWeight(e.target.value)}
+                        onChange={(e) => {
+                          setPackageWeight(e.target.value);
+                          clearFieldError('package_weight');
+                        }}
                         placeholder="320"
-                        className={INPUT_CLASS}
+                        className={getFieldClass('package_weight', INPUT_CLASS)}
                       />
+                      {renderFieldError('package_weight')}
                     </div>
 
                     <div>
@@ -2907,13 +3185,17 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                       <input
                         id="package_length"
                         type="number"
-                        min="0"
+                        min="0.01"
                         step="0.01"
                         value={packageLength}
-                        onChange={(e) => setPackageLength(e.target.value)}
+                        onChange={(e) => {
+                          setPackageLength(e.target.value);
+                          clearFieldError('package_length');
+                        }}
                         placeholder="24"
-                        className={INPUT_CLASS}
+                        className={getFieldClass('package_length', INPUT_CLASS)}
                       />
+                      {renderFieldError('package_length')}
                     </div>
 
                     <div>
@@ -2923,13 +3205,17 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                       <input
                         id="package_width"
                         type="number"
-                        min="0"
+                        min="0.01"
                         step="0.01"
                         value={packageWidth}
-                        onChange={(e) => setPackageWidth(e.target.value)}
+                        onChange={(e) => {
+                          setPackageWidth(e.target.value);
+                          clearFieldError('package_width');
+                        }}
                         placeholder="18"
-                        className={INPUT_CLASS}
+                        className={getFieldClass('package_width', INPUT_CLASS)}
                       />
+                      {renderFieldError('package_width')}
                     </div>
 
                     <div>
@@ -2939,13 +3225,17 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                       <input
                         id="package_height"
                         type="number"
-                        min="0"
+                        min="0.01"
                         step="0.01"
                         value={packageHeight}
-                        onChange={(e) => setPackageHeight(e.target.value)}
+                        onChange={(e) => {
+                          setPackageHeight(e.target.value);
+                          clearFieldError('package_height');
+                        }}
                         placeholder="5"
-                        className={INPUT_CLASS}
+                        className={getFieldClass('package_height', INPUT_CLASS)}
                       />
+                      {renderFieldError('package_height')}
                     </div>
                   </div>
 
@@ -3188,12 +3478,16 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                       id="canonical_url"
                       type="url"
                       value={canonicalUrl}
-                      onChange={(e) => setCanonicalUrl(e.target.value)}
+                      onChange={(e) => {
+                        setCanonicalUrl(e.target.value);
+                        clearFieldError('canonical_url');
+                      }}
                       placeholder={`https://merabeta.com/products/${
                         generateProductSlug(slug || productName) || 'product-slug'
                       }`}
-                      className={`${INPUT_CLASS} font-mono text-[12.5px]`}
+                      className={getFieldClass('canonical_url', `${INPUT_CLASS} font-mono text-[12.5px]`)}
                     />
+                    {renderFieldError('canonical_url')}
                   </div>
                 </div>
 
