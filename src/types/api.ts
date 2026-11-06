@@ -52,6 +52,8 @@ export interface BackendProductVariant {
   weight_grams?: number | null;
   regular_price?: number | string | null;
   sale_price?: number | string | null;
+  selling_price?: number | string | null;
+  cost_price?: number | string | null;
   effective_price?: number | string | null;
   stock_quantity: number;
   is_active: boolean;
@@ -112,6 +114,7 @@ export interface ProductSpecificationsFields extends AdditionalProductDetails {
 }
 
 export interface BackendProduct extends ProductSpecificationsFields {
+  inventory_managed?: boolean;
   id?: number | string;
   product_id?: number | string;
   brand_id?: number | string | null;
@@ -127,6 +130,8 @@ export interface BackendProduct extends ProductSpecificationsFields {
   sku?: string | null;
   regular_price?: number | string | null;
   sale_price?: number | string | null;
+  selling_price?: number | string | null;
+  cost_price?: number | string | null;
   mrp?: number | string | null;
   offer_price?: number | string | null;
   offer_percent?: number | string | null;
@@ -142,6 +147,7 @@ export interface BackendProduct extends ProductSpecificationsFields {
   category_ids?: number[];
   primary_category_id?: number | null;
   category_id?: number | null;
+  subcategory_id?: number | null;
   variants?: BackendProductVariant[];
   prescription_required?: boolean;
   age_group?: string | null;
@@ -246,6 +252,7 @@ export interface CreateProductPayload extends ProductSpecificationsFields {
   category_ids?: number[];
   primary_category_id?: number | null;
   category_id?: number | null;
+  subcategory_id?: number | null;
   age_group?: string | null;
   prescription_required?: boolean | null;
   images?: File[];

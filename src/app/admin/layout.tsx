@@ -55,7 +55,7 @@ export default function AdminLayout({
         />
 
         {/* Page Children */}
-        <div className="max-w-[1400px] mx-auto">{children}</div>
+        <div className="max-w-[1536px] mx-auto">{children}</div>
       </main>
     </div>
   );

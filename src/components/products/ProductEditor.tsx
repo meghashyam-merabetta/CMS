@@ -1913,8 +1913,8 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
             {/* TOP HEADER BAR                                                 */}
             {/* ============================================================== */}
             <div className="rounded-2xl border border-[#E2E8F0] bg-white p-4 sm:p-5 shadow-2xs">
-              <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-                <div>
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-2.5">
                     <h2 className="text-[20px] sm:text-[22px] font-bold text-[#0F172A] tracking-tight">
                       {isEditing ? 'Edit Product' : 'Add New Product'}
@@ -1936,26 +1936,26 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                   </p>
                 </div>
 
-                <div className="flex flex-wrap items-center gap-2.5">
+                <div className="flex shrink-0 items-center gap-2.5">
                   <button
                     type="button"
                     disabled={saving || submitting || isLoadingProduct}
                     onClick={() => void persistProductToBackend('draft')}
-                    className="inline-flex h-10 items-center gap-1.5 rounded-xl border border-[#DCE0E8] bg-white px-4 text-[13px] font-semibold text-[#334155] transition-colors hover:bg-[#F8FAFC] disabled:opacity-60 cursor-pointer"
+                    className="inline-flex h-10 items-center justify-center gap-1.5 rounded-xl border border-[#DCE0E8] bg-white px-4 text-[13px] font-semibold text-[#334155] shadow-2xs transition-all hover:border-[#CBD5E1] hover:bg-[#F8FAFC] disabled:opacity-60 cursor-pointer"
                   >
-                    {saving && <Loader2 size={15} className="animate-spin text-[#64748B]" />}
-                    <span>{saving ? 'Saving Draft...' : 'Save as Draft'}</span>
+                    {saving && <Loader2 size={14} className="animate-spin text-[#64748B]" />}
+                    <span>{saving ? 'Saving...' : 'Save as Draft'}</span>
                   </button>
 
                   <button
                     type="submit"
                     disabled={saving || submitting || isLoadingProduct}
-                    className="inline-flex h-10 items-center gap-2 rounded-xl bg-[#F47C35] px-5 text-[13.5px] font-semibold text-white shadow-xs transition-colors hover:bg-[#E06924] disabled:opacity-60 cursor-pointer"
+                    className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-[#F47C35] px-5 text-[13px] font-semibold text-white shadow-xs transition-all hover:bg-[#E06924] active:scale-[0.99] disabled:opacity-60 cursor-pointer"
                   >
                     {submitting ? (
                       <Loader2 size={15} className="animate-spin" />
                     ) : (
-                      <Eye size={15} />
+                      <CheckCircle2 size={15} />
                     )}
                     <span>
                       {submitting
@@ -2084,7 +2084,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                             clearFieldError('product_code');
                           }}
                           placeholder="e.g., PRD-48291"
-                          className={getFieldClass('product_code', `${INPUT_CLASS} font-mono text-[12.5px]`)}
+                          className={getFieldClass('product_code', `${INPUT_CLASS} min-w-0 flex-1 font-mono text-[12.5px]`)}
                         />
                         <button
                           type="button"
@@ -2092,10 +2092,10 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                             handleGenerateProductCode();
                             clearFieldError('product_code');
                           }}
-                          className="inline-flex h-11 shrink-0 items-center gap-1.5 rounded-xl border border-[#DCE0E8] bg-[#F8FAFC] px-3 text-[12px] font-semibold text-[#0D2B53] hover:border-[#F47C35] hover:text-[#F47C35] cursor-pointer"
+                          className="inline-flex h-11 shrink-0 items-center gap-1 rounded-xl border border-[#DCE0E8] bg-[#F8FAFC] px-3 text-[12px] font-semibold text-[#0D2B53] hover:border-[#F47C35] hover:text-[#F47C35] cursor-pointer"
                         >
                           <Wand2 size={14} />
-                          <span>Generate</span>
+                          <span>Auto</span>
                         </button>
                       </div>
                       {renderFieldError('product_code')}
@@ -2200,19 +2200,19 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                   {/* Product Type Selector: Simple Product vs Variable Product */}
                   <div>
                     <FieldLabel required>Product Type</FieldLabel>
-                    <div className="grid grid-cols-2 gap-2.5">
+                    <div className="space-y-2.5">
                       {(
                         [
                           {
                             value: 'simple',
                             title: 'Simple Product',
-                            desc: 'Single standalone item',
+                            desc: 'Single standalone item with direct inventory',
                             icon: Box,
                           },
                           {
                             value: 'variable',
                             title: 'Variable Product',
-                            desc: 'Has size/color variants',
+                            desc: 'Multi-variant item with size or color options',
                             icon: Layers,
                           },
                         ] as const
@@ -2224,27 +2224,40 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                             key={opt.value}
                             type="button"
                             onClick={() => setProductType(opt.value)}
-                            className={`flex flex-col items-start rounded-xl border p-3 text-left transition-all cursor-pointer ${
+                            className={`flex w-full items-center justify-between rounded-xl border p-3 text-left transition-all cursor-pointer ${
                               selected
-                                ? 'border-[#F47C35] bg-[#FFF4ED]/70 text-[#0F172A] ring-2 ring-[#F47C35]/15'
+                                ? 'border-[#F47C35] bg-[#FFF4ED]/80 text-[#0F172A] ring-2 ring-[#F47C35]/15'
                                 : 'border-[#E2E8F0] bg-[#F8FAFC] text-[#475569] hover:border-[#CBD5E1] hover:bg-white'
                             }`}
                           >
-                            <div className="flex w-full items-center justify-between">
-                              <Icon
-                                size={16}
-                                className={selected ? 'text-[#F47C35]' : 'text-[#64748B]'}
-                              />
-                              <span
-                                className={`h-3.5 w-3.5 rounded-full border ${
+                            <div className="flex items-center gap-3 min-w-0">
+                              <div
+                                className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${
                                   selected
-                                    ? 'border-[#F47C35] bg-[#F47C35] ring-2 ring-white ring-inset'
-                                    : 'border-[#CBD5E1] bg-white'
+                                    ? 'bg-[#F47C35] text-white shadow-xs'
+                                    : 'bg-white border border-[#E2E8F0] text-[#64748B]'
                                 }`}
-                              />
+                              >
+                                <Icon size={17} />
+                              </div>
+                              <div className="min-w-0">
+                                <span className="block text-[13px] font-bold text-[#0F172A] leading-tight">
+                                  {opt.title}
+                                </span>
+                                <span className="block text-[11px] text-[#64748B] leading-tight mt-0.5 truncate">
+                                  {opt.desc}
+                                </span>
+                              </div>
                             </div>
-                            <span className="mt-2 text-[12.5px] font-bold">{opt.title}</span>
-                            <span className="text-[10.5px] text-[#64748B]">{opt.desc}</span>
+                            <span
+                              className={`ml-3 flex h-4 w-4 shrink-0 items-center justify-center rounded-full border ${
+                                selected
+                                  ? 'border-[#F47C35] bg-[#F47C35]'
+                                  : 'border-[#CBD5E1] bg-white'
+                              }`}
+                            >
+                              {selected && <span className="h-1.5 w-1.5 rounded-full bg-white" />}
+                            </span>
                           </button>
                         );
                       })}
@@ -2452,6 +2465,23 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                         />
                       </div>
                     </div>
+
+                    <p
+                      className="break-words rounded-lg bg-[#F8FAFC] px-3 py-2 text-[11.5px] text-[#64748B]"
+                      aria-live="polite"
+                    >
+                      {selectedCategory
+                        ? `Selected: ${selectedCategory.name}${
+                            selectedCategory.subcategories.find((sub) => sub.id === subcategoryId)
+                              ? ` › ${
+                                  selectedCategory.subcategories.find(
+                                    (sub) => sub.id === subcategoryId
+                                  )?.name
+                                }`
+                              : ''
+                          }`
+                        : 'Choose a category. The saved selection will be verified after updating.'}
+                    </p>
 
                     {/* Brand */}
                     <div>
@@ -3424,8 +3454,8 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                 }
               />
 
-              <div className="grid gap-6 lg:grid-cols-[1.3fr_1fr]">
-                <div className="grid gap-4 sm:grid-cols-2">
+              <div className="grid min-w-0 gap-6 xl:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)]">
+                <div className="grid min-w-0 gap-4 sm:grid-cols-2">
                   <div className="sm:col-span-2">
                     <FieldLabel
                       htmlFor="meta_title"
@@ -3438,7 +3468,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                       type="text"
                       value={metaTitle}
                       onChange={(e) => setMetaTitle(e.target.value)}
-                      placeholder={productName || 'Enter SEO page title'}
+                      placeholder="Enter SEO page title"
                       className={INPUT_CLASS}
                     />
                   </div>
@@ -3482,9 +3512,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                         setCanonicalUrl(e.target.value);
                         clearFieldError('canonical_url');
                       }}
-                      placeholder={`https://merabeta.com/products/${
-                        generateProductSlug(slug || productName) || 'product-slug'
-                      }`}
+                      placeholder="https://merabeta.com/products/product-slug"
                       className={getFieldClass('canonical_url', `${INPUT_CLASS} font-mono text-[12.5px]`)}
                     />
                     {renderFieldError('canonical_url')}
@@ -3492,27 +3520,38 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                 </div>
 
                 {/* Live Google Search Snippet Preview */}
-                <div className="flex flex-col justify-between rounded-2xl border border-[#E2E8F0] bg-[#F8FAFC] p-5">
-                  <div>
+                <div className="flex min-w-0 flex-col justify-between overflow-hidden rounded-2xl border border-[#E2E8F0] bg-[#F8FAFC] p-4 sm:p-5">
+                  <div className="min-w-0">
                     <div className="mb-3 flex items-center gap-2 text-[12px] font-bold uppercase tracking-wider text-[#64748B]">
                       <Search size={14} className="text-[#F47C35]" />
                       <span>Search Engine Preview</span>
                     </div>
-                    <div className="rounded-xl border border-[#E2E8F0] bg-white p-4 shadow-2xs">
+                    <div className="min-w-0 overflow-hidden rounded-xl border border-[#E2E8F0] bg-white p-4 shadow-2xs">
                       <p className="truncate text-[12px] text-[#0F172A]">
                         merabeta.com › products ›{' '}
                         <span className="text-[#64748B]">
-                          {generateProductSlug(slug || productName) || 'product-slug'}
+                          {canonicalUrl.trim()
+                            ? canonicalUrl.replace(/^https?:\/\/(www\.)?merabeta\.com\/products\//, '')
+                            : (generateProductSlug(slug || productName) || 'product-slug')}
                         </span>
                       </p>
                       <h4 className="mt-1 line-clamp-1 text-[17px] font-medium text-[#1A0DAB]">
-                        {metaTitle.trim() || productName.trim() || 'Product Title Appears Here'}
+                        {metaTitle.trim() ? (
+                          metaTitle.trim()
+                        ) : (
+                          <span className="font-normal italic text-[#94A3B8]">
+                            No meta title entered
+                          </span>
+                        )}
                       </h4>
                       <p className="mt-1 line-clamp-2 text-[13px] leading-relaxed text-[#4D5156]">
-                        {metaDescription.trim() ||
-                          shortDescription.trim() ||
-                          fullDescription.trim() ||
-                          'Add a meta description or short description to preview how search engines summarize this product.'}
+                        {metaDescription.trim() ? (
+                          metaDescription.trim()
+                        ) : (
+                          <span className="italic text-[#94A3B8]">
+                            No meta description entered. Add a description or click &quot;Auto-fill&quot;.
+                          </span>
+                        )}
                       </p>
                     </div>
                   </div>
@@ -3522,20 +3561,20 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                       type="button"
                       disabled={saving || submitting || isLoadingProduct}
                       onClick={() => void persistProductToBackend('draft')}
-                      className="inline-flex h-11 items-center justify-center gap-1.5 rounded-xl border border-[#DCE0E8] bg-white px-5 text-[13.5px] font-semibold text-[#334155] hover:bg-[#F8FAFC] disabled:opacity-60 cursor-pointer"
+                      className="inline-flex h-10 items-center justify-center gap-1.5 rounded-xl border border-[#DCE0E8] bg-white px-4 text-[13px] font-semibold text-[#334155] shadow-2xs transition-all hover:border-[#CBD5E1] hover:bg-[#F8FAFC] disabled:opacity-60 cursor-pointer"
                     >
-                      {saving && <Loader2 size={15} className="animate-spin" />}
-                      <span>{saving ? 'Saving Draft...' : 'Save as Draft'}</span>
+                      {saving && <Loader2 size={14} className="animate-spin text-[#64748B]" />}
+                      <span>{saving ? 'Saving...' : 'Save as Draft'}</span>
                     </button>
                     <button
                       type="submit"
                       disabled={saving || submitting || isLoadingProduct}
-                      className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-[#F47C35] px-6 text-[13.5px] font-semibold text-white shadow-xs hover:bg-[#E06924] disabled:opacity-60 cursor-pointer"
+                      className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-[#F47C35] px-5 text-[13px] font-semibold text-white shadow-xs transition-all hover:bg-[#E06924] active:scale-[0.99] disabled:opacity-60 cursor-pointer"
                     >
                       {submitting ? (
-                        <Loader2 size={16} className="animate-spin" />
+                        <Loader2 size={15} className="animate-spin" />
                       ) : (
-                        <CheckCircle2 size={16} />
+                        <CheckCircle2 size={15} />
                       )}
                       <span>
                         {submitting

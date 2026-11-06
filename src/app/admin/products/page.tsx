@@ -39,7 +39,11 @@ import {
   validateProductImages,
   BackendProductImageRecord,
 } from '@/services/api/adminProductsApi';
-import { getAdminCategories, getAllAdminCategories } from '@/services/api/adminCategoriesApi';
+import {
+  getAdminCategories,
+  getAllAdminCategories,
+  getAdminCategoriesTree,
+} from '@/services/api/adminCategoriesApi';
 import { compareProductRecords, summarizeProductVariants } from '@/lib/productCatalog';
 import { collectAllPages } from '@/lib/pagination';
 import { getAllAdminBrands } from '@/services/api/adminBrandsApi';
@@ -55,6 +59,7 @@ function mapBackendProductToRecord(
   const name = bp.product_name || bp.name || 'Product';
   const rawPrice =
     bp.effective_price ??
+    bp.selling_price ??
     bp.sale_price ??
     bp.offer_price ??
     bp.regular_price ??
@@ -138,11 +143,47 @@ function mapBackendProductToRecord(
       ? 'INACTIVE'
       : 'ARCHIVED';
 
+  const hasVariants = Array.isArray(bp.variants) && bp.variants.length > 0;
+  const activeVariants = hasVariants ? bp.variants!.filter((v) => v.is_active !== false) : [];
+  let inventorySummary: ProductRecord['inventorySummary'] = {
+    source: 'product',
+    stock,
+    minPrice: price,
+    maxPrice: price,
+    activeVariantCount: 0,
+  };
+
+  if (hasVariants && activeVariants.length > 0) {
+    const variantStock = activeVariants.reduce(
+      (sum, v) => sum + (Number(v.stock_quantity) || 0),
+      0
+    );
+    const variantPrices = activeVariants
+      .map((v) =>
+        Number(
+          v.effective_price ?? v.selling_price ?? v.sale_price ?? v.regular_price
+        )
+      )
+      .filter((p) => Number.isFinite(p) && p > 0);
+    const minP = variantPrices.length > 0 ? Math.min(...variantPrices) : price;
+    const maxP = variantPrices.length > 0 ? Math.max(...variantPrices) : price;
+
+    inventorySummary = {
+      source: 'variants',
+      stock: variantStock,
+      minPrice: minP,
+      maxPrice: maxP,
+      activeVariantCount: activeVariants.length,
+    };
+  }
+
   return {
     id: String(prodId),
     productCode: `PRD-${String(prodId).padStart(4, '0')}`,
     catalogCode: bp.product_code || undefined,
     variantSummary: summarizeProductVariants(bp.variants || []),
+    inventorySummary,
+    productType: bp.product_type,
     name,
     brand: brandLabel,
     category: categoryName,
@@ -158,6 +199,26 @@ function mapBackendProductToRecord(
   };
 }
 
+function flattenCategoryTree(nodes: BackendCategory[]): BackendCategory[] {
+  const flattened: BackendCategory[] = [];
+  const visit = (node: BackendCategory, parentId: string | number | null = null) => {
+    const id = node.category_id ?? node.id;
+    flattened.push({
+      ...node,
+      parent_category_id:
+        node.parent_category_id ?? (node as any).parent_id ?? parentId,
+    });
+    const children = Array.isArray((node as any).subcategories)
+      ? (node as any).subcategories
+      : Array.isArray((node as any).children)
+      ? (node as any).children
+      : [];
+    children.forEach((child: BackendCategory) => visit(child, id ?? null));
+  };
+  nodes.forEach((node) => visit(node));
+  return flattened;
+}
+
 export default function ProductManagementPage() {
   const router = useRouter();
   const [products, setProducts] = useState<ProductRecord[]>([]);
@@ -169,6 +230,7 @@ export default function ProductManagementPage() {
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isLoadingDetails, setIsLoadingDetails] = useState(false);
+  const [lookupsReady, setLookupsReady] = useState(false);
 
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedRootCategory, setSelectedRootCategory] = useState<string>('');
@@ -370,15 +432,16 @@ export default function ProductManagementPage() {
 
     async function loadCatsAndBrands() {
       try {
-        const [res, brandsList] = await Promise.all([
-          getAllAdminCategories(),
+        const [tree, brandsList] = await Promise.all([
+          getAdminCategoriesTree().catch(() => getAllAdminCategories()),
           getAllAdminBrands().catch(() => []),
         ]);
         if (Array.isArray(brandsList)) {
           setBrands(brandsList);
         }
-        const catList = res;
+        const catList = flattenCategoryTree(Array.isArray(tree) ? tree : []);
         if (Array.isArray(catList)) {
+          categoriesRef.current = catList;
           setCategories(catList);
           if (urlCatId) {
             const matched = catList.find((c) => String(c.category_id ?? c.id) === urlCatId);
@@ -391,8 +454,11 @@ export default function ProductManagementPage() {
             }
           }
         }
+        brandsRef.current = Array.isArray(brandsList) ? brandsList : [];
       } catch (e) {
         console.warn('Categories API note:', e);
+      } finally {
+        setLookupsReady(true);
       }
     }
     loadCatsAndBrands();
@@ -462,60 +528,16 @@ export default function ProductManagementPage() {
   const requestIdRef = useRef(0);
 
   // Server-side pagination + full ID/Name/Brand/Category search support
-  async function enrichVisibleProducts(records: ProductRecord[], backendItems: BackendProduct[]) {
-    return Promise.all(records.map(async (record) => {
-      const backend = backendItems.find((item) => String(item.product_id ?? item.id) === record.id);
-      let result = { ...record };
-      const warnings: string[] = [];
-
-      // The list endpoint may omit category/inventory data: read the detail record when missing.
-      if (!result.categoryId || result.stock <= 0) {
-        try {
-          const detail: any = await getAdminProductById(record.id);
-          if (detail) {
-            const merged = mapBackendProductToRecord(
-              { ...(backend || {}), ...detail } as BackendProduct,
-              0,
-              categoriesRef.current,
-              brandsRef.current
-            );
-            const invRows: any[] = Array.isArray(detail.inventory?.rows)
-              ? detail.inventory.rows
-              : Array.isArray(detail.inventory)
-              ? detail.inventory
-              : [];
-            const invAvailable = invRows.length
-              ? invRows.reduce((s, r) => s + (Number(r.available_quantity) || 0), 0)
-              : Number(detail.inventory?.available_quantity ?? detail.inventory?.total_available ?? 0) || 0;
-            result = {
-              ...result,
-              category: merged.category,
-              categoryId: merged.categoryId ?? result.categoryId,
-              brand: merged.brand,
-              stock: merged.stock > 0 ? merged.stock : invAvailable,
-            };
-          }
-        } catch {
-          // keep list values
-        }
-      }
-
-      await Promise.all([
-        !result.image ? getAdminProductImages(record.id).then((images) => {
-          result.image = images.find((image) => image.is_primary)?.image_url || images[0]?.image_url;
-        }).catch(() => warnings.push('Images could not be loaded')) : Promise.resolve(),
-        backend?.variants === undefined && backend?.product_type !== 'simple'
-          ? getAllAdminProductVariants(record.id).then((variants) => {
-            result.variantSummary = summarizeProductVariants(variants);
-          }).catch(() => warnings.push('Variants could not be loaded')) : Promise.resolve(),
-      ]);
-      result.catalogWarning = warnings.join('. ');
-      return result;
-    }));
+  async function enrichVisibleProducts(records: ProductRecord[], _backendItems: BackendProduct[]) {
+    // The paginated list contract already contains classification, primary image,
+    // stock and price. Per-row detail/inventory requests created an N+1 burst
+    // (20+ requests for a 10-row page) and repeatedly hit the API rate limiter.
+    return records;
   }
 
   const loadProducts = React.useCallback(
     async (_forceRecount = false) => {
+      if (!lookupsReady) return;
       const requestId = ++requestIdRef.current;
       setIsLoading(true);
       setFetchError(null);
@@ -646,7 +668,7 @@ export default function ProductManagementPage() {
         if (requestId === requestIdRef.current) setIsLoading(false);
       }
     },
-    [pageSize, currentPage, debouncedSearch, selectedCategory, selectedBrand, selectedStatus, sortBy, sortOrder, lookupsVersion]
+    [pageSize, currentPage, debouncedSearch, selectedCategory, selectedBrand, selectedStatus, sortBy, sortOrder, lookupsReady]
   );
 
   React.useEffect(() => {
@@ -684,9 +706,18 @@ export default function ProductManagementPage() {
           .filter((n) => !isNaN(n) && n > 0);
         const primaryCat =
           prodCats.find((c) => c.ProductCategory?.is_primary) || prodCats[0] || null;
-        const primaryIdStr = primaryCat
-          ? String(primaryCat.category_id ?? primaryCat.id ?? '')
-          : product.categoryId || '';
+        const directCategoryId = details.category_id != null
+          ? String(details.category_id)
+          : '';
+        const directSubcategoryId = details.subcategory_id != null
+          ? String(details.subcategory_id)
+          : '';
+        const primaryIdStr =
+          directSubcategoryId ||
+          directCategoryId ||
+          (primaryCat ? String(primaryCat.category_id ?? primaryCat.id ?? '') : '') ||
+          product.categoryId ||
+          '';
 
         const imgUrl = resolvePrimaryProductImage(details) || product.image;
 
@@ -718,15 +749,25 @@ export default function ProductManagementPage() {
 
     setIsSubmitting(true);
     try {
-      const primaryNum = editingProduct.primary_category_id
+      const selectedClassification = categories.find(
+        (category) =>
+          String(category.category_id ?? category.id ?? '') ===
+          editingProduct.primary_category_id
+      );
+      const selectedId = editingProduct.primary_category_id
         ? Number(editingProduct.primary_category_id)
         : null;
-      const mergedCatIds = Array.from(
-        new Set([
-          ...editingProduct.category_ids,
-          ...(primaryNum && !isNaN(primaryNum) && primaryNum > 0 ? [primaryNum] : []),
-        ])
-      );
+      const selectedParentId = selectedClassification?.parent_category_id != null
+        ? Number(selectedClassification.parent_category_id)
+        : null;
+      const isSelectedSubcategory =
+        selectedParentId != null && Number.isFinite(selectedParentId) && selectedParentId > 0;
+      const categoryId = selectedId && Number.isFinite(selectedId) && selectedId > 0
+        ? (isSelectedSubcategory ? selectedParentId : selectedId)
+        : null;
+      const subcategoryId = selectedId && Number.isFinite(selectedId) && selectedId > 0 && isSelectedSubcategory
+        ? selectedId
+        : null;
 
       await updateAdminProduct(editingProduct.id, {
         product_name: editingProduct.product_name.trim(),
@@ -735,10 +776,25 @@ export default function ProductManagementPage() {
         product_status: editingProduct.product_status,
         short_description: editingProduct.short_description.trim() || null,
         description: editingProduct.description.trim() || null,
-        category_ids: mergedCatIds,
-        primary_category_id:
-          primaryNum && !isNaN(primaryNum) && primaryNum > 0 ? primaryNum : null,
+        category_id: categoryId,
+        subcategory_id: subcategoryId,
       });
+
+      // Verification: verify against both direct properties AND categories array to avoid false errors
+      const savedProduct = await getAdminProductById(editingProduct.id);
+      const savedCatIds = new Set<number>();
+      if (savedProduct.category_id != null) savedCatIds.add(Number(savedProduct.category_id));
+      if (savedProduct.subcategory_id != null) savedCatIds.add(Number(savedProduct.subcategory_id));
+      if (Array.isArray(savedProduct.categories)) {
+        savedProduct.categories.forEach((c: any) => {
+          const cid = c.category_id ?? c.id;
+          if (cid != null) savedCatIds.add(Number(cid));
+        });
+      }
+      if (selectedId && !savedCatIds.has(selectedId) && categoryId && !savedCatIds.has(categoryId)) {
+        console.warn('Warning: Saved product category could not be verified in server response');
+      }
+
       showToast(`Product "${editingProduct.product_name}" updated successfully.`);
       setEditingProduct(null);
       await loadProducts(true);
@@ -780,7 +836,8 @@ export default function ProductManagementPage() {
   const currencyFormatter = new Intl.NumberFormat('en-IN', {
     style: 'currency',
     currency: 'INR',
-    maximumFractionDigits: 0,
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2,
   });
 
   return (
@@ -880,7 +937,7 @@ export default function ProductManagementPage() {
               setSearchQuery(e.target.value);
               setCurrentPage(0);
             }}
-            placeholder="Search by ID, name, brand, SKU, model"
+            placeholder="Search ID, name, brand, variant, SKU or model"
             className="h-11 w-full rounded-lg border border-[#D6DCE5] pr-4 pl-10 text-[13px] outline-none transition focus:border-[#F47C35]"
           />
         </label>
@@ -1009,6 +1066,10 @@ export default function ProductManagementPage() {
                 </tr>
               ) : (
                 paginatedProducts.map((p) => {
+                  const inventory = p.inventorySummary;
+                  const stock = inventory?.stock ?? p.stock;
+                  const minPrice = inventory?.minPrice ?? p.price;
+                  const maxPrice = inventory?.maxPrice ?? p.price;
                   return (
                     <tr
                       key={p.id}
@@ -1063,18 +1124,38 @@ export default function ProductManagementPage() {
                       <td className="px-3">
                         <span
                           className={`font-semibold ${
-                            p.stock > 10
+                            stock == null
+                              ? 'text-slate-500'
+                              : stock > 10
                               ? 'text-emerald-700'
-                              : p.stock > 0
+                              : stock > 0
                               ? 'text-amber-700'
                               : 'text-rose-600'
                           }`}
                         >
-                          {p.stock > 0 ? `${p.stock} units` : 'Out of stock'}
+                          {stock == null
+                            ? 'Unavailable'
+                            : stock > 0
+                            ? `${stock.toLocaleString('en-IN')} units`
+                            : 'Out of stock'}
                         </span>
+                        {inventory?.source === 'variants' && (
+                          <div className="mt-1 text-[10px] text-gray-500">
+                            Across {inventory.activeVariantCount} active variants
+                          </div>
+                        )}
                       </td>
                       <td className="px-3 font-semibold text-slate-900">
-                        {currencyFormatter.format(p.price)}
+                        {minPrice == null || maxPrice == null
+                          ? 'Unavailable'
+                          : minPrice === maxPrice
+                          ? currencyFormatter.format(minPrice)
+                          : `${currencyFormatter.format(minPrice)}–${currencyFormatter.format(maxPrice)}`}
+                        {inventory?.source === 'variants' && (
+                          <div className="mt-1 text-[10px] font-normal text-gray-500">
+                            Variant prices
+                          </div>
+                        )}
                       </td>
                       <td className="px-3">
                         <span
