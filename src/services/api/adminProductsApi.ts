@@ -835,39 +835,69 @@ export async function getAdminProductImages(
 export async function uploadAdminProductImages(
   productId: number | string,
   images: File[],
-  options?: { idempotencyKey?: string }
+  options?: {
+    idempotencyKey?: string;
+    idempotencyKeys?: string[];
+    onUploaded?: (file: File, record: BackendProductImageRecord) => void;
+  }
 ): Promise<BackendProductImageRecord[]> {
   if (!images.length) return [];
 
-  const totalBytes = images.reduce((sum, f) => sum + f.size, 0);
   if (images.some((file) => !ALLOWED_PRODUCT_IMAGE_TYPES.includes(file.type))) {
     throw new Error('Product images must be JPG, PNG or WebP.');
   }
   if (images.some((file) => file.size > MAX_PRODUCT_IMAGE_BYTES)) {
     throw new Error('Each product image must be no more than 5 MiB.');
   }
-  if (totalBytes > MAX_TOTAL_IMAGE_BYTES) {
-    throw new Error('Product images must be no more than 10 MiB per request.');
+
+  const existingImages = await getAdminProductImages(productId);
+  if (existingImages.length + images.length > MAX_PRODUCT_IMAGES) {
+    throw new Error(
+      `A product can have a maximum of ${MAX_PRODUCT_IMAGES} images. Remove an existing image before uploading another.`
+    );
   }
 
-  const formData = new FormData();
-  for (const file of images) {
+  const uploaded: BackendProductImageRecord[] = [];
+  for (const [index, file] of images.entries()) {
+    const formData = new FormData();
     formData.append(PRODUCT_IMAGE_FIELD_NAME, file);
+    const idempotencyKey =
+      options?.idempotencyKeys?.[index] ||
+      (images.length === 1 ? options?.idempotencyKey : undefined) ||
+      generateIdempotencyKey(`img-upload-${productId}-${index + 1}`);
+
+    try {
+      const res = await apiFetch<any>(`${ADMIN_PRODUCTS_ENDPOINT}/${productId}/images`, {
+        method: 'POST',
+        headers: { 'Idempotency-Key': idempotencyKey },
+        body: formData,
+      });
+      const data = res?.data ?? res;
+      const record = Array.isArray(data) ? data[0] : data;
+      if (!record?.id || !(record?.image_url || record?.url || record?.imageUrl)) {
+        throw new Error('The server did not return the uploaded image record.');
+      }
+      const normalized: BackendProductImageRecord = {
+        ...record,
+        id: String(record.id),
+        product_id: String(record.product_id ?? productId),
+        image_url: record.image_url || record.url || record.imageUrl,
+      };
+      uploaded.push(normalized);
+      options?.onUploaded?.(file, normalized);
+    } catch (error: any) {
+      const detail =
+        error?.status === 413
+          ? 'The image is too large for the server (HTTP 413). Maximum size is 5 MiB.'
+          : error?.message || 'Image upload failed.';
+      const wrapped = new Error(`Could not upload "${file.name}": ${detail}`) as Error & {
+        status?: number;
+      };
+      wrapped.status = error?.status;
+      throw wrapped;
+    }
   }
-
-  const idempotencyKey =
-    options?.idempotencyKey || generateIdempotencyKey(`img-upload-${productId}`);
-
-  const res = await apiFetch<any>(`${ADMIN_PRODUCTS_ENDPOINT}/${productId}/images`, {
-    method: 'POST',
-    headers: {
-      'Idempotency-Key': idempotencyKey,
-    },
-    body: formData,
-  });
-
-  const data = res?.data ?? res;
-  return Array.isArray(data) ? data : [];
+  return uploaded;
 }
 
 export async function replaceAdminProductImage(

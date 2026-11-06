@@ -40,7 +40,7 @@ import {
   BackendProductImageRecord,
 } from '@/services/api/adminProductsApi';
 import { getAdminCategories, getAllAdminCategories } from '@/services/api/adminCategoriesApi';
-import { compareProductRecords, summarizeProductInventory } from '@/lib/productCatalog';
+import { compareProductRecords } from '@/lib/productCatalog';
 import { collectAllPages } from '@/lib/pagination';
 import { getAllAdminBrands } from '@/services/api/adminBrandsApi';
 import { BackendProduct, BackendCategory, BackendBrand, ProductStatus } from '@/types/api';
@@ -55,6 +55,7 @@ function mapBackendProductToRecord(
   const name = bp.product_name || bp.name || 'Product';
   const rawPrice =
     bp.effective_price ??
+    bp.selling_price ??
     bp.sale_price ??
     bp.offer_price ??
     bp.regular_price ??
@@ -142,7 +143,13 @@ function mapBackendProductToRecord(
     id: String(prodId),
     productCode: `PRD-${String(prodId).padStart(4, '0')}`,
     catalogCode: bp.product_code || undefined,
-    inventorySummary: summarizeProductInventory(bp),
+    inventorySummary: {
+      source: 'product',
+      stock,
+      minPrice: price,
+      maxPrice: price,
+      activeVariantCount: 0,
+    },
     productType: bp.product_type,
     name,
     brand: brandLabel,
@@ -493,6 +500,8 @@ export default function ProductManagementPage() {
               category: merged.category,
               categoryId: merged.categoryId ?? result.categoryId,
               brand: merged.brand,
+              price: merged.price || result.price,
+              originalPrice: merged.originalPrice || result.originalPrice,
               stock: merged.stock > 0 ? merged.stock : invAvailable,
             };
           }
@@ -519,20 +528,20 @@ export default function ProductManagementPage() {
         warnings.push('Warehouse stock could not be loaded');
       }
 
-      if (inventoryRows.length > 0) {
-        const available = inventoryRows.reduce((sum, row) => {
+      const available = inventoryRows.length > 0
+        ? inventoryRows.reduce((sum, row) => {
           const value = Number(row.available_quantity);
           return sum + (Number.isFinite(value) && value >= 0 ? value : 0);
-        }, 0);
-        result.stock = available;
-        result.inventorySummary = {
-          source: 'product',
-          stock: available,
-          minPrice: result.inventorySummary?.minPrice ?? result.price,
-          maxPrice: result.inventorySummary?.maxPrice ?? result.price,
-          activeVariantCount: 0,
-        };
-      }
+        }, 0)
+        : result.stock;
+      result.stock = available;
+      result.inventorySummary = {
+        source: 'product',
+        stock: available,
+        minPrice: result.price,
+        maxPrice: result.price,
+        activeVariantCount: 0,
+      };
       result.catalogWarning = warnings.join('. ');
       return result;
     }));

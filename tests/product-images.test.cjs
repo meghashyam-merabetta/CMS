@@ -106,6 +106,70 @@ test('upload service checks fresh server count before posting, including gallery
   assert.equal(posts, 0);
 });
 
+test('three selected product images upload sequentially with one file per request', async () => {
+  const requests = [];
+  let inFlight = 0;
+  const api = loadService(async (url, options) => {
+    if (!options?.method) return { data: [] };
+    assert.equal(inFlight, 0, 'uploads must not overlap');
+    inFlight++;
+    const file = options.body.get('uploadimage');
+    requests.push({ url, options, file });
+    await Promise.resolve();
+    inFlight--;
+    return { data: [{ id: String(requests.length), product_id: '123', image_url: `https://images/${file.name}` }] };
+  });
+  const files = ['one.png', 'two.png', 'three.png'].map(
+    name => new File(['image'], name, { type: 'image/png' })
+  );
+  const result = await api.uploadAdminProductImages(123, files);
+  assert.equal(result.length, 3);
+  assert.equal(requests.length, 3);
+  assert.deepEqual(requests.map(({ file: image }) => image.name), files.map(image => image.name));
+  for (const request of requests) {
+    assert.equal(request.options.method, 'POST');
+    assert.deepEqual([...request.options.body.keys()], ['uploadimage']);
+    assert.equal(request.options.body.getAll('uploadimage').length, 1);
+    assert.ok(request.options.headers['Idempotency-Key']);
+  }
+});
+
+test('retry queue does not resend product images that already succeeded', async () => {
+  const calls = [];
+  let rejectSecond = true;
+  const api = loadService(async (_url, options) => {
+    if (!options?.method) return { data: [] };
+    const image = options.body.get('uploadimage');
+    calls.push({ name: image.name, key: options.headers['Idempotency-Key'] });
+    if (image.name === 'two.png' && rejectSecond) {
+      rejectSecond = false;
+      const error = new Error('Payload too large');
+      error.status = 413;
+      throw error;
+    }
+    return { data: [{ id: image.name, product_id: '123', image_url: `https://images/${image.name}` }] };
+  });
+  let pending = ['one.png', 'two.png', 'three.png'].map(
+    name => new File(['image'], name, { type: 'image/png' })
+  );
+  const keys = pending.map((_, index) => `stable-key-${index + 1}`);
+  await assert.rejects(
+    api.uploadAdminProductImages(123, pending, {
+      idempotencyKeys: keys,
+      onUploaded(uploaded) { pending = pending.filter(image => image !== uploaded); },
+    }),
+    /two\.png.*HTTP 413/
+  );
+  assert.deepEqual(pending.map(image => image.name), ['two.png', 'three.png']);
+  await api.uploadAdminProductImages(123, pending, {
+    idempotencyKeys: keys.slice(1),
+    onUploaded(uploaded) { pending = pending.filter(image => image !== uploaded); },
+  });
+  assert.deepEqual(pending, []);
+  assert.deepEqual(calls.map(call => call.name), ['one.png', 'two.png', 'two.png', 'three.png']);
+  assert.equal(calls[1].key, calls[2].key);
+});
+
 function saveEnv() {
   const env = {
     editId: null, initialStockRef: { current: null }, stock: '0', productType: 'VARIABLE', createdProductIdRef: { current: null },

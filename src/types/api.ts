@@ -54,6 +54,8 @@ export interface BackendProductVariant {
   weight_grams?: number | null;
   regular_price?: number | string | null;
   sale_price?: number | string | null;
+  selling_price?: number | string | null;
+  cost_price?: number | string | null;
   effective_price?: number | string | null;
   stock_quantity: number;
   is_active: boolean;
@@ -130,6 +132,8 @@ export interface BackendProduct extends ProductSpecificationsFields {
   sku?: string | null;
   regular_price?: number | string | null;
   sale_price?: number | string | null;
+  selling_price?: number | string | null;
+  cost_price?: number | string | null;
   mrp?: number | string | null;
   offer_price?: number | string | null;
   offer_percent?: number | string | null;

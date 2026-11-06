@@ -553,7 +553,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
 
   // Stable Idempotency-Key caches for timeout retries with identical payload
   const createIdempotencyRef = useRef<{ payloadJson: string; key: string } | null>(null);
-  const uploadImagesIdempotencyRef = useRef<{ filesSignature: string; key: string } | null>(null);
+  const uploadImagesIdempotencyRef = useRef<Map<string, string>>(new Map());
 
   /* ------------------------- Modal & Banner State ------------------------- */
   const [previewOpen, setPreviewOpen] = useState<boolean>(false);
@@ -1658,50 +1658,41 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
       }
 
       // STEP 2: Upload any pending local image files separately
-      const pendingFiles = images
-        .filter((img) => Boolean(img.file) && !img.backendImageId)
-        .map((img) => img.file as File);
+      const pendingImages = images.filter((img) => Boolean(img.file) && !img.backendImageId);
 
-      if (pendingFiles.length > 0 && activeProductId) {
-        const filesSignature = pendingFiles
-          .map((f) => `${f.name}:${f.size}:${f.lastModified}`)
-          .join('|');
-
-        if (
-          !uploadImagesIdempotencyRef.current ||
-          uploadImagesIdempotencyRef.current.filesSignature !== filesSignature
-        ) {
-          uploadImagesIdempotencyRef.current = {
-            filesSignature,
-            key: generateIdempotencyKey(`img-upload-${activeProductId}`),
-          };
-        }
-
-        const uploadedRecords = await uploadAdminProductImages(activeProductId, pendingFiles, {
-          idempotencyKey: uploadImagesIdempotencyRef.current.key,
-        });
-
-        // Refresh image list from server so local files are marked as persisted
-        try {
-          const serverImages =
-            uploadedRecords.length > 0
-              ? uploadedRecords
-              : await getAdminProductImages(activeProductId);
-          if (serverImages.length > 0) {
-            setImages(
-              serverImages.map((rec, idx) => ({
-                key: `server-${rec.id}`,
-                src: rec.image_url,
-                name: `Image ${idx + 1}`,
-                size: 0,
-                backendImageId: String(rec.id),
-                isPrimary: Boolean(rec.is_primary) || idx === 0,
-              }))
-            );
+      if (pendingImages.length > 0 && activeProductId) {
+        for (const pendingImage of pendingImages) {
+          const file = pendingImage.file as File;
+          let idempotencyKey = uploadImagesIdempotencyRef.current.get(pendingImage.key);
+          if (!idempotencyKey) {
+            idempotencyKey = generateIdempotencyKey(`img-upload-${activeProductId}`);
+            uploadImagesIdempotencyRef.current.set(pendingImage.key, idempotencyKey);
           }
-        } catch {
-          // Non-fatal if gallery refresh fails after upload succeeds
+
+          const [uploaded] = await uploadAdminProductImages(activeProductId, [file], {
+            idempotencyKey,
+          });
+
+          // Remove only this file from the in-memory pending queue. If a later
+          // upload fails, this completed image will not be sent again on retry.
+          setImages((current) =>
+            current.map((image) =>
+              image.key === pendingImage.key
+                ? {
+                    ...image,
+                    src: uploaded.image_url,
+                    file: undefined,
+                    backendImageId: String(uploaded.id),
+                    isPrimary: Boolean(uploaded.is_primary) || image.isPrimary,
+                  }
+                : image
+            )
+          );
+          uploadImagesIdempotencyRef.current.delete(pendingImage.key);
         }
+
+        // Clear any earlier image-specific banner only after the full queue succeeds.
+        setError('');
       }
 
       setPreviewOpen(false);
