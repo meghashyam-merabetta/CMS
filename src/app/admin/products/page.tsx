@@ -841,7 +841,7 @@ export default function ProductManagementPage() {
   });
 
   return (
-    <div className="rounded-2xl border border-[#DDE3EA] bg-white p-6 shadow-[0_2px_5px_rgba(15,23,42,0.05)]">
+    <div className="rounded-2xl border border-[#DDE3EA] bg-white p-3.5 sm:p-6 shadow-[0_2px_5px_rgba(15,23,42,0.05)]">
       {/* Toast Notification */}
       {toastMessage && (
         <div
@@ -875,12 +875,12 @@ export default function ProductManagementPage() {
       )}
 
       {/* Top Header */}
-      <div className="flex flex-wrap items-center justify-between gap-4">
-        <div>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0">
           <div className="flex items-center gap-2">
             <h2 className="text-[16px] font-semibold text-black">Product Management</h2>
             {isLive && (
-              <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-700 border border-emerald-200">
+              <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-700 border border-emerald-200 shrink-0">
                 <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
                 Live API
               </span>
@@ -891,13 +891,13 @@ export default function ProductManagementPage() {
           </p>
         </div>
 
-        <div className="flex flex-wrap items-center gap-3">
+        <div className="grid grid-cols-2 gap-2 w-full sm:flex sm:w-auto sm:items-center sm:gap-3">
           <button
             type="button"
             onClick={() => loadProducts(true)}
             disabled={isLoading}
             title="Reload from API"
-            className="inline-flex h-11 items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 text-[13px] font-semibold text-slate-700 hover:bg-slate-50 transition cursor-pointer disabled:opacity-50"
+            className="inline-flex h-11 w-full sm:w-auto items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white px-3 text-[13px] font-semibold text-slate-700 hover:bg-slate-50 transition cursor-pointer disabled:opacity-50"
           >
             <RefreshCw size={14} className={isLoading ? 'animate-spin' : ''} />
             <span>Refresh</span>
@@ -905,7 +905,7 @@ export default function ProductManagementPage() {
 
           <Link
             href="/admin/products/add"
-            className="inline-flex h-11 items-center gap-2 rounded-lg bg-[#F47C35] px-5 text-[13px] font-semibold text-white shadow-xs transition hover:bg-[#E96F29]"
+            className="inline-flex h-11 w-full sm:w-auto items-center justify-center gap-2 rounded-lg bg-[#F47C35] px-4 sm:px-5 text-[13px] font-semibold text-white shadow-xs transition hover:bg-[#E96F29]"
           >
             <Plus size={16} />
             <span>Add Product</span>
@@ -914,7 +914,7 @@ export default function ProductManagementPage() {
       </div>
 
       {/* Search & Filters */}
-      <div className="mt-5 flex flex-wrap items-center justify-end gap-3">
+      <div className="mt-5 flex flex-wrap items-center justify-start sm:justify-end gap-2.5 sm:gap-3">
         <label className="text-xs text-gray-600">Sort by
           <select aria-label="Sort products by" value={sortBy} onChange={(event) => { setSortBy(event.target.value as typeof sortBy); setCurrentPage(0); }} className="ml-2 h-11 rounded-lg border border-gray-300 bg-white px-3 text-sm">
             <option value="product_id">Product ID</option><option value="product_name">Product Name</option><option value="product_code">Product Code</option>

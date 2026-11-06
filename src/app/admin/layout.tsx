@@ -44,7 +44,7 @@ export default function AdminLayout({
 
       {/* Main Content Area */}
       <main
-        className={`overflow-x-hidden transition-[margin] duration-300 min-h-screen px-3 sm:px-6 pt-[82px] pb-8 ml-0 ${
+        className={`overflow-x-hidden transition-[margin] duration-300 min-h-screen px-2.5 sm:px-6 pt-[78px] sm:pt-[82px] pb-8 ml-0 ${
           collapsed ? 'lg:ml-[86px]' : 'lg:ml-[278px]'
         }`}
       >

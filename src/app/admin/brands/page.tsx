@@ -214,21 +214,21 @@ export default function BrandsPage() {
         </div>
       )}
 
-      <div className="rounded-2xl border border-[#DDE3EA] bg-white p-6 shadow-[0_2px_5px_rgba(15,23,42,0.05)]">
-        <div className="flex flex-wrap items-center justify-between gap-4">
-          <div>
+      <div className="rounded-2xl border border-[#DDE3EA] bg-white p-3.5 sm:p-6 shadow-[0_2px_5px_rgba(15,23,42,0.05)]">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="min-w-0">
             <h2 className="text-[16px] font-semibold text-black">Brand Management</h2>
             <p className="mt-1 text-[12px] font-normal text-[#626262]">
               Manage verified medical supply manufacturers and partner brand profiles.
             </p>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="grid grid-cols-2 gap-2 w-full sm:flex sm:w-auto sm:items-center sm:gap-3">
             <button
               type="button"
               onClick={loadBrands}
               disabled={isLoading}
-              className="inline-flex h-11 items-center gap-2 rounded-lg border border-slate-300 bg-white px-3.5 text-[13px] font-semibold text-slate-700 hover:bg-slate-50 transition cursor-pointer disabled:opacity-50"
+              className="inline-flex h-11 w-full sm:w-auto items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white px-3.5 text-[13px] font-semibold text-slate-700 hover:bg-slate-50 transition cursor-pointer disabled:opacity-50"
             >
               <RefreshCw size={14} className={isLoading ? 'animate-spin' : ''} />
               <span>Refresh</span>
@@ -236,7 +236,7 @@ export default function BrandsPage() {
             <button
               type="button"
               onClick={openAddBrand}
-              className="inline-flex h-11 items-center gap-2 rounded-lg bg-[#F47C35] px-5 text-[13px] font-semibold text-white shadow-xs transition hover:bg-[#E96F29] cursor-pointer"
+              className="inline-flex h-11 w-full sm:w-auto items-center justify-center gap-2 rounded-lg bg-[#F47C35] px-4 sm:px-5 text-[13px] font-semibold text-white shadow-xs transition hover:bg-[#E96F29] cursor-pointer"
             >
               <Plus size={16} />
               <span>Add New Brand</span>

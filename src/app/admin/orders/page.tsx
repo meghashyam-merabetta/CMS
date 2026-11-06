@@ -289,7 +289,7 @@ export default function OrderManagementPage() {
   };
 
   return (
-    <div className="rounded-2xl border border-[#DDE3EA] bg-white p-6 shadow-[0_2px_5px_rgba(15,23,42,0.05)]">
+    <div className="rounded-2xl border border-[#DDE3EA] bg-white p-3.5 sm:p-6 shadow-[0_2px_5px_rgba(15,23,42,0.05)]">
       {/* Toast Notification */}
       {toastMessage && (
         <div

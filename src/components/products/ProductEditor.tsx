@@ -143,9 +143,9 @@ const TEXTAREA_CLASS =
   'w-full rounded-xl border border-[#DCE0E8] bg-white p-3.5 text-[13.5px] text-[#1E293B] outline-none transition-all placeholder:text-[#94A3B8] focus:border-[#F47C35] focus:ring-3 focus:ring-[#F47C35]/12';
 
 const CARD_CLASS =
-  'rounded-2xl border border-[#E8ECF2] bg-white p-5 sm:p-6 shadow-[0_1px_3px_rgba(15,23,42,0.03)]';
+  'rounded-2xl border border-[#E8ECF2] bg-white p-3.5 sm:p-6 shadow-[0_1px_3px_rgba(15,23,42,0.03)]';
 
-const SUBCARD_CLASS = 'rounded-xl border border-[#E8ECF2] bg-[#F8FAFC] p-4 sm:p-5';
+const SUBCARD_CLASS = 'rounded-xl border border-[#E8ECF2] bg-[#F8FAFC] p-3 sm:p-5';
 
 interface GalleryImage {
   key: string;
@@ -256,16 +256,16 @@ function SectionHeader({
 }) {
   return (
     <div className="mb-5 flex flex-col gap-3 border-b border-[#F1F5F9] pb-4 sm:flex-row sm:items-center sm:justify-between">
-      <div className="flex items-start gap-3">
+      <div className="flex items-start gap-3 min-w-0">
         <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#FFF4ED] text-[#F47C35]">
           <Icon size={20} />
         </div>
-        <div>
-          <h3 className="text-[16px] font-bold text-[#0F172A]">{title}</h3>
-          <p className="mt-0.5 text-[12.5px] text-[#64748B]">{subtitle}</p>
+        <div className="min-w-0 flex-1">
+          <h3 className="text-[16px] font-bold text-[#0F172A] break-words">{title}</h3>
+          <p className="mt-0.5 text-[12.5px] text-[#64748B] break-words">{subtitle}</p>
         </div>
       </div>
-      {action && <div className="shrink-0">{action}</div>}
+      {action && <div className="shrink-0 max-w-full">{action}</div>}
     </div>
   );
 }
@@ -379,11 +379,11 @@ function StringArrayBuilder({
               key={`${item}-${idx}`}
               className="group flex items-center justify-between gap-3 rounded-xl border border-[#E2E8F0] bg-white px-3.5 py-2.5 text-[13px] text-[#1E293B] transition-colors hover:border-[#CBD5E1]"
             >
-              <div className="flex items-center gap-2.5 min-w-0">
+              <div className="flex items-center gap-2.5 min-w-0 flex-1">
                 <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[#F47C35]/15 text-[11px] font-bold text-[#F47C35]">
                   {idx + 1}
                 </span>
-                <span className="break-words">{item}</span>
+                <span className="break-words min-w-0 flex-1">{item}</span>
               </div>
               <button
                 type="button"
@@ -518,9 +518,10 @@ function KeyValueMapBuilder({
               onClick={() => removeRow(pair.id)}
               title="Remove row"
               aria-label={`Remove ${title} row ${idx + 1}`}
-              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-[#DCE0E8] bg-white text-[#64748B] transition-colors hover:border-red-200 hover:bg-red-50 hover:text-[#E33D25] cursor-pointer"
+              className="flex h-10 w-full sm:h-11 sm:w-11 shrink-0 items-center justify-center gap-1.5 rounded-xl border border-[#DCE0E8] bg-white text-[12px] font-medium text-[#64748B] transition-colors hover:border-red-200 hover:bg-red-50 hover:text-[#E33D25] cursor-pointer"
             >
               <Trash2 size={15} />
+              <span className="sm:hidden">Remove Row</span>
             </button>
           </div>
         ))}
@@ -1903,7 +1904,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
 
   return (
     <>
-      <section className="min-h-[calc(100vh-90px)] rounded-2xl bg-[#F8FAFC] px-4 sm:px-6 pt-5 pb-12 text-[#1E293B]">
+      <section className="min-h-[calc(100vh-90px)] rounded-2xl bg-[#F8FAFC] px-2.5 sm:px-6 pt-3.5 sm:pt-5 pb-12 text-[#1E293B]">
         <form onSubmit={handleOpenPreview} noValidate className="space-y-6">
           <fieldset
             disabled={isLoadingProduct || saving || submitting || Boolean(imageActionBusyKey)}
@@ -1912,52 +1913,52 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
             {/* ============================================================== */}
             {/* TOP HEADER BAR                                                 */}
             {/* ============================================================== */}
-            <div className="rounded-2xl border border-[#E2E8F0] bg-white p-4 sm:p-5 shadow-2xs">
+            <div className="rounded-2xl border border-[#E2E8F0] bg-white p-3.5 sm:p-5 shadow-2xs">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-center gap-2.5">
-                    <h2 className="text-[20px] sm:text-[22px] font-bold text-[#0F172A] tracking-tight">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h2 className="text-[18px] sm:text-[22px] font-bold text-[#0F172A] tracking-tight">
                       {isEditing ? 'Edit Product' : 'Add New Product'}
                     </h2>
                     {savedProductId && (
-                      <span className="rounded-md border border-orange-200 bg-orange-50 px-2.5 py-0.5 font-mono text-[11px] font-semibold text-[#F47C35]">
+                      <span className="rounded-md border border-orange-200 bg-orange-50 px-2 py-0.5 font-mono text-[11px] font-semibold text-[#F47C35]">
                         ID: #{savedProductId}
                       </span>
                     )}
                     {(isLoadingProduct || loadingDropdowns) && (
                       <span className="inline-flex items-center gap-1.5 text-[12px] text-[#64748B]">
-                        <Loader2 size={14} className="animate-spin text-[#F47C35]" />
+                        <Loader2 size={13} className="animate-spin text-[#F47C35]" />
                         <span>Loading...</span>
                       </span>
                     )}
                   </div>
-                  <p className="mt-0.5 text-[13px] text-[#64748B]">
+                  <p className="mt-0.5 text-[12px] sm:text-[13px] text-[#64748B]">
                     Fill in the product details, pricing, inventory, specifications, packaging, and SEO information below.
                   </p>
                 </div>
 
-                <div className="flex shrink-0 items-center gap-2.5">
+                <div className="grid grid-cols-2 gap-2 w-full sm:flex sm:w-auto sm:shrink-0 sm:items-center sm:gap-2.5">
                   <button
                     type="button"
                     disabled={saving || submitting || isLoadingProduct}
                     onClick={() => void persistProductToBackend('draft')}
-                    className="inline-flex h-10 items-center justify-center gap-1.5 rounded-xl border border-[#DCE0E8] bg-white px-4 text-[13px] font-semibold text-[#334155] shadow-2xs transition-all hover:border-[#CBD5E1] hover:bg-[#F8FAFC] disabled:opacity-60 cursor-pointer"
+                    className="inline-flex h-10 w-full sm:w-auto items-center justify-center gap-1.5 rounded-xl border border-[#DCE0E8] bg-white px-2.5 sm:px-4 text-[12px] sm:text-[13px] font-semibold text-[#334155] shadow-2xs transition-all hover:border-[#CBD5E1] hover:bg-[#F8FAFC] disabled:opacity-60 cursor-pointer"
                   >
-                    {saving && <Loader2 size={14} className="animate-spin text-[#64748B]" />}
-                    <span>{saving ? 'Saving...' : 'Save as Draft'}</span>
+                    {saving && <Loader2 size={13} className="animate-spin text-[#64748B]" />}
+                    <span className="truncate">{saving ? 'Saving...' : 'Save Draft'}</span>
                   </button>
 
                   <button
                     type="submit"
                     disabled={saving || submitting || isLoadingProduct}
-                    className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-[#F47C35] px-5 text-[13px] font-semibold text-white shadow-xs transition-all hover:bg-[#E06924] active:scale-[0.99] disabled:opacity-60 cursor-pointer"
+                    className="inline-flex h-10 w-full sm:w-auto items-center justify-center gap-1.5 sm:gap-2 rounded-xl bg-[#F47C35] px-3 sm:px-5 text-[12px] sm:text-[13px] font-semibold text-white shadow-xs transition-all hover:bg-[#E06924] active:scale-[0.99] disabled:opacity-60 cursor-pointer"
                   >
                     {submitting ? (
-                      <Loader2 size={15} className="animate-spin" />
+                      <Loader2 size={14} className="animate-spin" />
                     ) : (
-                      <CheckCircle2 size={15} />
+                      <CheckCircle2 size={14} />
                     )}
-                    <span>
+                    <span className="truncate">
                       {submitting
                         ? 'Saving...'
                         : isEditing
@@ -2554,7 +2555,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                     Product Pricing
                   </h4>
 
-                  <div className="grid items-start gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                  <div className="grid items-start gap-3 sm:gap-4 grid-cols-2 sm:grid-cols-2 lg:grid-cols-4">
                     <div>
                       <FieldLabel htmlFor="mrp" required>MRP</FieldLabel>
                       <div className="relative">
@@ -2640,7 +2641,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                   </div>
 
                   {/* Live Margin & Discount Summary Bar */}
-                  <div className="mt-4 flex flex-wrap items-center gap-3 rounded-xl border border-[#E2E8F0] bg-white px-4 py-2.5 text-[12px]">
+                  <div className="mt-4 flex flex-wrap items-center gap-2 sm:gap-3 rounded-xl border border-[#E2E8F0] bg-white p-2.5 sm:px-4 sm:py-2.5 text-[11.5px] sm:text-[12px]">
                     <div className="flex items-center gap-1.5">
                       <span className="text-[#64748B]">Discount:</span>
                       {pricingMetrics.sellingExceedsMrp ? (
@@ -2656,7 +2657,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                       )}
                     </div>
 
-                    <span className="text-[#CBD5E1]">|</span>
+                    <span className="hidden sm:inline text-[#CBD5E1]">|</span>
 
                     <div className="flex items-center gap-1.5">
                       <span className="text-[#64748B]">Profit Margin:</span>
@@ -2675,7 +2676,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
 
                     {pricingMetrics.taxAmount !== null && (
                       <>
-                        <span className="text-[#CBD5E1]">|</span>
+                        <span className="hidden sm:inline text-[#CBD5E1]">|</span>
                         <div className="flex items-center gap-1.5">
                           <span className="text-[#64748B]">Included Tax ({taxRate || 0}%):</span>
                           <span className="font-semibold text-[#334155]">
@@ -2898,8 +2899,8 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
 
                   {/* Stock Table if live inventory rows exist */}
                   {inventoryRows.length > 0 && (
-                    <div className="mt-4 overflow-hidden rounded-lg border border-[#E2E8F0]">
-                      <table className="w-full text-left text-[12px]">
+                    <div className="mt-4 overflow-x-auto rounded-lg border border-[#E2E8F0]">
+                      <table className="w-full min-w-[420px] text-left text-[12px]">
                         <thead className="bg-[#F8FAFC] text-[#475569] font-medium border-b border-[#E2E8F0]">
                           <tr>
                             <th className="px-3 py-2">Warehouse</th>
@@ -3031,7 +3032,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                     <div className="space-y-4">
                       <div>
                         <FieldLabel htmlFor="product_weight">Product Weight</FieldLabel>
-                        <div className="flex max-w-xs">
+                        <div className="flex w-full sm:max-w-xs">
                           <input
                             id="product_weight"
                             type="number"
@@ -3045,14 +3046,14 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                             placeholder="e.g., 250"
                             className={getFieldClass(
                               'product_weight',
-                              `${INPUT_CLASS} rounded-r-none border-r-0`
+                              `${INPUT_CLASS} min-w-0 flex-1 rounded-r-none border-r-0`
                             )}
                           />
                           <select
                             aria-label="Weight Unit"
                             value={weightUnit}
                             onChange={(e) => setWeightUnit(e.target.value as NewWeightUnit)}
-                            className="h-11 rounded-r-xl border border-[#DCE0E8] bg-[#F1F5F9] px-4 text-[13px] font-semibold text-[#0D2B53] outline-none focus:border-[#F47C35]"
+                            className="h-11 shrink-0 rounded-r-xl border border-[#DCE0E8] bg-[#F1F5F9] px-3.5 text-[13px] font-semibold text-[#0D2B53] outline-none focus:border-[#F47C35]"
                           >
                             <option value="g">g</option>
                             <option value="kg">kg</option>
@@ -3124,7 +3125,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                             aria-label="Dimension Unit"
                             value={dimensionUnit}
                             onChange={(e) => setDimensionUnit(e.target.value as NewDimensionUnit)}
-                            className="h-11 rounded-xl border border-[#DCE0E8] bg-[#F1F5F9] px-4 text-[13px] font-semibold text-[#0D2B53] outline-none focus:border-[#F47C35]"
+                            className="h-11 w-full rounded-xl border border-[#DCE0E8] bg-[#F1F5F9] px-3.5 text-[13px] font-semibold text-[#0D2B53] outline-none focus:border-[#F47C35]"
                           >
                             <option value="cm">cm</option>
                             <option value="mm">mm</option>
@@ -3187,7 +3188,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                     </button>
                   </div>
 
-                  <div className="grid gap-3.5 sm:grid-cols-2 lg:grid-cols-4">
+                  <div className="grid gap-3 sm:gap-3.5 grid-cols-2 sm:grid-cols-2 lg:grid-cols-4">
                     <div>
                       <FieldLabel htmlFor="package_weight" hint={`in ${weightUnit}`}>
                         Package Weight
@@ -3556,27 +3557,27 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                     </div>
                   </div>
 
-                  <div className="mt-5 flex flex-wrap items-center justify-end gap-2.5 pt-3">
+                  <div className="mt-5 grid grid-cols-2 gap-2 w-full pt-3 sm:flex sm:w-auto sm:items-center sm:justify-end sm:gap-2.5">
                     <button
                       type="button"
                       disabled={saving || submitting || isLoadingProduct}
                       onClick={() => void persistProductToBackend('draft')}
-                      className="inline-flex h-10 items-center justify-center gap-1.5 rounded-xl border border-[#DCE0E8] bg-white px-4 text-[13px] font-semibold text-[#334155] shadow-2xs transition-all hover:border-[#CBD5E1] hover:bg-[#F8FAFC] disabled:opacity-60 cursor-pointer"
+                      className="inline-flex h-10 w-full sm:w-auto items-center justify-center gap-1.5 rounded-xl border border-[#DCE0E8] bg-white px-2.5 sm:px-4 text-[12px] sm:text-[13px] font-semibold text-[#334155] shadow-2xs transition-all hover:border-[#CBD5E1] hover:bg-[#F8FAFC] disabled:opacity-60 cursor-pointer"
                     >
-                      {saving && <Loader2 size={14} className="animate-spin text-[#64748B]" />}
-                      <span>{saving ? 'Saving...' : 'Save as Draft'}</span>
+                      {saving && <Loader2 size={13} className="animate-spin text-[#64748B]" />}
+                      <span className="truncate">{saving ? 'Saving...' : 'Save Draft'}</span>
                     </button>
                     <button
                       type="submit"
                       disabled={saving || submitting || isLoadingProduct}
-                      className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-[#F47C35] px-5 text-[13px] font-semibold text-white shadow-xs transition-all hover:bg-[#E06924] active:scale-[0.99] disabled:opacity-60 cursor-pointer"
+                      className="inline-flex h-10 w-full sm:w-auto items-center justify-center gap-1.5 sm:gap-2 rounded-xl bg-[#F47C35] px-3 sm:px-5 text-[12px] sm:text-[13px] font-semibold text-white shadow-xs transition-all hover:bg-[#E06924] active:scale-[0.99] disabled:opacity-60 cursor-pointer"
                     >
                       {submitting ? (
-                        <Loader2 size={15} className="animate-spin" />
+                        <Loader2 size={14} className="animate-spin" />
                       ) : (
-                        <CheckCircle2 size={15} />
+                        <CheckCircle2 size={14} />
                       )}
-                      <span>
+                      <span className="truncate">
                         {submitting
                           ? 'Saving...'
                           : isEditing
@@ -3606,15 +3607,15 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
           }}
         >
           <div className="flex max-h-[90vh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
-            <header className="flex flex-wrap items-center justify-between gap-3 border-b border-[#E2E8F0] px-6 py-4">
+            <header className="flex flex-wrap items-center justify-between gap-3 border-b border-[#E2E8F0] px-4 sm:px-6 py-3.5 sm:py-4">
               <div>
                 <h2
                   id="schema-preview-modal-title"
-                  className="text-[18px] font-bold text-[#0F172A]"
+                  className="text-[17px] sm:text-[18px] font-bold text-[#0F172A]"
                 >
                   Product Summary Preview
                 </h2>
-                <p className="text-[12.5px] text-[#64748B]">
+                <p className="text-[12px] sm:text-[12.5px] text-[#64748B]">
                   Review product details before saving to catalog.
                 </p>
               </div>
@@ -3631,7 +3632,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
               )}
             </header>
 
-            <div className="flex-1 overflow-y-auto p-6">
+            <div className="flex-1 overflow-y-auto p-4 sm:p-6">
               <div className="space-y-6 text-[13px]">
                 <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
                   <div className="rounded-xl border border-[#E2E8F0] bg-[#F8FAFC] p-3.5">
@@ -3732,27 +3733,27 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
               </div>
             </div>
 
-            <footer className="flex items-center justify-end gap-3 border-t border-[#E2E8F0] bg-[#F8FAFC] px-6 py-4">
+            <footer className="grid grid-cols-2 gap-2 border-t border-[#E2E8F0] bg-[#F8FAFC] px-4 sm:px-6 py-3.5 sm:py-4 sm:flex sm:items-center sm:justify-end sm:gap-3">
               <button
                 type="button"
                 disabled={submitting}
                 onClick={() => setPreviewOpen(false)}
-                className="h-10 rounded-xl border border-[#DCE0E8] bg-white px-4 text-[13px] font-semibold text-[#334155] hover:bg-[#F1F5F9] disabled:opacity-60 cursor-pointer"
+                className="h-10 w-full sm:w-auto rounded-xl border border-[#DCE0E8] bg-white px-3 sm:px-4 text-[12px] sm:text-[13px] font-semibold text-[#334155] hover:bg-[#F1F5F9] disabled:opacity-60 cursor-pointer"
               >
-                Back to Editing
+                Back
               </button>
               <button
                 type="button"
                 disabled={submitting}
                 onClick={() => void persistProductToBackend()}
-                className="inline-flex h-10 items-center gap-2 rounded-xl bg-[#F47C35] px-6 text-[13px] font-semibold text-white shadow-xs hover:bg-[#E06924] disabled:opacity-60 cursor-pointer"
+                className="inline-flex h-10 w-full sm:w-auto items-center justify-center gap-1.5 sm:gap-2 rounded-xl bg-[#F47C35] px-3 sm:px-6 text-[12px] sm:text-[13px] font-semibold text-white shadow-xs hover:bg-[#E06924] disabled:opacity-60 cursor-pointer"
               >
                 {submitting ? (
-                  <Loader2 size={16} className="animate-spin" />
+                  <Loader2 size={15} className="animate-spin" />
                 ) : (
-                  <CheckCircle2 size={16} />
+                  <CheckCircle2 size={15} />
                 )}
-                <span>
+                <span className="truncate">
                   {submitting
                     ? 'Saving...'
                     : isEditing

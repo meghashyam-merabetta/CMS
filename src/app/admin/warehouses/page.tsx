@@ -182,21 +182,21 @@ export default function WarehousesPage() {
         </div>
       )}
 
-      <div className="rounded-2xl border border-[#DDE3EA] bg-white p-6 shadow-[0_2px_5px_rgba(15,23,42,0.05)]">
+      <div className="rounded-2xl border border-[#DDE3EA] bg-white p-3.5 sm:p-6 shadow-[0_2px_5px_rgba(15,23,42,0.05)]">
         {/* Header */}
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div className="min-w-0">
             <h2 className="text-[19px] font-semibold text-black">Warehouses</h2>
             <p className="mt-1 text-[13px] text-[#626262]">
               Manage delivery-provider pickup origins and carrier readiness.
             </p>
           </div>
 
-          <div className="flex gap-2">
+          <div className="grid grid-cols-2 gap-2 w-full sm:flex sm:w-auto sm:items-center sm:gap-2">
             <button
               type="button"
               onClick={handleRefresh}
-              className="flex h-11 items-center gap-2 rounded-xl border border-[#D7DEE8] bg-white px-4 text-[13px] font-medium text-slate-700 hover:bg-slate-50 transition cursor-pointer"
+              className="flex h-11 w-full sm:w-auto items-center justify-center gap-2 rounded-xl border border-[#D7DEE8] bg-white px-3 sm:px-4 text-[13px] font-medium text-slate-700 hover:bg-slate-50 transition cursor-pointer"
             >
               <RefreshCw size={16} className={isRefreshing ? 'animate-spin text-[#F47C35]' : ''} />
               <span>Refresh</span>
@@ -205,7 +205,7 @@ export default function WarehousesPage() {
             <button
               type="button"
               onClick={() => setIsAddModalOpen(true)}
-              className="flex h-11 items-center gap-2 rounded-xl bg-[#F47C35] px-5 text-[13px] font-semibold text-white shadow-xs hover:bg-[#E96F29] transition cursor-pointer"
+              className="flex h-11 w-full sm:w-auto items-center justify-center gap-2 rounded-xl bg-[#F47C35] px-4 sm:px-5 text-[13px] font-semibold text-white shadow-xs hover:bg-[#E96F29] transition cursor-pointer"
             >
               <Plus size={17} />
               <span>Create warehouse</span>
