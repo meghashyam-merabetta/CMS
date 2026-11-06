@@ -1596,14 +1596,15 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
         }
       }
 
-      // STEP 2: Upload any pending local image files separately
-      const pendingFiles = images
-        .filter((img) => Boolean(img.file) && !img.backendImageId)
-        .map((img) => img.file as File);
+      // STEP 2: Upload any pending local image files one-by-one
+      const pendingItems = images.filter((img) => Boolean(img.file) && !img.backendImageId);
 
-      if (pendingFiles.length > 0 && activeProductId) {
-        const filesSignature = pendingFiles
-          .map((f) => `${f.name}:${f.size}:${f.lastModified}`)
+      if (pendingItems.length > 0 && activeProductId) {
+        const filesSignature = pendingItems
+          .map((item) => {
+            const f = item.file as File;
+            return `${f.name}:${f.size}:${f.lastModified}`;
+          })
           .join('|');
 
         if (
@@ -1616,16 +1617,39 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
           };
         }
 
-        const uploadedRecords = await uploadAdminProductImages(activeProductId, pendingFiles, {
-          idempotencyKey: uploadImagesIdempotencyRef.current.key,
-        });
+        const baseKey = uploadImagesIdempotencyRef.current.key;
 
-        // Refresh image list from server so local files are marked as persisted
+        for (let i = 0; i < pendingItems.length; i++) {
+          const item = pendingItems[i];
+          const file = item.file as File;
+          const perFileKey = `${baseKey}-${i}`.slice(0, 128);
+
+          const uploaded = await uploadAdminProductImages(activeProductId, [file], {
+            idempotencyKey: perFileKey,
+          });
+
+          const createdRec = uploaded[uploaded.length - 1];
+          const newBackendImgId = createdRec?.id ? String(createdRec.id) : `uploaded-${Date.now()}-${i}`;
+          const newImgUrl = createdRec?.image_url || item.src;
+
+          // Immediately mark this image as uploaded in state so retries skip it
+          setImages((prev) =>
+            prev.map((img) =>
+              img.key === item.key
+                ? {
+                    ...img,
+                    src: newImgUrl,
+                    backendImageId: newBackendImgId,
+                    file: undefined,
+                  }
+                : img
+            )
+          );
+        }
+
+        // Refresh image list from server so all server IDs and primary flags are in sync
         try {
-          const serverImages =
-            uploadedRecords.length > 0
-              ? uploadedRecords
-              : await getAdminProductImages(activeProductId);
+          const serverImages = await getAdminProductImages(activeProductId);
           if (serverImages.length > 0) {
             setImages(
               serverImages.map((rec, idx) => ({

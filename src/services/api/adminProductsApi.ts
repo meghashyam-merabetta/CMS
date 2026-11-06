@@ -828,24 +828,37 @@ export async function uploadAdminProductImages(
     throw new Error('Product images must be no more than 10 MiB per request.');
   }
 
-  const formData = new FormData();
-  for (const file of images) {
-    formData.append(PRODUCT_IMAGE_FIELD_NAME, file);
-  }
-
-  const idempotencyKey =
+  const baseKey =
     options?.idempotencyKey || generateIdempotencyKey(`img-upload-${productId}`);
 
-  const res = await apiFetch<any>(`${ADMIN_PRODUCTS_ENDPOINT}/${productId}/images`, {
-    method: 'POST',
-    headers: {
-      'Idempotency-Key': idempotencyKey,
-    },
-    body: formData,
-  });
+  const allUploaded: BackendProductImageRecord[] = [];
 
-  const data = res?.data ?? res;
-  return Array.isArray(data) ? data : [];
+  // Upload images one-by-one to prevent reverse-proxy (Nginx) 413 body size rejections
+  for (let i = 0; i < images.length; i++) {
+    const file = images[i];
+    const formData = new FormData();
+    formData.append(PRODUCT_IMAGE_FIELD_NAME, file);
+
+    const perFileKey =
+      images.length === 1 ? baseKey : `${baseKey}-${i}`.slice(0, 128);
+
+    const res = await apiFetch<any>(`${ADMIN_PRODUCTS_ENDPOINT}/${productId}/images`, {
+      method: 'POST',
+      headers: {
+        'Idempotency-Key': perFileKey,
+      },
+      body: formData,
+    });
+
+    const data = res?.data ?? res;
+    if (Array.isArray(data)) {
+      allUploaded.push(...data);
+    } else if (data && typeof data === 'object' && (data.id || data.image_url)) {
+      allUploaded.push(data);
+    }
+  }
+
+  return allUploaded;
 }
 
 export async function replaceAdminProductImage(

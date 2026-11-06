@@ -93,7 +93,9 @@ export async function apiFetch<T>(
 
   if (!res.ok) {
     let errorMessage = res.status === 413
-      ? 'The server rejected this request because it is too large. Shorten long fields and try again.'
+      ? isFormData
+        ? 'The server rejected the image upload because the file is too large (HTTP 413). Please use a smaller image file.'
+        : 'The server rejected this request because it is too large. Shorten long fields and try again.'
       : 'Request failed';
     try {
       const errorData = await res.json();
