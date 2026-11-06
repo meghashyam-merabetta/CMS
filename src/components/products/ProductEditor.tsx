@@ -1627,25 +1627,24 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
         // Confirm classification/status using a fresh read. Some backend versions
         // return assignments only in `categories`, while others expose direct IDs.
         const refreshedProduct = await getAdminProductById(activeProductId);
-        const refreshedAssignments = Array.isArray(refreshedProduct.categories)
-          ? refreshedProduct.categories
-          : [];
-        const savedCategoryIds = new Set(
-          [
-            refreshedProduct.category_id,
-            refreshedProduct.subcategory_id,
-            refreshedProduct.primary_category_id,
-            ...refreshedAssignments.map((item: any) => item?.category_id ?? item?.id),
-          ]
-            .filter((value) => value != null)
-            .map(String)
-        );
-        const expectedClassificationId = subcategoryId || categoryId;
-        if (expectedClassificationId && !savedCategoryIds.has(String(expectedClassificationId))) {
+        const savedRootCategoryId =
+          refreshedProduct.category_id != null ? String(refreshedProduct.category_id) : '';
+        const savedSubcategoryId =
+          refreshedProduct.subcategory_id != null ? String(refreshedProduct.subcategory_id) : '';
+
+        // Verify both fields independently. Checking only whether either selected
+        // ID appeared in the response could report success while the root or leaf
+        // classification was still stale.
+        if (
+          savedRootCategoryId !== categoryId ||
+          savedSubcategoryId !== subcategoryId
+        ) {
           throw new Error(
             'Product details were saved, but the backend did not persist the selected category/subcategory.'
           );
         }
+        setCategoryId(savedRootCategoryId);
+        setSubcategoryId(savedSubcategoryId);
         if (
           effectiveStatus &&
           refreshedProduct.product_status &&
@@ -1762,12 +1761,12 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                   </p>
                 </div>
 
-                <div className="flex flex-wrap items-center gap-2.5">
+                <div className="flex w-full flex-col gap-2.5 sm:w-auto sm:flex-row sm:flex-wrap sm:items-center">
                   <button
                     type="button"
                     disabled={saving || submitting || isLoadingProduct}
                     onClick={() => void persistProductToBackend('draft')}
-                    className="inline-flex h-10 items-center gap-1.5 rounded-xl border border-[#DCE0E8] bg-white px-4 text-[13px] font-semibold text-[#334155] transition-colors hover:bg-[#F8FAFC] disabled:opacity-60 cursor-pointer"
+                    className="inline-flex h-10 w-full items-center justify-center gap-1.5 rounded-xl border border-[#DCE0E8] bg-white px-4 text-[13px] font-semibold text-[#334155] transition-colors hover:bg-[#F8FAFC] disabled:opacity-60 cursor-pointer sm:w-auto"
                   >
                     {saving && <Loader2 size={15} className="animate-spin text-[#64748B]" />}
                     <span>{saving ? 'Saving Draft...' : 'Save as Draft'}</span>
@@ -1776,7 +1775,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                   <button
                     type="submit"
                     disabled={saving || submitting || isLoadingProduct}
-                    className="inline-flex h-10 items-center gap-2 rounded-xl bg-[#F47C35] px-5 text-[13.5px] font-semibold text-white shadow-xs transition-colors hover:bg-[#E06924] disabled:opacity-60 cursor-pointer"
+                    className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-xl bg-[#F47C35] px-5 text-[13.5px] font-semibold text-white shadow-xs transition-colors hover:bg-[#E06924] disabled:opacity-60 cursor-pointer sm:w-auto"
                   >
                     {submitting ? (
                       <Loader2 size={15} className="animate-spin" />
@@ -2219,6 +2218,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                           onChange={(e) => {
                             setCategoryId(e.target.value);
                             setSubcategoryId('');
+                            setError('');
                           }}
                           className={`${INPUT_CLASS} appearance-none pr-10`}
                         >
@@ -2244,7 +2244,10 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                           id="subcategory_id"
                           value={subcategoryId}
                           disabled={!selectedCategory}
-                          onChange={(e) => setSubcategoryId(e.target.value)}
+                          onChange={(e) => {
+                            setSubcategoryId(e.target.value);
+                            setError('');
+                          }}
                           className={`${INPUT_CLASS} appearance-none pr-10`}
                         >
                           <option value="">
@@ -2264,6 +2267,23 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                         />
                       </div>
                     </div>
+
+                    <p
+                      className="break-words rounded-lg bg-[#F8FAFC] px-3 py-2 text-[11.5px] text-[#64748B]"
+                      aria-live="polite"
+                    >
+                      {selectedCategory
+                        ? `Selected: ${selectedCategory.name}${
+                            selectedCategory.subcategories.find((sub) => sub.id === subcategoryId)
+                              ? ` › ${
+                                  selectedCategory.subcategories.find(
+                                    (sub) => sub.id === subcategoryId
+                                  )?.name
+                                }`
+                              : ''
+                          }`
+                        : 'Choose a category. The saved selection will be verified after updating.'}
+                    </p>
 
                     {/* Brand */}
                     <div>
@@ -3171,8 +3191,8 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                 }
               />
 
-              <div className="grid gap-6 lg:grid-cols-[1.3fr_1fr]">
-                <div className="grid gap-4 sm:grid-cols-2">
+              <div className="grid min-w-0 gap-6 xl:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)]">
+                <div className="grid min-w-0 gap-4 sm:grid-cols-2">
                   <div className="sm:col-span-2">
                     <FieldLabel
                       htmlFor="meta_title"
@@ -3235,13 +3255,13 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                 </div>
 
                 {/* Live Google Search Snippet Preview */}
-                <div className="flex flex-col justify-between rounded-2xl border border-[#E2E8F0] bg-[#F8FAFC] p-5">
-                  <div>
+                <div className="flex min-w-0 flex-col justify-between overflow-hidden rounded-2xl border border-[#E2E8F0] bg-[#F8FAFC] p-4 sm:p-5">
+                  <div className="min-w-0">
                     <div className="mb-3 flex items-center gap-2 text-[12px] font-bold uppercase tracking-wider text-[#64748B]">
                       <Search size={14} className="text-[#F47C35]" />
                       <span>Search Engine Preview</span>
                     </div>
-                    <div className="rounded-xl border border-[#E2E8F0] bg-white p-4 shadow-2xs">
+                    <div className="min-w-0 overflow-hidden rounded-xl border border-[#E2E8F0] bg-white p-4 shadow-2xs">
                       <p className="truncate text-[12px] text-[#0F172A]">
                         merabeta.com › products ›{' '}
                         <span className="text-[#64748B]">
@@ -3260,12 +3280,12 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                     </div>
                   </div>
 
-                  <div className="mt-5 flex flex-wrap items-center justify-end gap-2.5 pt-3">
+                  <div className="mt-5 flex flex-col gap-2.5 pt-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-end">
                     <button
                       type="button"
                       disabled={saving || submitting || isLoadingProduct}
                       onClick={() => void persistProductToBackend('draft')}
-                      className="inline-flex h-11 items-center justify-center gap-1.5 rounded-xl border border-[#DCE0E8] bg-white px-5 text-[13.5px] font-semibold text-[#334155] hover:bg-[#F8FAFC] disabled:opacity-60 cursor-pointer"
+                      className="inline-flex h-11 w-full items-center justify-center gap-1.5 rounded-xl border border-[#DCE0E8] bg-white px-5 text-[13.5px] font-semibold text-[#334155] hover:bg-[#F8FAFC] disabled:opacity-60 cursor-pointer sm:w-auto"
                     >
                       {saving && <Loader2 size={15} className="animate-spin" />}
                       <span>{saving ? 'Saving Draft...' : 'Save as Draft'}</span>
@@ -3273,7 +3293,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                     <button
                       type="submit"
                       disabled={saving || submitting || isLoadingProduct}
-                      className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-[#F47C35] px-6 text-[13.5px] font-semibold text-white shadow-xs hover:bg-[#E06924] disabled:opacity-60 cursor-pointer"
+                      className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-[#F47C35] px-6 text-[13.5px] font-semibold text-white shadow-xs hover:bg-[#E06924] disabled:opacity-60 cursor-pointer sm:w-auto"
                     >
                       {submitting ? (
                         <Loader2 size={16} className="animate-spin" />

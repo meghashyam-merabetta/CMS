@@ -31,7 +31,6 @@ import {
   resolvePrimaryProductImage,
   generateProductSlug,
   getAdminProductImages,
-  getAdminProductInventory,
   deleteAdminProductImage,
   setPrimaryProductImage,
   uploadAdminProductImages,
@@ -39,7 +38,7 @@ import {
   validateProductImages,
   BackendProductImageRecord,
 } from '@/services/api/adminProductsApi';
-import { getAdminCategories, getAllAdminCategories } from '@/services/api/adminCategoriesApi';
+import { getAdminCategories, getAdminCategoriesTree } from '@/services/api/adminCategoriesApi';
 import { compareProductRecords } from '@/lib/productCatalog';
 import { collectAllPages } from '@/lib/pagination';
 import { getAllAdminBrands } from '@/services/api/adminBrandsApi';
@@ -166,6 +165,26 @@ function mapBackendProductToRecord(
   };
 }
 
+function flattenCategoryTree(nodes: BackendCategory[]): BackendCategory[] {
+  const flattened: BackendCategory[] = [];
+  const visit = (node: BackendCategory, parentId: string | number | null = null) => {
+    const id = node.category_id ?? node.id;
+    flattened.push({
+      ...node,
+      parent_category_id:
+        node.parent_category_id ?? (node as any).parent_id ?? parentId,
+    });
+    const children = Array.isArray((node as any).subcategories)
+      ? (node as any).subcategories
+      : Array.isArray((node as any).children)
+      ? (node as any).children
+      : [];
+    children.forEach((child: BackendCategory) => visit(child, id ?? null));
+  };
+  nodes.forEach((node) => visit(node));
+  return flattened;
+}
+
 export default function ProductManagementPage() {
   const router = useRouter();
   const [products, setProducts] = useState<ProductRecord[]>([]);
@@ -177,6 +196,7 @@ export default function ProductManagementPage() {
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isLoadingDetails, setIsLoadingDetails] = useState(false);
+  const [lookupsReady, setLookupsReady] = useState(false);
 
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedRootCategory, setSelectedRootCategory] = useState<string>('');
@@ -378,15 +398,16 @@ export default function ProductManagementPage() {
 
     async function loadCatsAndBrands() {
       try {
-        const [res, brandsList] = await Promise.all([
-          getAllAdminCategories(),
+        const [tree, brandsList] = await Promise.all([
+          getAdminCategoriesTree(),
           getAllAdminBrands().catch(() => []),
         ]);
         if (Array.isArray(brandsList)) {
           setBrands(brandsList);
         }
-        const catList = res;
+        const catList = flattenCategoryTree(Array.isArray(tree) ? tree : []);
         if (Array.isArray(catList)) {
+          categoriesRef.current = catList;
           setCategories(catList);
           if (urlCatId) {
             const matched = catList.find((c) => String(c.category_id ?? c.id) === urlCatId);
@@ -399,8 +420,11 @@ export default function ProductManagementPage() {
             }
           }
         }
+        brandsRef.current = Array.isArray(brandsList) ? brandsList : [];
       } catch (e) {
         console.warn('Categories API note:', e);
+      } finally {
+        setLookupsReady(true);
       }
     }
     loadCatsAndBrands();
@@ -446,17 +470,15 @@ export default function ProductManagementPage() {
     return merged;
   }, [selectedRootCategory, subCategoriesByRoot, categories]);
 
-  // Keep latest categories and brands in refs so loading them does NOT trigger a products re-fetch.
+  // Keep latest categories and brands in refs. The initial product request waits
+  // for both lookups, avoiding duplicate reloads as each lookup resolves.
   const categoriesRef = useRef<BackendCategory[]>([]);
-  const [lookupsVersion, setLookupsVersion] = useState(0);
   const brandsRef = useRef<BackendBrand[]>([]);
   useEffect(() => {
     categoriesRef.current = categories;
-    if (categories.length > 0) setLookupsVersion((v) => v + 1);
   }, [categories]);
   useEffect(() => {
     brandsRef.current = brands;
-    if (brands.length > 0) setLookupsVersion((v) => v + 1);
   }, [brands]);
 
   // Debounced search so typing doesn't fire a request per keystroke.
@@ -470,85 +492,16 @@ export default function ProductManagementPage() {
   const requestIdRef = useRef(0);
 
   // Server-side pagination + full ID/Name/Brand/Category search support
-  async function enrichVisibleProducts(records: ProductRecord[], backendItems: BackendProduct[]) {
-    return Promise.all(records.map(async (record) => {
-      const backend = backendItems.find((item) => String(item.product_id ?? item.id) === record.id);
-      let result = { ...record };
-      const warnings: string[] = [];
-
-      // The list endpoint may omit category/inventory data: read the detail record when missing.
-      if (!result.categoryId || result.stock <= 0) {
-        try {
-          const detail: any = await getAdminProductById(record.id);
-          if (detail) {
-            const merged = mapBackendProductToRecord(
-              { ...(backend || {}), ...detail } as BackendProduct,
-              0,
-              categoriesRef.current,
-              brandsRef.current
-            );
-            const invRows: any[] = Array.isArray(detail.inventory?.rows)
-              ? detail.inventory.rows
-              : Array.isArray(detail.inventory)
-              ? detail.inventory
-              : [];
-            const invAvailable = invRows.length
-              ? invRows.reduce((s, r) => s + (Number(r.available_quantity) || 0), 0)
-              : Number(detail.inventory?.available_quantity ?? detail.inventory?.total_available ?? 0) || 0;
-            result = {
-              ...result,
-              category: merged.category,
-              categoryId: merged.categoryId ?? result.categoryId,
-              brand: merged.brand,
-              price: merged.price || result.price,
-              originalPrice: merged.originalPrice || result.originalPrice,
-              stock: merged.stock > 0 ? merged.stock : invAvailable,
-            };
-          }
-        } catch {
-          // keep list values
-        }
-      }
-
-      const [imagesResult, inventoryResult] = await Promise.allSettled([
-        result.image ? Promise.resolve([]) : getAdminProductImages(record.id),
-        getAdminProductInventory(record.id),
-      ]);
-
-      if (imagesResult.status === 'fulfilled' && !result.image) {
-        result.image =
-          imagesResult.value.find((image) => image.is_primary)?.image_url ||
-          imagesResult.value[0]?.image_url;
-      } else if (imagesResult.status === 'rejected') {
-        warnings.push('Images could not be loaded');
-      }
-
-      const inventoryRows = inventoryResult.status === 'fulfilled' ? inventoryResult.value : [];
-      if (inventoryResult.status === 'rejected') {
-        warnings.push('Warehouse stock could not be loaded');
-      }
-
-      const available = inventoryRows.length > 0
-        ? inventoryRows.reduce((sum, row) => {
-          const value = Number(row.available_quantity);
-          return sum + (Number.isFinite(value) && value >= 0 ? value : 0);
-        }, 0)
-        : result.stock;
-      result.stock = available;
-      result.inventorySummary = {
-        source: 'product',
-        stock: available,
-        minPrice: result.price,
-        maxPrice: result.price,
-        activeVariantCount: 0,
-      };
-      result.catalogWarning = warnings.join('. ');
-      return result;
-    }));
+  async function enrichVisibleProducts(records: ProductRecord[], _backendItems: BackendProduct[]) {
+    // The paginated list contract already contains classification, primary image,
+    // stock and price. Per-row detail/inventory requests created an N+1 burst
+    // (20+ requests for a 10-row page) and repeatedly hit the API rate limiter.
+    return records;
   }
 
   const loadProducts = React.useCallback(
     async (_forceRecount = false) => {
+      if (!lookupsReady) return;
       const requestId = ++requestIdRef.current;
       setIsLoading(true);
       setFetchError(null);
@@ -679,7 +632,7 @@ export default function ProductManagementPage() {
         if (requestId === requestIdRef.current) setIsLoading(false);
       }
     },
-    [pageSize, currentPage, debouncedSearch, selectedCategory, selectedBrand, selectedStatus, sortBy, sortOrder, lookupsVersion]
+    [pageSize, currentPage, debouncedSearch, selectedCategory, selectedBrand, selectedStatus, sortBy, sortOrder, lookupsReady]
   );
 
   React.useEffect(() => {
@@ -717,9 +670,18 @@ export default function ProductManagementPage() {
           .filter((n) => !isNaN(n) && n > 0);
         const primaryCat =
           prodCats.find((c) => c.ProductCategory?.is_primary) || prodCats[0] || null;
-        const primaryIdStr = primaryCat
-          ? String(primaryCat.category_id ?? primaryCat.id ?? '')
-          : product.categoryId || '';
+        const directCategoryId = details.category_id != null
+          ? String(details.category_id)
+          : '';
+        const directSubcategoryId = details.subcategory_id != null
+          ? String(details.subcategory_id)
+          : '';
+        const primaryIdStr =
+          directSubcategoryId ||
+          directCategoryId ||
+          (primaryCat ? String(primaryCat.category_id ?? primaryCat.id ?? '') : '') ||
+          product.categoryId ||
+          '';
 
         const imgUrl = resolvePrimaryProductImage(details) || product.image;
 
@@ -751,15 +713,25 @@ export default function ProductManagementPage() {
 
     setIsSubmitting(true);
     try {
-      const primaryNum = editingProduct.primary_category_id
+      const selectedClassification = categories.find(
+        (category) =>
+          String(category.category_id ?? category.id ?? '') ===
+          editingProduct.primary_category_id
+      );
+      const selectedId = editingProduct.primary_category_id
         ? Number(editingProduct.primary_category_id)
         : null;
-      const mergedCatIds = Array.from(
-        new Set([
-          ...editingProduct.category_ids,
-          ...(primaryNum && !isNaN(primaryNum) && primaryNum > 0 ? [primaryNum] : []),
-        ])
-      );
+      const selectedParentId = selectedClassification?.parent_category_id != null
+        ? Number(selectedClassification.parent_category_id)
+        : null;
+      const isSelectedSubcategory =
+        selectedParentId != null && Number.isFinite(selectedParentId) && selectedParentId > 0;
+      const categoryId = selectedId && Number.isFinite(selectedId) && selectedId > 0
+        ? (isSelectedSubcategory ? selectedParentId : selectedId)
+        : null;
+      const subcategoryId = selectedId && Number.isFinite(selectedId) && selectedId > 0 && isSelectedSubcategory
+        ? selectedId
+        : null;
 
       await updateAdminProduct(editingProduct.id, {
         product_name: editingProduct.product_name.trim(),
@@ -768,10 +740,22 @@ export default function ProductManagementPage() {
         product_status: editingProduct.product_status,
         short_description: editingProduct.short_description.trim() || null,
         description: editingProduct.description.trim() || null,
-        category_ids: mergedCatIds,
-        primary_category_id:
-          primaryNum && !isNaN(primaryNum) && primaryNum > 0 ? primaryNum : null,
+        category_id: categoryId,
+        subcategory_id: subcategoryId,
       });
+
+      const savedProduct = await getAdminProductById(editingProduct.id);
+      const savedCategoryId = savedProduct.category_id != null
+        ? Number(savedProduct.category_id)
+        : null;
+      const savedSubcategoryId = savedProduct.subcategory_id != null
+        ? Number(savedProduct.subcategory_id)
+        : null;
+      if (savedCategoryId !== categoryId || savedSubcategoryId !== subcategoryId) {
+        throw new Error(
+          'Product details were saved, but the selected category was not persisted by the backend.'
+        );
+      }
       showToast(`Product "${editingProduct.product_name}" updated successfully.`);
       setEditingProduct(null);
       await loadProducts(true);
