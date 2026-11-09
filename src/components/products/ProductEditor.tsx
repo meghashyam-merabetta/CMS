@@ -542,13 +542,17 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const urlId = searchParams.get('id');
+  const copyFromId = searchParams.get('copyFrom');
 
   /* ------------------------- Product Identity & Save Lifecycle ------------ */
   // Retained immediately after POST /api/admin/products so retries use PATCH
   const [savedProductId, setSavedProductId] = useState<string | null>(urlId);
+  const [copiedFromInfo, setCopiedFromInfo] = useState<{ id: string; name: string } | null>(null);
   const isEditing = initialIsEdit || Boolean(savedProductId);
 
-  const [isLoadingProduct, setIsLoadingProduct] = useState<boolean>(Boolean(urlId));
+  const [isLoadingProduct, setIsLoadingProduct] = useState<boolean>(
+    Boolean(urlId || copyFromId)
+  );
   const [saving, setSaving] = useState<boolean>(false);
   const [submitting, setSubmitting] = useState<boolean>(false);
   const [imageActionBusyKey, setImageActionBusyKey] = useState<string | null>(null);
@@ -884,41 +888,81 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
   }, [categoryId, categoriesList]);
 
   /* ======================================================================== */
-  /* LOAD PRODUCT IN EDIT MODE (GET /api/admin/products/:id)                  */
+  /* LOAD PRODUCT IN EDIT MODE OR COPY LISTING MODE                           */
   /* ======================================================================== */
 
   useEffect(() => {
-    if (!urlId) return;
+    const targetId = urlId || copyFromId;
+    if (!targetId) return;
+    const isCopyMode = !urlId && Boolean(copyFromId);
     let cancelled = false;
 
-    async function loadExistingProduct(targetId: string) {
+    async function loadExistingProduct(idToLoad: string, copyMode: boolean) {
       setIsLoadingProduct(true);
       setError('');
       try {
-        const prod = await getAdminProductById(targetId);
+        const prod = await getAdminProductById(idToLoad);
         if (cancelled || !prod) return;
 
-        const resolvedId = String(prod.id ?? prod.product_id ?? targetId);
-        setSavedProductId(resolvedId);
+        const resolvedId = String(prod.id ?? prod.product_id ?? idToLoad);
+        const loadedName = prod.product_name || prod.name || '';
 
-        setProductName(prod.product_name || prod.name || '');
-        const loadedSlug = prod.slug || '';
-        setSlug(loadedSlug);
-        setSlugLocked(Boolean(loadedSlug));
-        setProductCode(prod.product_code || '');
+        if (copyMode) {
+          // Copy Listing mode: remain in Create mode (savedProductId = null) so saving creates a new product
+          setSavedProductId(null);
+          setCopiedFromInfo({ id: resolvedId, name: loadedName });
+          setProductName(loadedName);
 
-        setSku(prod.sku || '');
-        setBarcode(prod.barcode || '');
+          // Generate a fresh unique product code and unlocked unique slug to prevent DB unique constraint collisions
+          const prefix = (loadedName.trim().slice(0, 3) || 'PRD')
+            .toUpperCase()
+            .replace(/[^A-Z]/g, 'X');
+          const rand = Math.floor(10000 + Math.random() * 90000);
+          setProductCode(`${prefix}-${rand}`);
+          setSlug(generateProductSlug(`${loadedName}-${String(rand).slice(-3)}`));
+          setSlugLocked(false);
+
+          // Reset item-specific unique identifiers (SKU & Barcode) so fresh ones can be entered/generated
+          setSku('');
+          setBarcode('');
+        } else {
+          // Edit mode: retain existing product ID
+          setSavedProductId(resolvedId);
+          setCopiedFromInfo(null);
+          setProductName(loadedName);
+          const loadedSlug = prod.slug || '';
+          setSlug(loadedSlug);
+          setSlugLocked(Boolean(loadedSlug));
+          setProductCode(prod.product_code || '');
+          setSku(prod.sku || '');
+          setBarcode(prod.barcode || '');
+        }
 
         setBrandId(prod.brand_id != null ? String(prod.brand_id) : '');
-        setCategoryId(prod.category_id != null ? String(prod.category_id) : '');
-        setSubcategoryId(prod.subcategory_id != null ? String(prod.subcategory_id) : '');
+
+        let resolvedCatId = prod.category_id != null ? String(prod.category_id) : '';
+        let resolvedSubCatId = prod.subcategory_id != null ? String(prod.subcategory_id) : '';
+        if (!resolvedCatId && Array.isArray(prod.categories) && prod.categories.length > 0) {
+          const primary =
+            prod.categories.find((c: any) => c.ProductCategory?.is_primary) || prod.categories[0];
+          const pId = String(primary.category_id ?? primary.id ?? '');
+          const parentId =
+            primary.parent_category_id != null ? String(primary.parent_category_id) : '';
+          if (parentId) {
+            resolvedCatId = parentId;
+            resolvedSubCatId = pId;
+          } else {
+            resolvedCatId = pId;
+          }
+        }
+        setCategoryId(resolvedCatId);
+        setSubcategoryId(resolvedSubCatId);
         setVendorId(prod.vendor_id != null ? String(prod.vendor_id) : '');
 
         if (prod.product_type) {
           setProductType(prod.product_type as NewProductType);
         }
-        if (prod.product_status) {
+        if (!copyMode && prod.product_status) {
           setProductStatus(prod.product_status as NewProductStatus);
         }
 
@@ -944,31 +988,38 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
         setHsnCode(prod.hsn_code || '');
 
         const invSummary = prod.inventory;
-        const resolvedStock =
-          prod.stock_quantity ??
-          invSummary?.available_quantity ??
-          invSummary?.total_available ??
-          0;
-        setStockQuantity(String(resolvedStock));
         setMinStockQuantity(
           String(prod.min_stock_quantity ?? invSummary?.minimum_stock_level ?? 5)
         );
 
-        // Fetch live warehouse inventory rows
-        getAdminProductInventory(targetId)
-          .then((rows) => {
-            if (Array.isArray(rows) && rows.length > 0) {
-              setInventoryRows(rows);
-              const first = rows[0];
-              if (first.warehouse_id != null) {
-                setSelectedWarehouseId(String(first.warehouse_id));
+        if (copyMode) {
+          // New copied product starts with 0 stock and no existing warehouse rows
+          setStockQuantity('0');
+          setInventoryRows([]);
+        } else {
+          const resolvedStock =
+            prod.stock_quantity ??
+            invSummary?.available_quantity ??
+            invSummary?.total_available ??
+            0;
+          setStockQuantity(String(resolvedStock));
+
+          // Fetch live warehouse inventory rows
+          getAdminProductInventory(idToLoad)
+            .then((rows) => {
+              if (Array.isArray(rows) && rows.length > 0) {
+                setInventoryRows(rows);
+                const first = rows[0];
+                if (first.warehouse_id != null) {
+                  setSelectedWarehouseId(String(first.warehouse_id));
+                }
+                if (first.available_quantity != null) {
+                  setStockQuantity(String(first.available_quantity));
+                }
               }
-              if (first.available_quantity != null) {
-                setStockQuantity(String(first.available_quantity));
-              }
-            }
-          })
-          .catch(() => {});
+            })
+            .catch(() => {});
+        }
 
         // Details object (`details` or `product_details` or flat fallback)
         const d = prod.details || prod.product_details || prod;
@@ -994,7 +1045,7 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
         setMaterial(d.material || '');
         setColour(d.colour || '');
         setSize(d.size || '');
-        setModelNumber(d.model_number || '');
+        setModelNumber(copyMode ? '' : d.model_number || '');
         setModelName(d.model_name || '');
         setWarranty(d.warranty || '');
 
@@ -1014,50 +1065,60 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
         setMetaTitle(d.meta_title || '');
         setMetaDescription(d.meta_description || '');
         setMetaKeywords(d.meta_keywords || '');
-        setCanonicalUrl(d.canonical_url || '');
+        setCanonicalUrl(copyMode ? '' : d.canonical_url || '');
 
         setSpecificationsList(recordToKvList(d.specifications, 'spec'));
         setAdditionalAttributesList(recordToKvList(d.additional_attributes, 'attr'));
 
-        // Images
-        let rawImages = Array.isArray(prod.images) ? prod.images : [];
-        if (rawImages.length === 0) {
-          try {
-            rawImages = await getAdminProductImages(resolvedId);
-          } catch {
-            rawImages = [];
+        if (copyMode) {
+          // Copied product starts with a clean image gallery
+          setImages([]);
+        } else {
+          // Images in Edit mode
+          let rawImages = Array.isArray(prod.images) ? prod.images : [];
+          if (rawImages.length === 0) {
+            try {
+              rawImages = await getAdminProductImages(resolvedId);
+            } catch {
+              rawImages = [];
+            }
           }
-        }
 
-        if (!cancelled && rawImages.length > 0) {
-          const sorted = [...rawImages].sort(
-            (a: any, b: any) => (b?.is_primary ? 1 : 0) - (a?.is_primary ? 1 : 0)
-          );
-          const mappedImages: GalleryImage[] = sorted
-            .map((img: any, idx: number) => {
-              const url =
-                typeof img === 'string'
-                  ? img
-                  : img?.image_url || img?.url || img?.imageUrl || '';
-              const backendId =
-                typeof img === 'object' && img !== null
-                  ? String(img.id ?? img.image_id ?? '')
-                  : '';
-              return {
-                key: backendId ? `server-${backendId}` : uid(),
-                src: url,
-                name: `Image ${idx + 1}`,
-                size: 0,
-                backendImageId: backendId || undefined,
-                isPrimary: Boolean(img?.is_primary) || idx === 0,
-              };
-            })
-            .filter((img: GalleryImage) => Boolean(img.src));
-          setImages(mappedImages);
+          if (!cancelled && rawImages.length > 0) {
+            const sorted = [...rawImages].sort(
+              (a: any, b: any) => (b?.is_primary ? 1 : 0) - (a?.is_primary ? 1 : 0)
+            );
+            const mappedImages: GalleryImage[] = sorted
+              .map((img: any, idx: number) => {
+                const url =
+                  typeof img === 'string'
+                    ? img
+                    : img?.image_url || img?.url || img?.imageUrl || '';
+                const backendId =
+                  typeof img === 'object' && img !== null
+                    ? String(img.id ?? img.image_id ?? '')
+                    : '';
+                return {
+                  key: backendId ? `server-${backendId}` : uid(),
+                  src: url,
+                  name: `Image ${idx + 1}`,
+                  size: 0,
+                  backendImageId: backendId || undefined,
+                  isPrimary: Boolean(img?.is_primary) || idx === 0,
+                };
+              })
+              .filter((img: GalleryImage) => Boolean(img.src));
+            setImages(mappedImages);
+          }
         }
       } catch (err: any) {
         if (!cancelled) {
-          setError(err?.message || 'Failed to load product details.');
+          setError(
+            err?.message ||
+              (copyMode
+                ? 'Failed to copy product details.'
+                : 'Failed to load product details.')
+          );
         }
       } finally {
         if (!cancelled) {
@@ -1066,11 +1127,11 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
       }
     }
 
-    void loadExistingProduct(urlId);
+    void loadExistingProduct(targetId, isCopyMode);
     return () => {
       cancelled = true;
     };
-  }, [urlId]);
+  }, [urlId, copyFromId]);
 
   /* ------------------------- Derived Calculations ------------------------- */
   const selectedCategory = useMemo(
@@ -1925,6 +1986,11 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                         ID: #{savedProductId}
                       </span>
                     )}
+                    {copiedFromInfo && !isEditing && (
+                      <span className="rounded-md border border-indigo-200 bg-indigo-50 px-2 py-0.5 font-mono text-[11px] font-semibold text-indigo-700">
+                        Copied from #{copiedFromInfo.id}
+                      </span>
+                    )}
                     {(isLoadingProduct || loadingDropdowns) && (
                       <span className="inline-flex items-center gap-1.5 text-[12px] text-[#64748B]">
                         <Loader2 size={13} className="animate-spin text-[#F47C35]" />
@@ -1933,7 +1999,9 @@ function ProductEditorContent({ initialIsEdit = false }: ProductEditorProps) {
                     )}
                   </div>
                   <p className="mt-0.5 text-[12px] sm:text-[13px] text-[#64748B]">
-                    Fill in the product details, pricing, inventory, specifications, packaging, and SEO information below.
+                    {copiedFromInfo && !isEditing
+                      ? 'Review copied details, adjust attributes/pricing/stock, and upload images for this new product.'
+                      : 'Fill in the product details, pricing, inventory, specifications, packaging, and SEO information below.'}
                   </p>
                 </div>
 
