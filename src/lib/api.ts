@@ -137,3 +137,5 @@ export * from '@/services/api/adminBrandsApi';
 export * from '@/services/api/adminVariantAttributesApi';
 export * from '@/services/api/adminUsersApi';
 export * from '@/services/api/adminOrderApi';
+export * from '@/services/api/adminBannersApi';
+export * from '@/services/api/adminCouponsApi';

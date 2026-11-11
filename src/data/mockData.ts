@@ -582,6 +582,15 @@ export const sidebarNavItems: NavItem[] = [
       },
     ],
   },
+
+  {
+    id: 'BANNER_MANAGEMENT',
+    title: 'Banner Management',
+    href: '/admin/banners',
+    icon: 'Images',
+    activeRoutes: ['/admin/banners'],
+  },
+
   {
     id: 'PAYMENT_MANAGEMENT',
     title: 'Payment Management',

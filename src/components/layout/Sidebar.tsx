@@ -24,6 +24,7 @@ import {
   LucideIcon,
   FlaskConical,
   TestTube,
+  Images,
 } from 'lucide-react';
 import { sidebarNavItems } from '@/data/mockData';
 import { NavItem } from '@/types/dashboard';
@@ -47,6 +48,7 @@ const iconMap: Record<string, LucideIcon> = {
   MessageSquare,
   FlaskConical,
   TestTube,
+  Images,
 };
 
 interface SidebarProps {
