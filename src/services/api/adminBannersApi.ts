@@ -51,9 +51,9 @@ export const getAdminBanners = (params: BannerListParams) =>
   apiFetch<ListResponse<AdminBanner>>(ENDPOINT, { params: { ...params } });
 export const createAdminBanner = async (payload: CreateBannerPayload) =>
   (await apiFetch<ItemResponse<AdminBanner>>(ENDPOINT, { method: 'POST', body: JSON.stringify(payload) })).data;
-export async function createAdminBannerBatch(metadata: BannerBatchMetadata, files: File[]) {
+export async function createAdminBannerBatch(metadata: BannerBatchMetadata, file: File) {
   const body = new FormData();
-  files.forEach((file) => body.append('uploadimage', file));
+  body.append('uploadimage', file);
   body.append('metadata', JSON.stringify(metadata));
   return (await apiFetch<ItemResponse<AdminBanner[]>>(`${ENDPOINT}/batch`, { method: 'POST', body })).data;
 }
