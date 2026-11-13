@@ -654,7 +654,7 @@ export const sidebarNavItems: NavItem[] = [
     title: 'Lab Management',
     href: '/admin/labs',
     icon: 'FlaskConical',
-    activeRoutes: ['/admin/labs', '/admin/labs/test-categories'],
+    activeRoutes: ['/admin/labs', '/admin/labs/listing'],
     children: [
       {
         id: 'LAB_LIST',
@@ -664,11 +664,11 @@ export const sidebarNavItems: NavItem[] = [
         activeRoutes: ['/admin/labs'],
       },
       {
-        id: 'LAB_TEST_CATEGORIES',
-        title: 'Test Categories',
-        href: '/admin/labs/test-categories',
+        id: 'LAB_BOOKING_LIST',
+        title: 'Lab Listing',
+        href: '/admin/labs/listing',
         icon: 'TestTube',
-        activeRoutes: ['/admin/labs/test-categories'],
+        activeRoutes: ['/admin/labs/listing'],
       },
     ],
   },

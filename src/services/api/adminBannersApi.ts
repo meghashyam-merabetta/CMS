@@ -26,18 +26,15 @@ export interface AdminBanner {
 }
 
 export type BannerWritePayload = Omit<AdminBanner, 'banner_id' | 'created_at' | 'updated_at'>;
-export interface CreateBannerPayload {
+export type CreateBannerPayload = Omit<AdminBanner, 'banner_id' | 'created_at' | 'updated_at'>;
+export type UpdateBannerPayload = Partial<Omit<CreateBannerPayload, 'banner_key'>>;
+export interface BannerBatchMetadata {
   banner_key: string;
   page_name: string;
   banner_name: string;
-  image_path: string;
-  width_px: number;
-  height_px: number;
   is_active: boolean;
-  banner_type: 'WEBSITE';
-  status: 'ACTIVE' | 'INACTIVE';
+  images: Array<{ width_px: number; height_px: number }>;
 }
-export type UpdateBannerPayload = Partial<Omit<CreateBannerPayload, 'banner_key' | 'image_path'>>;
 
 export interface BannerListParams {
   limit?: number; offset?: number; status?: BannerStatus; is_published?: boolean;
@@ -54,6 +51,12 @@ export const getAdminBanners = (params: BannerListParams) =>
   apiFetch<ListResponse<AdminBanner>>(ENDPOINT, { params: { ...params } });
 export const createAdminBanner = async (payload: CreateBannerPayload) =>
   (await apiFetch<ItemResponse<AdminBanner>>(ENDPOINT, { method: 'POST', body: JSON.stringify(payload) })).data;
+export async function createAdminBannerBatch(metadata: BannerBatchMetadata, files: File[]) {
+  const body = new FormData();
+  files.forEach((file) => body.append('uploadimage', file));
+  body.append('metadata', JSON.stringify(metadata));
+  return (await apiFetch<ItemResponse<AdminBanner[]>>(`${ENDPOINT}/batch`, { method: 'POST', body })).data;
+}
 export const updateAdminBanner = async (key: string, payload: UpdateBannerPayload) =>
   (await apiFetch<ItemResponse<AdminBanner>>(`${ENDPOINT}/${encodeURIComponent(key)}`, { method: 'PATCH', body: JSON.stringify(payload) })).data;
 export const deleteAdminBanner = (key: string) =>

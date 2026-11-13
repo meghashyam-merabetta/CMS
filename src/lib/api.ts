@@ -52,7 +52,11 @@ export async function apiFetch<T>(
   }
 
   const method = (rest.method || 'GET').toUpperCase();
-  const isFormData = typeof FormData !== 'undefined' && rest.body instanceof FormData;
+  // Cross-realm FormData (for example through dev tooling/proxies) can fail instanceof.
+  // Detect it by brand as well so multipart requests never receive a JSON Content-Type.
+  const isFormData =
+    typeof FormData !== 'undefined' &&
+    (rest.body instanceof FormData || Object.prototype.toString.call(rest.body) === '[object FormData]');
 
   // Send {} for actions without fields (except FormData)
   if (
@@ -65,7 +69,12 @@ export async function apiFetch<T>(
 
   // Do not set Content-Type manually for FormData; let browser set multipart boundary
   const requestHeaders: Record<string, string> = isFormData
-    ? { ...((headers as Record<string, string>) || {}) }
+    ? (() => {
+        const multipartHeaders = new Headers(headers || {});
+        // The browser must supply multipart/form-data including its generated boundary.
+        multipartHeaders.delete('Content-Type');
+        return Object.fromEntries(multipartHeaders.entries());
+      })()
     : {
         'Content-Type': 'application/json',
         ...((headers as Record<string, string>) || {}),
@@ -137,5 +146,6 @@ export * from '@/services/api/adminBrandsApi';
 export * from '@/services/api/adminVariantAttributesApi';
 export * from '@/services/api/adminUsersApi';
 export * from '@/services/api/adminOrderApi';
+export * from '@/services/api/adminLabsApi';
 export * from '@/services/api/adminBannersApi';
 export * from '@/services/api/adminCouponsApi';
